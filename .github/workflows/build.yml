@@ -45,6 +45,10 @@ jobs:
           arch: ${{ matrix.arch }}
           modules: 'qtimageformats'
           cache: true
+      - uses: ilammy/msvc-dev-cmd@v1
+        if: runner.os == 'Windows'
+        with:
+          arch: x64
       - name: Configure
         run: cmake -S . -B build-release -DCMAKE_BUILD_TYPE=Release ${{ matrix.cmake_args }}
       - name: Build
@@ -62,6 +66,11 @@ jobs:
           Copy-Item build-release/Release/photodeck.exe "$folder/PhotoDeck.exe"
           windeployqt --release --compiler-runtime --no-translations --no-system-d3d-compiler --no-opengl-sw "$folder/PhotoDeck.exe"
           if ($LASTEXITCODE -ne 0) { throw "windeployqt failed" }
+          $runtime = (Get-Content build-release/compiler-runtime.txt -Raw).Split(';', [System.StringSplitOptions]::RemoveEmptyEntries)
+          foreach ($dll in $runtime) { Copy-Item $dll $folder/ }
+          foreach ($required in 'msvcp140.dll','vcruntime140.dll','vcruntime140_1.dll') {
+            if (!(Test-Path "$folder/$required")) { throw "Missing app-local compiler runtime: $required" }
+          }
           Copy-Item README.md,EARLY-ACCESS.md,LICENSE $folder/
           Copy-Item packaging/THIRD-PARTY.md $folder/
           Copy-Item -Recurse packaging/licenses,examples $folder/

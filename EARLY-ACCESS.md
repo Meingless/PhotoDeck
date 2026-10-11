@@ -9,7 +9,7 @@ Görünüm ayarları bilgisayarın standart uygulama yapılandırma klasöründe
 ## Paketler
 
 - Linux x86_64: arşivi açın ve launch.sh çalıştırın. Qt kütüphaneleri pakette bulunur; sistem glibc, grafik sürücüsü ve fontlar sistemden kullanılır. CI derlemesi Ubuntu 22.04/glibc 2.35 tabanını hedefler.
-- Windows x64: ZIP'i tamamen açın; PhotoDeck.exe çalıştırın. Qt DLL'leri ve görüntü eklentileri uygulamayla birlikte gelir. Pakette VC++ çalışma zamanı kurucusu varsa eksik çalışma zamanı için onu kullanın.
+- Windows x64: ZIP'i tamamen açın; PhotoDeck.exe çalıştırın. Qt DLL'leri ve görüntü eklentileri uygulamayla birlikte gelir. VC++ çalışma zamanı DLL'leri uygulamanın yanına eklenir. Windows 10/11 x64 hedeflenir.
 - macOS Intel / Apple Silicon: ZIP'i açıp PhotoDeck.app uygulamasını Applications klasörüne taşıyın. Erken erişim paketleri Apple Developer kimliğiyle imzalanmış veya noter onaylı değildir; macOS ilk açılışta güvenlik onayı isteyebilir. Ad hoc imza yayıncı kimliğini doğrulamaz.
 
 PNG/JPEG/WebP/BMP ve .pdeck desteklenir. PSD/PSB, RAW, CMYK/ICC baskı, ileri vektör yolları ve tablet basıncı mevcut kapsamın dışındadır. 16 MP, 64 katman, 256 MiB piksel/maske ve 30 durum/128 MiB geçmiş sınırları vardır. Kurtarma kopyası 45 saniyede bir alınır; son değişiklikleri her zaman kapsamayabilir.
