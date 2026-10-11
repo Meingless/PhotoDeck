@@ -51,6 +51,7 @@ class Canvas : public QWidget {
     void mouseReleaseEvent(QMouseEvent *) override;
     void wheelEvent(QWheelEvent *) override;
     void keyPressEvent(QKeyEvent *) override;
+    void focusOutEvent(QFocusEvent *) override;
 
   private:
     QColor canvasColor = QColor("#171b20"), rulerColor = QColor("#22272e"),
@@ -62,6 +63,7 @@ class Canvas : public QWidget {
     QRectF preview;
     bool cacheDirty = true, fitted = false;
     QImage &target();
+    void advanceGesture(QPointF position, Qt::KeyboardModifiers modifiers);
     void stroke(QPointF from, QPointF to);
     void fillAt(QPoint point);
     void drawShape();

@@ -4,12 +4,16 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QFontMetrics>
+#include <QGlyphRun>
 #include <QImageReader>
 #include <QImageWriter>
 #include <QSaveFile>
 #include <QSet>
+#include <QTextLayout>
 #include <QtMath>
 #include <cmath>
+#include <memory>
+#include <vector>
 
 namespace {
 qint64 bytes(const State &s) {
@@ -18,25 +22,99 @@ qint64 bytes(const State &s) {
         n += l.pixels.sizeInBytes() + l.mask.sizeInBytes();
     return n;
 }
+bool sameLayer(const Layer &a, const Layer &b) {
+    return a.name == b.name && a.pixels == b.pixels && a.mask == b.mask && a.offset == b.offset &&
+           a.visible == b.visible && a.locked == b.locked && a.opacity == b.opacity &&
+           a.blend == b.blend && a.brightness == b.brightness && a.contrast == b.contrast &&
+           a.saturation == b.saturation && a.blur == b.blur && a.text == b.text && a.font == b.font &&
+           a.color == b.color;
+}
+bool sameContent(const State &a, const State &b) {
+    if (a.size != b.size || a.layers.size() != b.layers.size())
+        return false;
+    for (int i = 0; i < a.layers.size(); ++i)
+        if (!sameLayer(a.layers[i], b.layers[i]))
+            return false;
+    return true;
+}
+bool validState(const State &s, QString *error) {
+    auto fail = [&] {
+        if (error)
+            *error = "Belge verileri güvenli boyut veya konum sınırını aşıyor.";
+        return false;
+    };
+    if (!Document::validSize(s.size) || s.layers.isEmpty() || s.layers.size() > 64 || s.active < 0 ||
+        s.active >= s.layers.size() || bytes(s) > Document::MaxLayerBytes)
+        return fail();
+    for (const auto &l : s.layers) {
+        if (!Document::validSize(l.pixels.size()) ||
+            (!l.mask.isNull() && l.mask.size() != l.pixels.size()) || !Document::validOffset(l.offset) ||
+            !std::isfinite(l.opacity) || l.opacity < 0 || l.opacity > 1 || l.blend < 0 || l.blend > 5 ||
+            qAbs(qint64(l.brightness)) > 100 || qAbs(qint64(l.contrast)) > 100 ||
+            qAbs(qint64(l.saturation)) > 100 || l.blur < 0 || l.blur > 20 || l.name.size() > 16384 ||
+            l.text.size() > 16384 || l.font.toString().size() > 16384)
+            return fail();
+    }
+    return true;
+}
+bool offsetError(QString *error) {
+    if (error)
+        *error = "Dönüşüm katman konumu sınırını aşıyor. Katmanı tuvale yaklaştırın.";
+    return false;
+}
 void clearCaches(State &s) {
     for (auto &l : s.layers)
         l.cache = QImage();
 }
 QImage textImage(const QString &text, const QFont &font, const QColor &color) {
-    QFontMetrics fm(font);
-    QRect r = fm.boundingRect(QRect(0, 0, 8192, 8192), Qt::TextExpandTabs, text);
-    QSize size(qMax(1, r.width() + 12), qMax(1, r.height() + 12));
+    // Shape each paragraph with Qt; include glyph bearings and fallback fonts in the pixel bounds.
+    QFontMetrics metrics(font);
+    std::vector<std::pair<std::unique_ptr<QTextLayout>, qreal>> lines;
+    QRectF bounds;
+    qreal y = 0, width = 0;
+    for (const auto &paragraph : text.split('\n')) {
+        auto layout = std::make_unique<QTextLayout>(paragraph, font);
+        QTextOption option;
+        option.setWrapMode(QTextOption::NoWrap);
+        option.setTabStopDistance(qMax(1, metrics.horizontalAdvance(' ')) * 8);
+        layout->setTextOption(option);
+        layout->beginLayout();
+        QTextLine line = layout->createLine();
+        if (line.isValid()) {
+            line.setLineWidth(16384);
+            line.setPosition({0, 0});
+            width = qMax(width, line.naturalTextWidth());
+        }
+        layout->endLayout();
+        for (const auto &run : layout->glyphRuns()) {
+            const auto indexes = run.glyphIndexes();
+            const auto positions = run.positions();
+            for (int i = 0; i < indexes.size(); ++i) {
+                QRectF ink =
+                    run.rawFont().boundingRect(indexes[i]).translated(positions[i] + QPointF(0, y));
+                if (!ink.isEmpty())
+                    bounds = bounds.isNull() ? ink : bounds.united(ink);
+            }
+        }
+        qreal top = y;
+        y += line.isValid() ? line.height() : metrics.height();
+        lines.emplace_back(std::move(layout), top);
+    }
+    bounds = bounds.united(QRectF(0, 0, qMax(1.0, width), qMax(1.0, y)));
+    QRect pixels = bounds.toAlignedRect();
+    QSize size(pixels.width() + 12, pixels.height() + 12);
     if (!Document::validSize(size))
         return {};
     QImage image(size, QImage::Format_ARGB32_Premultiplied);
     image.fill(Qt::transparent);
-    QPainter p(&image);
-    p.setRenderHint(QPainter::TextAntialiasing);
-    p.setFont(font);
-    p.setPen(color);
-    p.drawText(QRect(6, 6, size.width() - 12, size.height() - 12), Qt::TextExpandTabs, text);
+    QPainter painter(&image);
+    painter.setRenderHint(QPainter::TextAntialiasing);
+    painter.setPen(color);
+    for (const auto &entry : lines)
+        entry.first->draw(&painter, {qreal(6 - pixels.left()), 6 - pixels.top() + entry.second});
     return image;
 }
+
 QImage boxBlur(const QImage &source, int radius) {
     if (!radius)
         return source;
@@ -194,8 +272,11 @@ QImage Document::composite() const {
         }
     return out;
 }
-bool Document::allows(qint64 extra, QString *error) const {
-    if (bytes(state) + extra <= MaxLayerBytes && state.layers.size() < 64)
+bool Document::validOffset(QPoint offset) {
+    return qAbs(qint64(offset.x())) <= MaxCoordinate && qAbs(qint64(offset.y())) <= MaxCoordinate;
+}
+bool Document::allows(qint64 extra, QString *error, int addedLayers) const {
+    if (bytes(state) + extra <= MaxLayerBytes && state.layers.size() + addedLayers <= 64)
         return true;
     if (error)
         *error = "Bu işlem katman sınırını aşar (64 katman / 256 MiB piksel verisi).";
@@ -209,6 +290,7 @@ void Document::resetHistory(const QString &label) {
     savedId = history[0].id;
     dirty = false;
     inEdit = false;
+    before = {};
     selection = {};
     editingMask = false;
     emit updated();
@@ -333,7 +415,7 @@ bool Document::addMask(QString *error) {
         emit updated();
         return true;
     }
-    if (!allows(l.pixels.sizeInBytes(), error))
+    if (!allows(l.pixels.sizeInBytes(), error, 0))
         return false;
     beginEdit();
     l.mask = QImage(l.pixels.size(), QImage::Format_ARGB32_Premultiplied);
@@ -371,6 +453,9 @@ bool Document::crop(QRect rect, QString *error) {
             *error = "Kırpmak için tuval üzerinde bir alan seçin.";
         return false;
     }
+    for (const auto &l : state.layers)
+        if (!validOffset(l.offset - rect.topLeft()))
+            return offsetError(error);
     beginEdit();
     state.size = rect.size();
     for (auto &l : state.layers)
@@ -394,6 +479,9 @@ bool Document::resize(QSize size, QString *error) {
                 *error = "Katman boyutu sınırı aşılıyor.";
             return false;
         }
+        qreal x = l.offset.x() * sx, y = l.offset.y() * sy;
+        if (!std::isfinite(x) || !std::isfinite(y) || qAbs(x) > MaxCoordinate || qAbs(y) > MaxCoordinate)
+            return offsetError(error);
         needed += qint64(ls.width()) * ls.height() * 4 * (l.mask.isNull() ? 1 : 2);
     }
     if (needed > MaxLayerBytes) {
@@ -415,9 +503,15 @@ bool Document::resize(QSize size, QString *error) {
     commit("Görüntü boyutu");
     return true;
 }
-bool Document::rotate(bool cw, QString *) {
-    beginEdit();
+bool Document::rotate(bool cw, QString *error) {
     int w = state.size.width(), h = state.size.height();
+    for (const auto &l : state.layers) {
+        QPoint offset = cw ? QPoint(h - l.offset.y() - l.pixels.height(), l.offset.x())
+                           : QPoint(l.offset.y(), w - l.offset.x() - l.pixels.width());
+        if (!validOffset(offset))
+            return offsetError(error);
+    }
+    beginEdit();
     QTransform t;
     t.rotate(cw ? 90 : -90);
     for (auto &l : state.layers) {
@@ -434,7 +528,16 @@ bool Document::rotate(bool cw, QString *) {
     commit("90° döndürme");
     return true;
 }
-void Document::flip(bool h) {
+bool Document::flip(bool h, QString *error) {
+    for (const auto &l : state.layers) {
+        QPoint offset = l.offset;
+        if (h)
+            offset.setX(state.size.width() - l.offset.x() - l.pixels.width());
+        else
+            offset.setY(state.size.height() - l.offset.y() - l.pixels.height());
+        if (!validOffset(offset))
+            return offsetError(error);
+    }
     beginEdit();
     for (auto &l : state.layers) {
         l.pixels = flippedImage(l.pixels, h);
@@ -448,6 +551,7 @@ void Document::flip(bool h) {
     }
     selection = {};
     commit("Görüntü çevrildi");
+    return true;
 }
 void Document::adjust(int b, int c, int s) {
     auto &l = state.layers[state.active];
@@ -489,9 +593,9 @@ bool Document::editText(QString text, QFont font, QColor color, QString *error) 
         return false;
     }
     QImage image = textImage(text, font, color);
-    if (image.isNull() ||
-        bytes(state) - l.pixels.sizeInBytes() - l.mask.sizeInBytes() + image.sizeInBytes() >
-            MaxLayerBytes) {
+    if (image.isNull() || bytes(state) - l.pixels.sizeInBytes() - l.mask.sizeInBytes() +
+                                  image.sizeInBytes() * (l.mask.isNull() ? 1 : 2) >
+                              MaxLayerBytes) {
         if (error)
             *error = "Metin görüntüsü boyut veya bellek sınırını aşıyor.";
         return false;
@@ -500,8 +604,15 @@ bool Document::editText(QString text, QFont font, QColor color, QString *error) 
     l.text = text;
     l.font = font;
     l.color = color;
+    QImage mask;
+    if (!l.mask.isNull()) {
+        mask = QImage(image.size(), QImage::Format_ARGB32_Premultiplied);
+        mask.fill(Qt::white);
+        QPainter painter(&mask);
+        painter.drawImage(0, 0, l.mask);
+    }
     l.pixels = image;
-    l.mask = {};
+    l.mask = mask;
     editingMask = false;
     commit("Metin düzenlendi");
     return true;
@@ -517,6 +628,11 @@ void Document::commit(const QString &label) {
     if (!inEdit)
         return;
     inEdit = false;
+    if (sameContent(state, before)) {
+        before = {};
+        emit updated();
+        return;
+    }
     before = {};
     while (history.size() > cursor + 1)
         history.removeLast();
@@ -572,6 +688,10 @@ qint64 Document::imageBytes() const {
 }
 qint64 Document::historyBytes() const {
     QSet<qint64> seen;
+    for (const auto &layer : state.layers)
+        for (const QImage *image : {&layer.pixels, &layer.mask})
+            if (!image->isNull())
+                seen.insert(image->cacheKey());
     qint64 total = 0;
     for (const auto &e : history)
         for (const auto &l : e.state.layers)
@@ -594,6 +714,8 @@ void Document::markSaved() {
     emit updated();
 }
 bool Document::save(const QString &file, QString *error, bool markClean) {
+    if (!validState(state, error))
+        return false;
     QSaveFile f(file);
     if (!f.open(QIODevice::WriteOnly)) {
         if (error)
@@ -682,8 +804,7 @@ bool Document::load(const QString &file, QString *error) {
         in >> l.color;
         if (in.status() != QDataStream::Ok || !std::isfinite(opacity) || opacity < 0 || opacity > 1 ||
             blend < 0 || blend > 5 || qAbs(qint64(b)) > 100 || qAbs(qint64(c)) > 100 ||
-            qAbs(qint64(s)) > 100 || blur < 0 || blur > 20 || qAbs(qint64(l.offset.x())) > 32768 ||
-            qAbs(qint64(l.offset.y())) > 32768)
+            qAbs(qint64(s)) > 100 || blur < 0 || blur > 20 || !validOffset(l.offset))
             return fail();
         l.opacity = opacity;
         l.blend = blend;
@@ -698,7 +819,7 @@ bool Document::load(const QString &file, QString *error) {
             return fail();
         pending.layers.append(l);
     }
-    if (in.status() != QDataStream::Ok || !f.atEnd())
+    if (in.status() != QDataStream::Ok || !f.atEnd() || !validState(pending, error))
         return fail();
     state = pending;
     path = file;
@@ -711,7 +832,8 @@ bool Document::exportImage(const QString &file, int quality, QString *error) {
     QByteArray format = QFileInfo(file).suffix().toLower().toLatin1();
     if (format == "jpg")
         format = "jpeg";
-    if (!QImageWriter::supportedImageFormats().contains(format)) {
+    if (!QList<QByteArray>{"png", "jpeg", "webp", "bmp"}.contains(format) ||
+        !QImageWriter::supportedImageFormats().contains(format)) {
         if (error)
             *error = "Bu görüntü biçimi bu sistemde desteklenmiyor.";
         return false;

@@ -30,6 +30,7 @@
 #include <QPlainTextEdit>
 #include <QProgressDialog>
 #include <QPushButton>
+#include <QRegularExpression>
 #include <QSaveFile>
 #include <QScreen>
 #include <QScrollArea>
@@ -37,6 +38,7 @@
 #include <QSignalBlocker>
 #include <QStandardPaths>
 #include <QStatusBar>
+#include <QTabBar>
 #include <QToolBar>
 #include <QUrl>
 #include <QUuid>
@@ -156,6 +158,25 @@ QSlider *slider() {
     s->setRange(-100, 100);
     return s;
 }
+QString chooseSaveTarget(QWidget *parent, const QString &title, const QString &initial,
+                         const QString &filters, QString *selected = nullptr) {
+    QFileDialog dialog(parent, title);
+    dialog.setAcceptMode(QFileDialog::AcceptSave);
+    dialog.setFileMode(QFileDialog::AnyFile);
+    dialog.setNameFilters(filters.split(";;"));
+    auto suffix = [](const QString &filter) {
+        return QRegularExpression("\\*\\.([A-Za-z0-9]+)").match(filter).captured(1);
+    };
+    dialog.setDefaultSuffix(suffix(dialog.selectedNameFilter()));
+    dialog.selectFile(initial);
+    QObject::connect(&dialog, &QFileDialog::filterSelected, &dialog,
+                     [&](const QString &filter) { dialog.setDefaultSuffix(suffix(filter)); });
+    if (dialog.exec() != QDialog::Accepted || dialog.selectedFiles().isEmpty())
+        return {};
+    if (selected)
+        *selected = dialog.selectedNameFilter();
+    return dialog.selectedFiles().first();
+}
 QString recoveryDir() {
     QString dir = QStandardPaths::writableLocation(QStandardPaths::AppLocalDataLocation) + "/recovery";
     QDir().mkpath(dir);
@@ -235,6 +256,7 @@ MainWindow::MainWindow(bool recovery, bool useSettings) {
     refreshTimer.setInterval(25);
     connect(&refreshTimer, &QTimer::timeout, this, &MainWindow::refresh);
     connect(tabs, &QTabWidget::currentChanged, this, [this] { refresh(); });
+    connect(tabs->tabBar(), &QTabBar::tabMoved, this, [this](int, int) { refresh(); });
     connect(tabs, &QTabWidget::tabCloseRequested, this, &MainWindow::closeTab);
     autosaveTimer.setParent(this);
     autosaveTimer.setObjectName("autosaveTimer");
@@ -366,24 +388,34 @@ void MainWindow::buildMenus() {
     image->addAction(action("rotateRight", "90° sağa döndür", {}, [this] {
         if (auto *d = currentDocument()) {
             QString e;
-            d->rotate(true, &e);
-            currentCanvas()->fit();
+            if (!d->rotate(true, &e))
+                error(e);
+            else
+                currentCanvas()->fit();
         }
     }));
     image->addAction(action("rotateLeft", "90° sola döndür", {}, [this] {
         if (auto *d = currentDocument()) {
             QString e;
-            d->rotate(false, &e);
-            currentCanvas()->fit();
+            if (!d->rotate(false, &e))
+                error(e);
+            else
+                currentCanvas()->fit();
         }
     }));
     image->addAction(action("flipH", "Yatay çevir", {}, [this] {
-        if (currentDocument())
-            currentDocument()->flip(true);
+        if (currentDocument()) {
+            QString e;
+            if (!currentDocument()->flip(true, &e))
+                error(e);
+        }
     }));
     image->addAction(action("flipV", "Dikey çevir", {}, [this] {
-        if (currentDocument())
-            currentDocument()->flip(false);
+        if (currentDocument()) {
+            QString e;
+            if (!currentDocument()->flip(false, &e))
+                error(e);
+        }
     }));
     auto *filters = menuBar()->addMenu("&Filtre");
     filters->addAction(action("blur", "Bulanıklık…", {}, [this] {
@@ -500,7 +532,7 @@ void MainWindow::buildMenus() {
             "gerekmez.");
     }));
     help->addAction(action("about", "PhotoDeck hakkında", {}, [this] {
-        QMessageBox::about(this, "PhotoDeck 0.2.0 · Erken erişim",
+        QMessageBox::about(this, "PhotoDeck 0.2.1 · Erken erişim",
                            "<h2>PhotoDeck</h2><p>Hafif, yerel fotoğraf ve katman düzenleyici.</p><p>Qt "
                            "6 / C++ · Linux / Windows / macOS</p><p>AI, reklam, telemetri ve abonelik "
                            "içermez.</p><p>Bu sürüm RGB raster düzenlemeye odaklanır. PSD/RAW, CMYK/ICC "
@@ -814,6 +846,7 @@ void MainWindow::addDocument(Document *d) {
     tabs->addTab(canvas, d->title);
     tabs->setCurrentWidget(canvas);
     connect(d, &Document::updated, this, [this] {
+        updateActionAvailability();
         if (!refreshTimer.isActive())
             refreshTimer.start();
     });
@@ -857,16 +890,42 @@ bool MainWindow::openFile(const QString &file) {
     addDocument(d);
     return true;
 }
-void MainWindow::refresh() {
-    refreshing = true;
-    auto *d = currentDocument();
-    auto *c = currentCanvas();
-    bool present = d;
+MainWindow::~MainWindow() {
+    refreshTimer.stop();
+    autosaveTimer.stop();
+    uiSaveTimer.stop();
+    // QWidget base-class teardown can emit visibility signals after our member containers die.
+    for (auto *sender : findChildren<QObject *>())
+        QObject::disconnect(sender, nullptr, this, nullptr);
+    QObject::disconnect(&refreshTimer, nullptr, this, nullptr);
+    QObject::disconnect(&autosaveTimer, nullptr, this, nullptr);
+    QObject::disconnect(&uiSaveTimer, nullptr, this, nullptr);
+}
+void MainWindow::updateActionAvailability() {
+    const auto *d = currentDocument();
+    bool present = d && !d->state.layers.isEmpty();
     for (auto it = actions.begin(); it != actions.end(); ++it)
         if (it.key() != "new" && it.key() != "open" && it.key() != "quit" && it.key() != "demo" &&
             it.key() != "help" && it.key() != "about" && it.key() != "batch" &&
             !it.key().startsWith("ui."))
             it.value()->setEnabled(present);
+
+    actions["undo"]->setEnabled(present && d->canUndo());
+    actions["redo"]->setEnabled(present && d->canRedo());
+    actions["deleteLayer"]->setEnabled(present && d->state.layers.size() > 1);
+    actions["editText"]->setEnabled(present && !d->state.layers[d->state.active].text.isEmpty() &&
+                                    !d->state.layers[d->state.active].locked);
+    actions["removeMask"]->setEnabled(present && !d->state.layers[d->state.active].mask.isNull() &&
+                                      !d->state.layers[d->state.active].locked);
+    actions["invertMask"]->setEnabled(present && !d->state.layers[d->state.active].mask.isNull() &&
+                                      !d->state.layers[d->state.active].locked);
+}
+void MainWindow::refresh() {
+    refreshing = true;
+    auto *d = currentDocument();
+    auto *c = currentCanvas();
+    bool present = d;
+    updateActionAvailability();
     for (auto *s : {brightness, contrast, saturation, opacity})
         s->setEnabled(present);
     blend->setEnabled(present);
@@ -886,13 +945,7 @@ void MainWindow::refresh() {
         return;
     }
     setWindowTitle(d->title + (d->dirty ? " *" : "") + " — PhotoDeck");
-    actions["undo"]->setEnabled(d->canUndo());
-    actions["redo"]->setEnabled(d->canRedo());
-    actions["deleteLayer"]->setEnabled(d->state.layers.size() > 1);
     auto &active = d->state.layers[d->state.active];
-    actions["editText"]->setEnabled(!active.text.isEmpty() && !active.locked);
-    actions["removeMask"]->setEnabled(!active.mask.isNull() && !active.locked);
-    actions["invertMask"]->setEnabled(!active.mask.isNull() && !active.locked);
     brightness->setValue(active.brightness);
     contrast->setValue(active.contrast);
     saturation->setValue(active.saturation);
@@ -1036,12 +1089,16 @@ bool MainWindow::saveDocument(Document *d, bool saveAs) {
         currentCanvas()->finishPendingGesture();
     QString file = d->path;
     if (saveAs || file.isEmpty()) {
-        file = QFileDialog::getSaveFileName(this, "Katmanlı projeyi kaydet", d->title + ".pdeck",
-                                            "PhotoDeck projesi (*.pdeck)");
+        file = chooseSaveTarget(this, "Katmanlı projeyi kaydet",
+                                d->path.isEmpty() ? QFileInfo(d->title).completeBaseName() + ".pdeck"
+                                                  : d->path,
+                                "PhotoDeck projesi (*.pdeck)");
         if (file.isEmpty())
             return false;
-        if (!file.endsWith(".pdeck", Qt::CaseInsensitive))
-            file += ".pdeck";
+    }
+    if (!file.endsWith(".pdeck", Qt::CaseInsensitive)) {
+        error("Projeyi .pdeck uzantısıyla kaydedin.");
+        return false;
     }
     QString e;
     if (!d->save(file, &e)) {
@@ -1065,16 +1122,10 @@ void MainWindow::exportDocument() {
         filters += ";;WebP · saydam (*.webp)";
     filters += ";;BMP (*.bmp)";
     QString selected;
-    QString file = QFileDialog::getSaveFileName(this, "Görüntüyü dışa aktar",
-                                                QFileInfo(d->title).completeBaseName() + ".png", filters,
-                                                &selected);
+    QString file = chooseSaveTarget(this, "Görüntüyü dışa aktar",
+                                    QFileInfo(d->title).completeBaseName() + ".png", filters, &selected);
     if (file.isEmpty())
         return;
-    if (QFileInfo(file).suffix().isEmpty())
-        file += selected.contains("JPEG")   ? ".jpg"
-                : selected.contains("WebP") ? ".webp"
-                : selected.contains("BMP")  ? ".bmp"
-                                            : ".png";
     int quality = 95;
     if (QFileInfo(file).suffix().toLower() == "jpg" || QFileInfo(file).suffix().toLower() == "jpeg" ||
         QFileInfo(file).suffix().toLower() == "webp") {
@@ -1545,13 +1596,10 @@ void MainWindow::buildAppearanceExtras() {
     view->addAction(
         action("ui.savePreset", "Kendi presetim olarak kaydet…", {}, [this] { saveUserPreset(); }));
     view->addAction(action("ui.exportPreset", "Preset dışa aktar…", {}, [this] {
-        QString file =
-            QFileDialog::getSaveFileName(this, "Arayüz presetini dışa aktar", "PhotoDeck-gorunum.pdui",
-                                         "PhotoDeck görünümü (*.pdui)");
+        QString file = chooseSaveTarget(this, "Arayüz presetini dışa aktar", "PhotoDeck-gorunum.pdui",
+                                        "PhotoDeck görünümü (*.pdui)");
         if (file.isEmpty())
             return;
-        if (!file.endsWith(".pdui", Qt::CaseInsensitive))
-            file += ".pdui";
         QString e;
         if (!exportUiPreset(file, &e))
             error(e);

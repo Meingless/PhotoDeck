@@ -14,6 +14,8 @@ else
     (cd "$photodeck_build" && "$photodeck_qmake" "$photodeck_root/PhotoDeck.pro" && make -j4)
     mkdir -p "$photodeck_root/build-tests"
     (cd "$photodeck_root/build-tests" && "$photodeck_qmake" "$photodeck_root/tests/tests.pro" && make -j4 && QT_QPA_PLATFORM=offscreen ./photodeck-tests)
+    mkdir -p "$photodeck_root/build-audit"
+    (cd "$photodeck_root/build-audit" && "$photodeck_qmake" "$photodeck_root/tests/features.pro" && make -j4 && QT_QPA_PLATFORM=offscreen ./photodeck-feature-audit)
     mkdir -p "$photodeck_root/bin"
     cp "$photodeck_build/bin/photodeck" "$photodeck_root/bin/photodeck"
 fi

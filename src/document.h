@@ -32,6 +32,8 @@ struct State {
 class Document : public QObject {
     Q_OBJECT
   public:
+    static constexpr int MaxCoordinate = 1 << 24;
+    static bool validOffset(QPoint offset);
     static constexpr qint64 MaxPixels = 16 * 1024 * 1024;
     static constexpr qint64 MaxLayerBytes = 256 * 1024 * 1024;
     static constexpr qint64 HistoryBudget = 128 * 1024 * 1024;
@@ -56,7 +58,7 @@ class Document : public QObject {
     bool crop(QRect rect, QString *error);
     bool resize(QSize size, QString *error);
     bool rotate(bool clockwise, QString *error);
-    void flip(bool horizontal);
+    bool flip(bool horizontal, QString *error = nullptr);
     void adjust(int b, int c, int s);
     bool addText(QString text, QFont font, QColor color, QPoint at, QString *error);
     bool editText(QString text, QFont font, QColor color, QString *error = nullptr);
@@ -99,5 +101,5 @@ class Document : public QObject {
     bool inEdit = false;
     void resetHistory(const QString &label);
     void trimHistory();
-    bool allows(qint64 extra, QString *error) const;
+    bool allows(qint64 extra, QString *error, int addedLayers = 1) const;
 };

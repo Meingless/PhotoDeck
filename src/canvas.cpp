@@ -1,4 +1,5 @@
 #include "canvas.h"
+#include <QFocusEvent>
 #include <QKeyEvent>
 #include <QMouseEvent>
 #include <QPainterPath>
@@ -191,12 +192,14 @@ void Canvas::stroke(QPointF from, QPointF to) {
     if (document->editingMask) {
         int gray = tool == Eraser ? 0 : qGray(color.rgb());
         color = QColor(gray, gray, gray);
-    } else if (tool == Eraser)
+    } else if (tool == Eraser) {
+        color = Qt::white;
         p.setCompositionMode(QPainter::CompositionMode_DestinationOut);
+    }
     qreal distance = QLineF(a, b).length();
-    int count = qMax(1, qCeil(distance / qMax(1.0, brushSize * .16)));
-    for (int i = 0; i <= count; ++i) {
-        QPointF at = a + (b - a) * (qreal(i) / count);
+    int count = distance < .001 ? 0 : qMax(1, qCeil(distance / qMax(1.0, brushSize * .16)));
+    for (int i = count ? 1 : 0; i <= count; ++i) {
+        QPointF at = count ? a + (b - a) * (qreal(i) / count) : a;
         qreal radius = brushSize / 2.0;
         if (tool == Clone) {
             QPointF source = QPointF(cloneAnchor - l.offset) + (at - (press - l.offset));
@@ -224,7 +227,8 @@ void Canvas::stroke(QPointF from, QPointF to) {
         }
     }
     p.end();
-    l.text.clear();
+    if (!document->editingMask)
+        l.text.clear();
     document->changed();
 }
 void Canvas::fillAt(QPoint docPoint) {
@@ -242,8 +246,14 @@ void Canvas::fillAt(QPoint docPoint) {
         int g = qGray(color.rgb());
         color = {g, g, g};
     }
-    color.setAlphaF(color.alphaF() * brushOpacity / 100.0);
-    QRgb replacement = qPremultiply(color.rgba());
+    QImage swatch(1, 1, QImage::Format_ARGB32_Premultiplied);
+    swatch.fill(old);
+    {
+        QPainter blend(&swatch);
+        blend.setOpacity(brushOpacity / 100.0);
+        blend.fillRect(swatch.rect(), color);
+    }
+    QRgb replacement = swatch.pixel(0, 0);
     if (old == replacement)
         return;
     document->beginEdit();
@@ -274,7 +284,8 @@ void Canvas::fillAt(QPoint docPoint) {
                 }
             }
     }
-    l.text.clear();
+    if (!document->editingMask)
+        l.text.clear();
     document->commit("Boya kovası");
 }
 void Canvas::mousePressEvent(QMouseEvent *e) {
@@ -291,16 +302,16 @@ void Canvas::mousePressEvent(QMouseEvent *e) {
         return;
     if (tool == Picker) {
         QImage image = document->composite();
-        if (image.rect().contains(hover.toPoint()))
-            emit colorPicked(image.pixelColor(hover.toPoint()));
+        if (image.rect().contains(QPoint(qFloor(hover.x()), qFloor(hover.y()))))
+            emit colorPicked(image.pixelColor(QPoint(qFloor(hover.x()), qFloor(hover.y()))));
         return;
     }
     if (tool == Text) {
-        emit textRequested(hover.toPoint());
+        emit textRequested(QPoint(qFloor(hover.x()), qFloor(hover.y())));
         return;
     }
     if (tool == Clone && (e->modifiers() & Qt::AltModifier)) {
-        cloneAnchor = hover.toPoint();
+        cloneAnchor = QPoint(qFloor(hover.x()), qFloor(hover.y()));
         hasClone = true;
         emit toolHint("Klon kaynağı seçildi. Boyamak için sürükleyin.");
         update();
@@ -323,7 +334,7 @@ void Canvas::mousePressEvent(QMouseEvent *e) {
         return;
     }
     if (tool == Fill) {
-        fillAt(hover.toPoint());
+        fillAt(QPoint(qFloor(hover.x()), qFloor(hover.y())));
         return;
     }
     document->beginEdit();
@@ -344,20 +355,26 @@ void Canvas::mouseMoveEvent(QMouseEvent *e) {
         update();
         return;
     }
-    if (!dragging) {
+    if (dragging)
+        advanceGesture(hover, e->modifiers());
+    else
         update();
+}
+void Canvas::advanceGesture(QPointF position, Qt::KeyboardModifiers modifiers) {
+    if (!dragging)
         return;
-    }
+    hover = position;
     if (tool == Move) {
         auto &l = document->state.layers[document->state.active];
-        QPoint off = initialOffset + (hover - press).toPoint();
-        l.offset = {qBound(-32768, off.x(), 32768), qBound(-32768, off.y(), 32768)};
+        QPoint offset = initialOffset + (hover - press).toPoint();
+        l.offset = {qBound(-32768, offset.x(), 32768), qBound(-32768, offset.y(), 32768)};
         document->changed();
-    } else if (tool == Brush || tool == Pencil || tool == Eraser || tool == Clone)
-        stroke(last, hover);
-    else {
+    } else if (tool == Brush || tool == Pencil || tool == Eraser || tool == Clone) {
+        if (QLineF(last, hover).length() > .001)
+            stroke(last, hover);
+    } else {
         preview = QRectF(press, hover);
-        if ((e->modifiers() & Qt::ShiftModifier) && (tool == Rectangle || tool == Ellipse)) {
+        if ((modifiers & Qt::ShiftModifier) && (tool == Rectangle || tool == Ellipse)) {
             qreal side = qMax(qAbs(hover.x() - press.x()), qAbs(hover.y() - press.y()));
             preview.setBottomRight(press + QPointF(hover.x() < press.x() ? -side : side,
                                                    hover.y() < press.y() ? -side : side));
@@ -366,6 +383,7 @@ void Canvas::mouseMoveEvent(QMouseEvent *e) {
     }
     last = hover;
 }
+
 void Canvas::drawShape() {
     QRectF r = preview.normalized();
     if (r.width() < 1 || r.height() < 1)
@@ -389,7 +407,8 @@ void Canvas::drawShape() {
     else
         p.drawEllipse(r);
     p.end();
-    l.text.clear();
+    if (!document->editingMask)
+        l.text.clear();
 }
 void Canvas::applyGradient() {
     if (QLineF(press, last).length() < 1)
@@ -410,7 +429,8 @@ void Canvas::applyGradient() {
     p.setOpacity(brushOpacity / 100.0);
     p.fillRect(target().rect(), g);
     p.end();
-    l.text.clear();
+    if (!document->editingMask)
+        l.text.clear();
 }
 bool Canvas::finishPendingGesture() {
     if (panning) {
@@ -442,12 +462,18 @@ bool Canvas::finishPendingGesture() {
 }
 void Canvas::mouseReleaseEvent(QMouseEvent *e) {
     if (e->button() == Qt::MiddleButton || (e->button() == Qt::LeftButton && panning)) {
+        pan += e->position() - widgetLast;
+        widgetLast = e->position();
         panning = false;
+        fitted = false;
         updateCursor();
+        update();
         return;
     }
-    if (e->button() == Qt::LeftButton)
+    if (e->button() == Qt::LeftButton) {
+        advanceGesture(toImage(e->position()), e->modifiers());
         finishPendingGesture();
+    }
 }
 void Canvas::wheelEvent(QWheelEvent *e) {
     setZoom(zoom * std::pow(1.0015, e->angleDelta().y()), e->position());
@@ -465,6 +491,10 @@ void Canvas::keyPressEvent(QKeyEvent *e) {
     }
     QWidget::keyPressEvent(e);
 }
+void Canvas::focusOutEvent(QFocusEvent *event) {
+    finishPendingGesture();
+    QWidget::focusOutEvent(event);
+}
 void Canvas::deleteSelection() {
     auto &l = document->state.layers[document->state.active];
     if (l.locked)
@@ -481,6 +511,7 @@ void Canvas::deleteSelection() {
         p.fillRect(region, Qt::transparent);
     }
     p.end();
-    l.text.clear();
+    if (!document->editingMask)
+        l.text.clear();
     document->commit("Seçim silindi");
 }

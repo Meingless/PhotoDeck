@@ -30,7 +30,7 @@ jobs:
             cmake_args: '-DCMAKE_OSX_ARCHITECTURES=arm64 -DCMAKE_OSX_DEPLOYMENT_TARGET=12.0'
     runs-on: ${{ matrix.os }}
     env:
-      PHOTO_VERSION: 0.2.0-ea.1
+      PHOTO_VERSION: 0.2.1-ea.1
       QT_QPA_PLATFORM: offscreen
     steps:
       - uses: actions/checkout@v4
@@ -54,6 +54,8 @@ jobs:
       - name: Build
         run: cmake --build build-release --config Release --parallel 4
       - name: Functional tests
+        env:
+          CTEST_OUTPUT_ON_FAILURE: 1
         run: ctest --test-dir build-release -C Release --output-on-failure --output-junit tests.xml
       - name: Windows portable package
         env:
@@ -76,6 +78,16 @@ jobs:
           Copy-Item -Recurse packaging/licenses,examples $folder/
           $process = Start-Process -FilePath (Resolve-Path "$folder/PhotoDeck.exe") -ArgumentList '--no-settings','--preset','focus','--screenshot',"$PWD/windows-startup.png" -Wait -PassThru -RedirectStandardOutput windows-startup.log -RedirectStandardError windows-startup-error.log
           if ($process.ExitCode -ne 0 -or !(Test-Path windows-startup.png)) { Get-Content windows-startup-error.log; throw "Windows package startup failed with exit $($process.ExitCode)" }
+          Copy-Item "$env:QT_ROOT_DIR/plugins/platforms/qoffscreen.dll" "$folder/platforms/"
+          Copy-Item "$env:QT_ROOT_DIR/bin/Qt6Test.dll" "$folder/"
+          $env:QT_QPA_PLATFORM = 'offscreen'
+          foreach ($test in 'photodeck-tests','photodeck-feature-audit') {
+            Copy-Item "build-release/Release/$test.exe" "$folder/$test.exe"
+            & "$folder/$test.exe" -o "$PWD/$test-packaged.xml,junitxml" -o "$PWD/$test-packaged.txt,txt"
+            if ($LASTEXITCODE -ne 0) { throw "Packaged runtime audit failed: $test" }
+            Remove-Item "$folder/$test.exe"
+          }
+          Remove-Item "$folder/Qt6Test.dll"
           Compress-Archive -Path $folder -DestinationPath "$folder.zip"
       - name: macOS application package
         env:
@@ -99,6 +111,14 @@ jobs:
           python3 scripts/package-linux-portable.py --binary build-release/photodeck --qt "$QT_ROOT_DIR" --output dist --version "$PHOTO_VERSION"
           "dist/PhotoDeck-$PHOTO_VERSION-linux-x86_64/launch.sh" --no-settings --preset focus --screenshot linux-startup.png
           test -s linux-startup.png
+          package="dist/PhotoDeck-$PHOTO_VERSION-linux-x86_64"
+          cp "$QT_ROOT_DIR/lib/libQt6Test.so.6" "$package/lib/"
+          for test in photodeck-tests photodeck-feature-audit; do
+            cp "build-release/$test" "$package/bin/$test"
+            LD_LIBRARY_PATH="$PWD/$package/lib" QT_PLUGIN_PATH="$PWD/$package/plugins" "$package/bin/$test" -o "$PWD/$test-packaged.xml,junitxml" -o "$PWD/$test-packaged.txt,txt"
+            rm "$package/bin/$test"
+          done
+          rm "$package/lib/libQt6Test.so.6"
       - name: Checksums
         shell: bash
         run: |
@@ -119,5 +139,7 @@ jobs:
             build-release/tests.xml
             *-startup.png
             *-startup*.log
+            *-packaged.xml
+            *-packaged.txt
           if-no-files-found: warn
           retention-days: 30

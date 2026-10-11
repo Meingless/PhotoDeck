@@ -1,4 +1,4 @@
-# PhotoDeck 0.2.0 Early Access 1
+# PhotoDeck 0.2.1 Early Access 1
 
 AI içermeyen yerel fotoğraf ve katman düzenleyici. Erken erişim sürümüdür; önemli orijinalleri koruyun ve ayrı proje kopyalarıyla çalışın.
 
@@ -12,8 +12,10 @@ Görünüm ayarları bilgisayarın standart uygulama yapılandırma klasöründe
 - Windows x64: ZIP'i tamamen açın; PhotoDeck.exe çalıştırın. Qt DLL'leri ve görüntü eklentileri uygulamayla birlikte gelir. VC++ çalışma zamanı DLL'leri uygulamanın yanına eklenir. Windows 10/11 x64 hedeflenir.
 - macOS Intel / Apple Silicon: ZIP'i açıp PhotoDeck.app uygulamasını Applications klasörüne taşıyın. Erken erişim paketleri Apple Developer kimliğiyle imzalanmış veya noter onaylı değildir; macOS ilk açılışta güvenlik onayı isteyebilir. Ad hoc imza yayıncı kimliğini doğrulamaz.
 
-PNG/JPEG/WebP/BMP ve .pdeck desteklenir. PSD/PSB, RAW, CMYK/ICC baskı, ileri vektör yolları ve tablet basıncı mevcut kapsamın dışındadır. 16 MP, 64 katman, 256 MiB piksel/maske ve 30 durum/128 MiB geçmiş sınırları vardır. Kurtarma kopyası 45 saniyede bir alınır; son değişiklikleri her zaman kapsamayabilir.
+PNG/JPEG/WebP/BMP ve .pdeck desteklenir. PSD/PSB, RAW, CMYK/ICC baskı, ileri vektör yolları ve tablet basıncı mevcut kapsamın dışındadır. 16 MP, 64 katman, 256 MiB piksel/maske ve 30 durum/128 MiB ek geçmiş belleği sınırları vardır. Kurtarma kopyası 45 saniyede bir alınır; son değişiklikleri her zaman kapsamayabilir.
 
 Derleme sonucu ile hedef donanım testi farklıdır: CI testleri ve paket açılış görüntüleri sağlanır; minimum donanım gereksinimi, bütün Linux dağıtımları, Windows sürümleri ve macOS cihazları test edilmiş değildir. SHA256SUMS.txt indirdiğiniz paketin bütünlüğünü kontrol eder.
 
 Kaynak ve lisanslar paketle birlikte hazırlanır. Üçüncü taraf yazılım bildirimleri THIRD-PARTY.md ve licenses/ içindedir.
+
+Bu onarım sürümü hızlı sürükleme uçlarını, metin maskelerini, italik metin sınırlarını, büyük belgelerde geri almayı, uzantısız kayıtta üzerine yazma onayını ve panel kapanış yaşam döngüsünü düzeltir.

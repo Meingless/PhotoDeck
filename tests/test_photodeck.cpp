@@ -70,11 +70,11 @@ class PhotoDeckTests : public QObject {
     void adjustmentsAndBlurPreserveSource() {
         Document d;
         d.create({9, 9});
+        d.beginEdit();
         auto &l = d.state.layers[0];
         l.pixels.fill(Qt::black);
         l.pixels.setPixelColor(4, 4, Qt::white);
         QImage original = l.pixels;
-        d.beginEdit();
         d.commit("seed");
         d.beginEdit();
         l.blur = 2;
@@ -187,13 +187,13 @@ class PhotoDeckTests : public QObject {
     void transformsKeepLayerAlignment() {
         Document d;
         d.create({20, 15});
+        d.beginEdit();
         d.state.layers[0].pixels.fill(Qt::transparent);
         QPainter p(&d.state.layers[0].pixels);
         p.fillRect(3, 4, 6, 5, Qt::red);
         p.end();
         QString err;
         QImage original = d.composite();
-        d.beginEdit();
         d.commit("seed");
         QVERIFY(d.crop(QRect(2, 3, 12, 10), &err));
         QCOMPARE(d.composite(), original.copy(2, 3, 12, 10));

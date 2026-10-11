@@ -1,4 +1,4 @@
-# PhotoDeck 0.2.0 Early Access
+# PhotoDeck 0.2.1 Early Access
 
 AI içermeyen, tamamen yerel, C++/Qt 6 ile geliştirilen fotoğraf ve katman düzenleyici. Linux, Windows ve macOS için ortak kaynak kullanır. Tarayıcı motoru, Python çalışma zamanı, bulut hesabı, abonelik veya ağ servisi gerekmez.
 
@@ -34,7 +34,7 @@ Açılıştaki Horizon kompozisyonu PhotoDeck için kodla çizilmiş özgün bir
 
 ## Hafiflik ve güvenlik sınırları
 
-Tuval en fazla 16 megapiksel, her kenar en fazla 16384 piksel. En fazla 64 katman ve 256 MiB kaynak piksel/maske verisi. Geçmiş en fazla 30 durum ve toplam 128 MiB benzersiz piksel verisi saklar; büyük belgelerde eski adımlar daha erken atılır. Paylaşılan görüntü tamponları gereksiz kopyaları azaltır; filtre sonuçları önbelleğe alınır. Bu sınırlar toplam süreç RAM'inin üst sınırı değildir: tuval önizlemesi, filtre tamponları, Qt ve dosya kodlama ek bellek kullanır.
+Tuval en fazla 16 megapiksel, her kenar en fazla 16384 piksel. En fazla 64 katman ve 256 MiB kaynak piksel/maske verisi. Geçmiş en fazla 30 durum ve canlı belgeden ayrı toplam 128 MiB benzersiz piksel verisi saklar; büyük belgelerde eski adımlar daha erken atılır. Paylaşılan görüntü tamponları gereksiz kopyaları azaltır; filtre sonuçları önbelleğe alınır. Bu sınırlar toplam süreç RAM'inin üst sınırı değildir: tuval önizlemesi, filtre tamponları, Qt ve dosya kodlama ek bellek kullanır.
 
 Bozuk proje okumaları geçici belge üzerinde doğrulanır ve açık belgeyi değiştirmez. Uzunluk, boyut, katman sayısı, maske boyutu ve sayısal parametreler sınırlanır. Proje dosyalarında komut, betik veya harici kaynak çalıştırılmaz. Başarısız kayıt açık belgenin kaydedilmiş durumunu değiştirmez. Proje/geçmiş ayrıdır: undo geçmişi dosyaya yazılmaz. Kurtarma kopyaları son 45 saniyedeki değişiklikleri her zaman kapsamayabilir; büyük belgelerde PNG kodlama arayüzde kısa beklemeye neden olabilir.
 
@@ -54,7 +54,7 @@ Windows'ta Qt MSVC veya MinGW kitiyle derleyin; `windeployqt` Qt DLL'lerini ve e
 
 `.github/workflows/build.yml` üç işletim sistemi için derleme, işlev testleri ve paket hazırlama akışını içerir. Erken erişim akışı Linux x86_64, Windows x64 ve macOS Intel/Apple Silicon için ayrı paketler, test raporları ve açılış görüntüleri üretir. Gerçek run sonuçları artifacts/early-access içinde kaydedilir.
 
-Linux paketleme: `./scripts/package-linux.sh`. Bu küçük paket sistem Qt kullanır. CI Linux çıktısı da kullanılan Qt sürümünün sistemde mevcut olmasını gerektirir.
+Linux paketleme: `./scripts/package-linux.sh` sistem Qt kullanan küçük geliştirici paketini hazırlar. Erken erişim CI paketi `scripts/package-linux-portable.py` ile gerekli Qt kütüphanelerini, Wayland bileşenlerini ve uyumlu font yapılandırmasını içerir.
 
 ## Mevcut kapsam
 
@@ -67,3 +67,5 @@ Bu ilk kullanılabilir sürüm Photoshop'un bütün profesyonel iş akışların
 `document` belge modeli, harmanlama, maske, filtre, geçmiş ve dosya biçiminin sahibidir. `canvas` koordinat dönüşümleri, zoom/pan ve araç etkileşimlerini yürütür. `mainwindow` belge sekmeleri, menüler, katman paneli, toplu işlem ve kurtarmayı birleştirir. `tests/test_photodeck.cpp` aynı çekirdek ve gerçek widget olaylarıyla davranışları doğrular.
 
 Uygulama kodu ve örnek çizim MIT lisanslıdır. Qt ayrı LGPLv3/GPLv3 veya ticari lisanslı bağımlılıktır; Windows/macOS dağıtımlarında Qt lisans metinlerini ve kaynak erişimi bildirimini ekleyin.
+
+İşlev doğrulama kapsamı: [docs/FEATURE-AUDIT.md](docs/FEATURE-AUDIT.md).

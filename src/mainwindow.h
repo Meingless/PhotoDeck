@@ -37,6 +37,7 @@ class MainWindow : public QMainWindow {
     Q_OBJECT
   public:
     explicit MainWindow(bool recovery = true, bool useSettings = true);
+    ~MainWindow() override;
     UiSettings uiSettings() const { return appearance; }
     void applyUiPreset(const QString &id, bool persist = true);
     void applyUiSettings(const UiSettings &settings, bool resetLayout = true, bool persist = true);
@@ -103,6 +104,7 @@ class MainWindow : public QMainWindow {
     QAction *action(const QString &id, const QString &text, const QKeySequence &shortcut,
                     std::function<void()> fn);
     void refresh();
+    void updateActionAvailability();
     void newDocument();
     void chooseOpen();
     void importLayer();
