@@ -52,6 +52,8 @@ jobs:
       - name: Functional tests
         run: ctest --test-dir build-release -C Release --output-on-failure --output-junit tests.xml
       - name: Windows portable package
+        env:
+          QT_QPA_PLATFORM: windows
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
@@ -67,6 +69,8 @@ jobs:
           if ($LASTEXITCODE -ne 0 -or !(Test-Path windows-startup.png)) { throw "Windows package startup failed" }
           Compress-Archive -Path $folder -DestinationPath "$folder.zip"
       - name: macOS application package
+        env:
+          QT_QPA_PLATFORM: cocoa
         if: runner.os == 'macOS'
         run: |
           folder="dist/PhotoDeck-$PHOTO_VERSION-${{ matrix.label }}"
