@@ -915,15 +915,29 @@ class FeatureAudit : public QObject {
         MainWindow w(false, false);
         w.show();
         w.demo();
-        for (auto id : {"help", "about"})
-            QVERIFY(driveModal([&] { command(w, id)->trigger(); },
-                               [](QDialog *d) {
-                                   auto *box = qobject_cast<QMessageBox *>(d);
-                                   if (!box)
-                                       return false;
-                                   box->accept();
-                                   return true;
-                               }));
+        QVERIFY(driveModal([&] { command(w, "help")->trigger(); },
+                           [](QDialog *dialog) {
+                               auto *box = qobject_cast<QMessageBox *>(dialog);
+                               if (!box)
+                                   return false;
+                               box->accept();
+                               return true;
+                           }));
+        int aboutSeen = 0;
+        QTimer aboutCloser;
+        aboutCloser.setInterval(10);
+        connect(&aboutCloser, &QTimer::timeout, [&] {
+            for (auto *widget : QApplication::topLevelWidgets())
+                if (auto *box = qobject_cast<QMessageBox *>(widget))
+                    if (box->isVisible() && box->text().contains("PhotoDeck")) {
+                        ++aboutSeen;
+                        box->accept();
+                    }
+        });
+        aboutCloser.start();
+        command(w, "about")->trigger();
+        QTRY_VERIFY_WITH_TIMEOUT(aboutSeen > 0, 5000);
+        aboutCloser.stop();
         command(w, "demo")->trigger();
         QCOMPARE(w.findChild<QTabWidget *>("documents")->count(), 2);
         command(w, "close")->trigger();
@@ -1210,6 +1224,26 @@ class FeatureAudit : public QObject {
         QVERIFY(!handle->isEnabled());
         for (auto *dock : w.findChildren<QDockWidget *>())
             QVERIFY(!(dock->features() & QDockWidget::DockWidgetMovable));
+    }
+    void transparentFormatsPreserveAlpha_data() {
+        QTest::addColumn<QString>("extension");
+        QTest::newRow("png") << QString("png");
+        QTest::newRow("webp") << QString("webp");
+    }
+    void transparentFormatsPreserveAlpha() {
+        QFETCH(QString, extension);
+        QTemporaryDir dir;
+        Document d;
+        d.create({32, 32});
+        QPainter painter(&d.state.layers[0].pixels);
+        painter.fillRect(8, 8, 16, 16, QColor(80, 160, 220, 128));
+        painter.end();
+        QString e, path = dir.filePath("alpha." + extension);
+        QVERIFY2(d.exportImage(path, 100, &e), qPrintable(e));
+        QImage read(path);
+        QVERIFY(read.hasAlphaChannel());
+        QCOMPARE(read.pixelColor(2, 2).alpha(), 0);
+        QCOMPARE(read.pixelColor(12, 12).alpha(), 128);
     }
     void singleBrushStampRespectsFlow() {
         Document d;
