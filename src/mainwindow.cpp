@@ -768,7 +768,9 @@ void MainWindow::buildInspector() {
                    : id == "layerDown" ? "↓"
                    : id == "lock"      ? "◇"
                                        : "−");
-        b->setFixedSize(38, 29);
+        b->setMinimumSize(24, 29);
+        b->setMaximumHeight(34);
+        b->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
         bl->addWidget(b);
     }
     layout->addWidget(buttons);
