@@ -1,0 +1,424 @@
+<div id="photodeck-designs">
+  <div class="viz-carousel" aria-label="PhotoDeck arayüz tasarımları" data-previous-label="Önceki" data-next-label="Sonraki">
+    <section data-variant="Grafit" class="pd-stage" aria-label="Grafit arayüz tasarımı"><div class="pd-mount" data-design="graphite"></div></section>
+    <section data-variant="Kağıt" class="pd-stage" aria-label="Kağıt arayüz tasarımı" hidden><div class="pd-mount" data-design="paper"></div></section>
+    <section data-variant="Odak" class="pd-stage" aria-label="Odak arayüz tasarımı" hidden><div class="pd-mount" data-design="focus"></div></section>
+    <section data-variant="Fotoğraf Masası" class="pd-stage" aria-label="Fotoğraf Masası arayüz tasarımı" hidden><div class="pd-mount" data-design="film"></div></section>
+    <section data-variant="Çalışma Tezgahı" class="pd-stage" aria-label="Çalışma Tezgahı arayüz tasarımı" hidden><div class="pd-mount" data-design="workbench"></div></section>
+    <section data-variant="Şerit" class="pd-stage" aria-label="Şerit arayüz tasarımı" hidden><div class="pd-mount" data-design="ribbon"></div></section>
+    <section data-variant="Çizim Atölyesi" class="pd-stage" aria-label="Çizim Atölyesi arayüz tasarımı" hidden><div class="pd-mount" data-design="ink"></div></section>
+    <section data-variant="Kompakt" class="pd-stage" aria-label="Kompakt arayüz tasarımı" hidden><div class="pd-mount" data-design="compact"></div></section>
+    <section data-variant="Dokunmatik" class="pd-stage" aria-label="Dokunmatik arayüz tasarımı" hidden><div class="pd-mount" data-design="touch"></div></section>
+    <section data-variant="Modüler" class="pd-stage" aria-label="Modüler arayüz tasarımı" hidden><div class="pd-mount" data-design="modular"></div></section>
+  </div>
+</div>
+<style>
+#photodeck-designs .pd-stage {height:872px;box-sizing:border-box;padding-top:8px;}
+#photodeck-designs .pd-caption {font:14px/1.5 system-ui,sans-serif;display:flex;gap:12px;align-items:baseline;margin:0 0 12px;flex-wrap:wrap;color:light-dark(#33434f,#c8d0d6);}
+#photodeck-designs .pd-caption strong {font-weight:600;}
+#photodeck-designs .pd-caption span {font-size:12px;color:light-dark(#566575,#a0afb9);}
+#photodeck-designs .pd-app {
+  --pd-bg:light-dark(#f2f4f6,#15191f);--pd-panel:light-dark(#fff,#252c35);--pd-raised:light-dark(#e9eef1,#303b46);
+  --pd-canvas:light-dark(#d8e0e5,#10161c);--pd-text:light-dark(#20313f,#dbe4eb);--pd-muted:light-dark(#526575,#a0b0bd);
+  --pd-line:light-dark(#d4dce1,#3b4650);--pd-accent:#78d6ba;--pd-on-accent:#102922;--pd-radius:5px;--pd-font:13px;
+  font:var(--pd-font)/1.45 "Inter",system-ui,-apple-system,"Segoe UI",sans-serif;
+  color:var(--pd-text);background:var(--pd-bg);border:1px solid var(--pd-line);border-radius:var(--pd-radius);
+  height:800px;display:flex;flex-direction:column;overflow:hidden;color-scheme:dark;box-sizing:border-box;
+}
+#photodeck-designs .pd-app * {box-sizing:border-box;min-width:0;}
+#photodeck-designs .pd-app button,#photodeck-designs .pd-app input,#photodeck-designs .pd-app select {font:inherit;}
+#photodeck-designs .pd-app button {background:transparent;color:inherit;min-height:0;min-width:0;margin:0;box-shadow:none;border:1px solid transparent;border-radius:var(--pd-radius);padding:7px 9px;display:inline-flex;align-items:center;justify-content:center;gap:7px;white-space:nowrap;}
+#photodeck-designs .pd-app button:hover {background:var(--pd-raised);}
+#photodeck-designs .pd-app button.pd-active {background:color-mix(in srgb,var(--pd-accent) 14%,var(--pd-panel));color:var(--pd-text);border-color:color-mix(in srgb,var(--pd-accent) 42%,var(--pd-line));}
+#photodeck-designs .pd-app button.pd-primary {background:var(--pd-accent);color:var(--pd-on-accent);padding:7px 13px;}
+#photodeck-designs .pd-app button.pd-primary:hover {filter:brightness(1.1);}
+#photodeck-designs .pd-app svg {flex-shrink:0;width:17px;height:17px;}
+#photodeck-designs .pd-top {display:flex;align-items:center;gap:12px;padding:10px 16px;background:var(--pd-panel);border-bottom:1px solid var(--pd-line);flex-shrink:0;min-height:51px;}
+#photodeck-designs .pd-brand {font-size:17px;font-weight:700;letter-spacing:-.5px;white-space:nowrap;display:flex;align-items:center;gap:9px;}
+#photodeck-designs .pd-logo {width:23px;height:23px;background:var(--pd-accent);color:var(--pd-on-accent);display:grid;place-items:center;border-radius:6px;font-size:15px;font-weight:700;}
+#photodeck-designs .pd-menus {display:flex;gap:1px;align-items:center;}
+#photodeck-designs .pd-menus button {font-size:12px;padding:5px 7px;color:var(--pd-muted);}
+#photodeck-designs .pd-spacer {flex:1;}
+#photodeck-designs .pd-head-actions {display:flex;gap:3px;align-items:center;}
+#photodeck-designs .pd-tabs {display:flex;gap:3px;align-items:center;border-bottom:1px solid var(--pd-line);padding:0 10px;min-height:36px;background:var(--pd-bg);flex-shrink:0;}
+#photodeck-designs .pd-tabs button {padding:7px 10px;border-radius:0;font-size:12px;color:var(--pd-muted);}
+#photodeck-designs .pd-tabs .pd-tab-active {border-bottom:2px solid var(--pd-accent);color:var(--pd-text);}
+#photodeck-designs .pd-tab-close {font-size:15px;margin-left:12px;color:var(--pd-muted);}
+#photodeck-designs .pd-options {display:flex;gap:14px;padding:9px 14px;background:var(--pd-panel);border-bottom:1px solid var(--pd-line);align-items:center;min-height:41px;flex-shrink:0;}
+#photodeck-designs .pd-options label {display:flex;gap:7px;align-items:center;color:var(--pd-muted);font-size:12px;}
+#photodeck-designs .pd-options input[type=number] {min-height:0;height:25px;width:54px;background:var(--pd-bg);border:1px solid var(--pd-line);border-radius:var(--pd-radius);color:var(--pd-text);padding:3px 4px;}
+#photodeck-designs .pd-options .pd-option-name {font-size:12px;font-weight:600;color:var(--pd-text);}
+#photodeck-designs .pd-options .pd-rule {height:18px;width:1px;background:var(--pd-line);}
+#photodeck-designs .pd-workspace {display:grid;grid-template-columns:48px minmax(0,1fr) 224px;grid-template-areas:"tools canvas inspector";grid-template-rows:minmax(0,1fr);flex:1;min-height:0;position:relative;}
+#photodeck-designs .pd-tools {grid-area:tools;display:flex;flex-direction:column;align-items:center;gap:3px;padding:10px 5px;background:var(--pd-panel);border-right:1px solid var(--pd-line);}
+#photodeck-designs .pd-tool {min-height:30px;width:34px;padding:6px!important;}
+#photodeck-designs .pd-tool .pd-tool-label {display:none;}
+#photodeck-designs .pd-swatches {display:flex;gap:4px;align-items:center;margin-top:auto;padding-top:10px;}
+#photodeck-designs .pd-color {min-height:0;width:25px;height:25px;padding:0;border:1px solid var(--pd-line);background:none;border-radius:3px;}
+#photodeck-designs .pd-area {grid-area:canvas;background:var(--pd-canvas);position:relative;display:flex;align-items:center;justify-content:center;padding:29px 26px 24px;min-height:0;}
+#photodeck-designs .pd-ruler {position:absolute;top:0;left:0;right:0;height:21px;padding:3px 12px;color:var(--pd-muted);background:var(--pd-bg);font-size:10px;display:flex;justify-content:space-between;}
+#photodeck-designs .pd-board {position:relative;max-width:660px;width:100%;aspect-ratio:1.4;box-shadow:0 7px 28px #0003;max-height:100%;isolation:isolate;overflow:hidden;}
+#photodeck-designs .pd-scene {display:block;width:100%;height:100%;aspect-ratio:1.4;}
+#photodeck-designs .pd-art-text {position:absolute;left:15%;top:54%;color:#f1eee4;letter-spacing:.13em;font-size:clamp(20px,4.6cqw,58px);line-height:1;font-weight:700;font-family:"Arial",sans-serif;pointer-events:none;}
+#photodeck-designs .pd-art-sub {position:absolute;left:15.5%;top:70%;color:#d8e6e1;font-size:clamp(8px,1.1cqw,13px);letter-spacing:.35em;pointer-events:none;}
+#photodeck-designs .pd-app {container-type:inline-size;}
+#photodeck-designs .pd-area-label {position:absolute;left:14px;bottom:6px;font-size:10px;color:var(--pd-muted);}
+#photodeck-designs .pd-inspector {grid-area:inspector;background:var(--pd-panel);border-left:1px solid var(--pd-line);padding:14px;display:flex;flex-direction:column;gap:14px;}
+#photodeck-designs .pd-panel-title {display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;gap:6px;font-size:11px;font-weight:600;letter-spacing:.07em;}
+#photodeck-designs .pd-panel-title button {padding:0 3px;font-size:16px;}
+#photodeck-designs .pd-hist {height:41px;display:flex;gap:2px;align-items:flex-end;border-bottom:1px solid var(--pd-line);margin-bottom:12px;padding:3px 5px;}
+#photodeck-designs .pd-hist i {width:3px;flex:1;background:var(--pd-accent);opacity:.62;}
+#photodeck-designs .pd-adjustment {display:block;margin-bottom:9px;color:var(--pd-muted);font-size:11px;}
+#photodeck-designs .pd-adjustment>span {display:flex;justify-content:space-between;align-items:center;}
+#photodeck-designs .pd-adjustment output {font-variant-numeric:tabular-nums;}
+#photodeck-designs .pd-adjustment input[type=range] {min-height:0;padding:0;box-shadow:none;border:0;background:none;display:block;width:100%;height:14px;accent-color:var(--pd-accent);margin:4px 0 0;}
+#photodeck-designs .pd-layer-top {display:flex;align-items:center;gap:7px;margin-bottom:9px;}
+#photodeck-designs .pd-layer-top select {min-width:0;flex:1;background:var(--pd-bg);border:1px solid var(--pd-line);border-radius:var(--pd-radius);padding:5px;color:var(--pd-text);font-size:11px;}
+#photodeck-designs .pd-layer-top span {font-size:11px;color:var(--pd-muted);white-space:nowrap;}
+#photodeck-designs .pd-layer {display:flex;align-items:center;gap:8px;padding:4px 3px;border-radius:var(--pd-radius);margin:2px 0;border:1px solid transparent;font-size:11px;}
+#photodeck-designs .pd-layer.pd-current {background:color-mix(in srgb,var(--pd-accent) 12%,var(--pd-panel));border-color:color-mix(in srgb,var(--pd-accent) 30%,var(--pd-line));}
+#photodeck-designs .pd-layer .pd-eye {padding:3px;flex-shrink:0;color:var(--pd-muted);}
+#photodeck-designs .pd-layer .pd-eye svg {width:14px;height:14px;}
+#photodeck-designs .pd-thumb {width:30px;height:25px;flex-shrink:0;display:grid;place-items:center;background:#355960;color:#ecf0e7;border:1px solid var(--pd-line);font-size:10px;border-radius:2px;}
+#photodeck-designs .pd-thumb.pd-sky {background:linear-gradient(#29465d,#99b8b2);}
+#photodeck-designs .pd-thumb.pd-hills {background:linear-gradient(145deg,#a1bcb7 35%,#294f5b 36% 60%,#112e39 61%);}
+#photodeck-designs .pd-layer-name {overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;}
+#photodeck-designs .pd-layer-buttons {display:flex;gap:1px;justify-content:space-between;padding-top:6px;}
+#photodeck-designs .pd-layer-buttons button {padding:5px;}
+#photodeck-designs .pd-layer-buttons svg {width:15px;height:15px;}
+#photodeck-designs .pd-divider {border-top:1px solid var(--pd-line);}
+#photodeck-designs .pd-history-line {font-size:11px;color:var(--pd-muted);display:flex;align-items:center;gap:7px;}
+#photodeck-designs .pd-bottom {display:flex;justify-content:space-between;gap:10px;align-items:center;padding:5px 12px;border-top:1px solid var(--pd-line);background:var(--pd-panel);font-size:11px;color:var(--pd-muted);min-height:29px;flex-shrink:0;}
+#photodeck-designs .pd-bottom button {font-size:11px;padding:0 4px;}
+#photodeck-designs .pd-status {overflow:hidden;white-space:nowrap;text-overflow:ellipsis;}
+#photodeck-designs .pd-zoom {display:flex;align-items:center;gap:6px;}
+#photodeck-designs .pd-tray {display:flex;gap:8px;align-items:center;padding:9px 12px;background:var(--pd-panel);border-top:1px solid var(--pd-line);}
+#photodeck-designs .pd-tray-label {color:var(--pd-muted);font-size:11px;writing-mode:vertical-rl;transform:rotate(180deg);margin-right:3px;}
+#photodeck-designs .pd-tray button {padding:4px;display:block;border:1px solid var(--pd-line);border-radius:var(--pd-radius);font-size:10px;}
+#photodeck-designs .pd-tray .pd-mini-photo {height:35px;width:57px;background:linear-gradient(145deg,#9ab6b1 34%,#477783 35% 58%,#1e3d48 59%);margin-bottom:3px;}
+#photodeck-designs .pd-floating-bar {display:none;}
+#photodeck-designs .pd-stage-tabs {display:none;}
+#photodeck-designs .pd-command-groups {display:none;}
+#photodeck-designs .pd-brush-library {display:none;}
+#photodeck-designs .pd-palette {display:none;}
+
+/* Kağıt: typography, quiet surfaces, text-based tools, horizontal layer list. */
+#photodeck-designs .pd-paper {--pd-bg:light-dark(#f5f3ef,#22221f);--pd-panel:light-dark(#fffdf8,#2c2d29);--pd-raised:light-dark(#edece6,#3c3d35);--pd-canvas:light-dark(#e9e5dd,#191b18);--pd-line:light-dark(#dedbd3,#46483e);--pd-accent:#315a47;--pd-on-accent:#fff;--pd-radius:9px;color-scheme:light;}
+#photodeck-designs .pd-paper .pd-top {padding:14px 20px;min-height:64px;}
+#photodeck-designs .pd-paper .pd-workspace {grid-template-columns:112px minmax(0,1fr) 205px;}
+#photodeck-designs .pd-paper .pd-tools {align-items:stretch;padding:13px 7px;gap:7px;}
+#photodeck-designs .pd-paper .pd-tool {width:auto;justify-content:flex-start;padding:7px!important;}
+#photodeck-designs .pd-paper .pd-tool-label {display:inline;font-size:11px;}
+#photodeck-designs .pd-paper .pd-tabs {background:var(--pd-panel);padding-left:17px;}
+#photodeck-designs .pd-paper .pd-inspector {gap:16px;}
+#photodeck-designs .pd-paper .pd-hist {display:none;}
+#photodeck-designs .pd-paper .pd-history {display:none;}
+#photodeck-designs .pd-paper .pd-options {background:var(--pd-bg);}
+
+/* Odak: open canvas with short floating dock and floating layer card. */
+#photodeck-designs .pd-focus {--pd-bg:light-dark(#f0f3f5,#0f1218);--pd-panel:light-dark(#fff,#1e242d);--pd-canvas:light-dark(#dce4e8,#11161d);--pd-accent:#adc8ff;--pd-on-accent:#152843;--pd-radius:12px;}
+#photodeck-designs .pd-focus .pd-menus,#photodeck-designs .pd-focus .pd-options {display:none;}
+#photodeck-designs .pd-focus .pd-workspace {display:block;position:relative;}
+#photodeck-designs .pd-focus .pd-area {height:100%;padding:32px 165px 70px 45px;}
+#photodeck-designs .pd-focus .pd-ruler {display:none;}
+#photodeck-designs .pd-focus .pd-tools {position:absolute;z-index:3;left:50%;bottom:13px;transform:translateX(-50%);display:flex;flex-direction:row;padding:6px;gap:2px;border:1px solid var(--pd-line);border-radius:14px;box-shadow:0 6px 16px #0003;max-width:92%;}
+#photodeck-designs .pd-focus .pd-tool {width:31px;}
+#photodeck-designs .pd-focus .pd-swatches {padding:0;margin:0 4px;}
+#photodeck-designs .pd-focus .pd-inspector {position:absolute;z-index:2;right:16px;top:22px;width:170px;border:1px solid var(--pd-line);border-radius:12px;padding:12px;box-shadow:0 6px 20px #0002;}
+#photodeck-designs .pd-focus .pd-color-panel,#photodeck-designs .pd-focus .pd-history,#photodeck-designs .pd-focus .pd-divider {display:none;}
+#photodeck-designs .pd-focus .pd-layer {gap:4px;}
+#photodeck-designs .pd-focus .pd-layer-buttons {display:none;}
+#photodeck-designs .pd-focus .pd-tabs {min-height:41px;border:0;}
+
+/* Fotoğraf Masası: persistent film strip and photograph-centric toning. */
+#photodeck-designs .pd-film {--pd-bg:light-dark(#efece8,#1b1818);--pd-panel:light-dark(#fbf8f4,#2a2423);--pd-canvas:light-dark(#ded8d0,#141213);--pd-line:light-dark(#d7cfc5,#463a35);--pd-accent:#e3b982;--pd-on-accent:#32251b;--pd-radius:3px;}
+#photodeck-designs .pd-film .pd-workspace {grid-template-columns:44px minmax(0,1fr) 235px;}
+#photodeck-designs .pd-film .pd-top .pd-menus {display:none;}
+#photodeck-designs .pd-film .pd-tabs {display:none;}
+#photodeck-designs .pd-film .pd-inspector {padding:12px 17px;gap:8px;}
+#photodeck-designs .pd-film .pd-layer-buttons,#photodeck-designs .pd-film .pd-history {display:none;}
+#photodeck-designs .pd-film .pd-color-panel .pd-panel-title {font-size:12px;letter-spacing:0;}
+#photodeck-designs .pd-film .pd-area {padding:29px 23px 16px;}
+#photodeck-designs .pd-film .pd-tool:nth-child(n+9) {display:none;}
+
+/* Çalışma Tezgahı: left data column, two document views, right hand tool rail. */
+#photodeck-designs .pd-workbench {--pd-bg:light-dark(#eef1f4,#17202b);--pd-panel:light-dark(#fff,#263242);--pd-canvas:light-dark(#dbe2e9,#15202c);--pd-line:light-dark(#cfd8e2,#43536a);--pd-accent:#8db9ee;--pd-on-accent:#14243c;--pd-radius:2px;}
+#photodeck-designs .pd-workbench .pd-workspace {grid-template-columns:205px minmax(0,1fr) 46px;grid-template-areas:"inspector canvas tools";}
+#photodeck-designs .pd-workbench .pd-inspector {border:0;border-right:1px solid var(--pd-line);}
+#photodeck-designs .pd-workbench .pd-tools {border:0;border-left:1px solid var(--pd-line);}
+#photodeck-designs .pd-workbench .pd-area {padding:32px 14px 22px;}
+#photodeck-designs .pd-workbench .pd-board {width:100%;max-width:440px;}
+#photodeck-designs .pd-workbench .pd-floating-bar {display:flex;position:absolute;top:30px;left:15px;right:15px;justify-content:space-between;font-size:10px;color:var(--pd-muted);}
+#photodeck-designs .pd-workbench .pd-board {margin-top:25px;}
+#photodeck-designs .pd-workbench .pd-menus {gap:0;}
+#photodeck-designs .pd-workbench .pd-menus button {padding:5px;}
+
+/* Şerit: grouped commands, wide accessible headings, no permanent tool rail. */
+#photodeck-designs .pd-ribbon {--pd-bg:light-dark(#edf1f5,#18212b);--pd-panel:light-dark(#fff,#253345);--pd-canvas:light-dark(#d7e0e8,#162331);--pd-line:light-dark(#ccd7e3,#405570);--pd-accent:#8cbaee;--pd-on-accent:#142943;--pd-radius:4px;color-scheme:light;}
+#photodeck-designs .pd-ribbon .pd-stage-tabs {display:flex;gap:8px;padding:6px 16px;background:var(--pd-panel);}
+#photodeck-designs .pd-ribbon .pd-top {min-height:43px;padding:7px 16px;}
+#photodeck-designs .pd-ribbon .pd-top .pd-menus {display:none;}
+#photodeck-designs .pd-ribbon .pd-options {display:none;}
+#photodeck-designs .pd-ribbon .pd-command-groups {display:flex;align-items:center;gap:20px;background:var(--pd-panel);padding:9px 16px 11px;border-bottom:1px solid var(--pd-line);}
+#photodeck-designs .pd-ribbon .pd-command-group {display:grid;grid-template-columns:repeat(3,1fr);gap:4px;border-right:1px solid var(--pd-line);padding-right:20px;}
+#photodeck-designs .pd-ribbon .pd-command-group:last-child {border:0;}
+#photodeck-designs .pd-ribbon .pd-command-group button {display:flex;flex-direction:column;font-size:11px;padding:7px 9px;}
+#photodeck-designs .pd-ribbon .pd-command-group small {grid-column:1/-1;text-align:center;color:var(--pd-muted);font-size:10px;}
+#photodeck-designs .pd-ribbon .pd-workspace {grid-template-columns:minmax(0,1fr) 215px;grid-template-areas:"canvas inspector";}
+#photodeck-designs .pd-ribbon .pd-tools {display:none;}
+#photodeck-designs .pd-ribbon .pd-area {padding:26px 24px 15px;}
+#photodeck-designs .pd-ribbon .pd-history {display:none;}
+#photodeck-designs .pd-ribbon .pd-hist {height:28px;margin-bottom:8px;}
+#photodeck-designs .pd-ribbon .pd-inspector {gap:10px;padding:11px 14px;}
+
+/* Çizim Atölyesi: brush library, tool rail and palette beside the canvas. */
+#photodeck-designs .pd-ink {--pd-bg:light-dark(#f4eff2,#221e27);--pd-panel:light-dark(#fff9fd,#302a38);--pd-canvas:light-dark(#e6dee6,#1b1820);--pd-line:light-dark(#dccdda,#51435c);--pd-accent:#d9b2e8;--pd-on-accent:#362340;--pd-radius:7px;}
+#photodeck-designs .pd-ink .pd-workspace {grid-template-columns:46px minmax(0,1fr) 230px;}
+#photodeck-designs .pd-ink .pd-brush-library {display:block;}
+#photodeck-designs .pd-ink .pd-brush-presets {display:grid;grid-template-columns:repeat(3,1fr);gap:6px;}
+#photodeck-designs .pd-ink .pd-brush-presets button {display:flex;flex-direction:column;gap:8px;background:var(--pd-bg);border:1px solid var(--pd-line);padding:9px 2px;font-size:10px;}
+#photodeck-designs .pd-ink .pd-brush-stroke {height:7px;width:30px;background:var(--pd-text);border-radius:7px;transform:rotate(-16deg);}
+#photodeck-designs .pd-ink .pd-brush-presets button:nth-child(2) .pd-brush-stroke {filter:blur(2px);opacity:.8;}
+#photodeck-designs .pd-ink .pd-brush-presets button:nth-child(3) .pd-brush-stroke {border-radius:0;height:3px;}
+#photodeck-designs .pd-ink .pd-color-panel {display:none;}
+#photodeck-designs .pd-ink .pd-palette {display:grid;grid-template-columns:repeat(7,1fr);gap:5px;}
+#photodeck-designs .pd-ink .pd-palette button {padding:0;aspect-ratio:1;border-radius:50%;border:2px solid var(--pd-line);background:var(--swatch);}
+#photodeck-designs .pd-ink .pd-tools .pd-tool:nth-child(n+10) {display:none;}
+#photodeck-designs .pd-ink .pd-inspector {gap:13px;}
+
+/* Kompakt: dense laptop layout with horizontal tools and inspector tabs. */
+#photodeck-designs .pd-compact {--pd-radius:0px;--pd-accent:#81c6d8;--pd-on-accent:#142b34;--pd-font:12px;}
+#photodeck-designs .pd-compact .pd-top {min-height:38px;padding:5px 10px;gap:8px;}
+#photodeck-designs .pd-compact .pd-brand {font-size:14px;}
+#photodeck-designs .pd-compact .pd-logo {width:19px;height:19px;font-size:12px;}
+#photodeck-designs .pd-compact .pd-options {padding:5px 10px;min-height:30px;}
+#photodeck-designs .pd-compact .pd-tabs {min-height:29px;}
+#photodeck-designs .pd-compact .pd-workspace {grid-template-columns:minmax(0,1fr) 198px;grid-template-rows:37px minmax(0,1fr);grid-template-areas:"tools inspector" "canvas inspector";}
+#photodeck-designs .pd-compact .pd-tools {flex-direction:row;padding:3px 7px;gap:0;border-bottom:1px solid var(--pd-line);border-right:0;}
+#photodeck-designs .pd-compact .pd-swatches {margin-left:auto;margin-top:0;padding-top:0;}
+#photodeck-designs .pd-compact .pd-tool {width:31px;min-height:28px;}
+#photodeck-designs .pd-compact .pd-inspector {padding:11px;gap:11px;}
+#photodeck-designs .pd-compact .pd-area {padding:29px 28px 22px;}
+#photodeck-designs .pd-compact .pd-history {display:none;}
+#photodeck-designs .pd-compact .pd-layer {padding:5px 3px;}
+
+/* Dokunmatik: large labeled targets, compact bottom tool palette, simple inspector. */
+#photodeck-designs .pd-touch {--pd-bg:light-dark(#f0f2f4,#1e2831);--pd-panel:light-dark(#fff,#2c3a46);--pd-canvas:light-dark(#dce4e9,#192730);--pd-line:light-dark(#d4dfe6,#4a5d6a);--pd-accent:#77d2bb;--pd-on-accent:#14312b;--pd-radius:14px;color-scheme:light;}
+#photodeck-designs .pd-touch .pd-top {min-height:66px;padding:12px 17px;}
+#photodeck-designs .pd-touch .pd-top .pd-menus {display:none;}
+#photodeck-designs .pd-touch .pd-top button {min-height:40px;}
+#photodeck-designs .pd-touch .pd-options {display:none;}
+#photodeck-designs .pd-touch .pd-workspace {grid-template-columns:minmax(0,1fr) 210px;grid-template-rows:minmax(0,1fr) 83px;grid-template-areas:"canvas inspector" "tools tools";}
+#photodeck-designs .pd-touch .pd-tools {flex-direction:row;justify-content:center;padding:10px;gap:9px;border-top:1px solid var(--pd-line);border-right:0;}
+#photodeck-designs .pd-touch .pd-tool {width:64px;min-height:57px;flex-direction:column;gap:5px!important;}
+#photodeck-designs .pd-touch .pd-tool-label {display:block;font-size:11px;}
+#photodeck-designs .pd-touch .pd-tool:nth-child(n+8) {display:none;}
+#photodeck-designs .pd-touch .pd-swatches {padding:0;margin:0 0 0 7px;}
+#photodeck-designs .pd-touch .pd-color {width:34px;height:34px;border-radius:9px;}
+#photodeck-designs .pd-touch .pd-layer {padding:10px 5px;}
+#photodeck-designs .pd-touch .pd-history,#photodeck-designs .pd-touch .pd-hist {display:none;}
+#photodeck-designs .pd-touch .pd-area {padding:26px;}
+
+/* Modüler: detachable-style surface groups around an uninterrupted artboard. */
+#photodeck-designs .pd-modular {--pd-bg:light-dark(#ebece9,#232723);--pd-panel:light-dark(#fffef7,#333931);--pd-canvas:light-dark(#dcded8,#1b211c);--pd-line:light-dark(#ced3c7,#4b5648);--pd-accent:#bccd89;--pd-on-accent:#27331f;--pd-radius:8px;}
+#photodeck-designs .pd-modular .pd-workspace {padding:12px;gap:12px;grid-template-columns:43px minmax(0,1fr) 211px;background:var(--pd-canvas);}
+#photodeck-designs .pd-modular .pd-tools {border:1px solid var(--pd-line);border-radius:8px;align-self:start;gap:2px;box-shadow:0 4px 10px #0002;}
+#photodeck-designs .pd-modular .pd-inspector {padding:0;border:0;background:none;gap:10px;}
+#photodeck-designs .pd-modular .pd-inspector>section {background:var(--pd-panel);border:1px solid var(--pd-line);border-radius:8px;padding:12px;box-shadow:0 3px 10px #0002;}
+#photodeck-designs .pd-modular .pd-panel-title {color:var(--pd-muted);font-size:10px;}
+#photodeck-designs .pd-modular .pd-panel-title:before {content:'⠿';letter-spacing:2px;}
+#photodeck-designs .pd-modular .pd-divider,#photodeck-designs .pd-modular .pd-history {display:none;}
+#photodeck-designs .pd-modular .pd-area {padding:25px 10px 15px;background:none;}
+#photodeck-designs .pd-modular .pd-ruler {border-radius:4px;background:transparent;}
+#photodeck-designs .pd-modular .pd-options {margin:10px 12px 0;border:1px solid var(--pd-line);border-radius:8px;min-height:34px;padding:5px 10px;}
+
+#photodeck-designs .pd-app .pd-tool {min-height:30px;}
+#photodeck-designs .pd-inspector {min-height:0;}
+#photodeck-designs .pd-inspector .pd-history {display:none;}
+#photodeck-designs .pd-app select {min-height:0;height:29px;}
+#photodeck-designs .pd-graphite .pd-workspace {grid-template-columns:80px minmax(0,1fr) 224px;}
+#photodeck-designs .pd-graphite .pd-tools {display:grid;grid-template-columns:repeat(2,31px);align-content:start;gap:6px;padding:12px 6px;}
+#photodeck-designs .pd-graphite .pd-swatches {grid-column:1/-1;padding-top:16px;}
+#photodeck-designs .pd-workbench .pd-workspace {grid-template-columns:205px minmax(0,1fr) 78px;}
+#photodeck-designs .pd-workbench .pd-tools {display:grid;grid-template-columns:repeat(2,31px);align-content:start;gap:5px;padding:12px 5px;}
+#photodeck-designs .pd-workbench .pd-swatches {grid-column:1/-1;padding-top:14px;}
+#photodeck-designs .pd-modular .pd-workspace {grid-template-columns:76px minmax(0,1fr) 211px;}
+#photodeck-designs .pd-modular .pd-tools {display:grid;grid-template-columns:repeat(2,28px);align-content:start;gap:3px;padding:9px 7px;}
+#photodeck-designs .pd-modular .pd-tool {width:28px;}
+#photodeck-designs .pd-modular .pd-swatches {grid-column:1/-1;}
+#photodeck-designs .pd-touch .pd-color-panel {display:none;}
+#photodeck-designs .pd-touch .pd-layer-top {margin-bottom:12px;}
+#photodeck-designs .pd-touch .pd-inspector {justify-content:center;}
+#photodeck-designs .pd-compact .pd-options,#photodeck-designs .pd-compact .pd-top {padding-top:4px;padding-bottom:4px;}
+@media(max-width:850px) {
+  #photodeck-designs .pd-menus {display:none;}
+  #photodeck-designs .pd-workspace {grid-template-columns:44px minmax(0,1fr) 205px;}
+  #photodeck-designs .pd-paper .pd-workspace {grid-template-columns:100px minmax(0,1fr) 190px;}
+  #photodeck-designs .pd-workbench .pd-workspace {grid-template-columns:190px minmax(0,1fr) 44px;}
+  #photodeck-designs .pd-focus .pd-area {padding-left:22px;padding-right:147px;}
+  #photodeck-designs .pd-focus .pd-inspector {width:155px;right:12px;}
+  #photodeck-designs .pd-focus .pd-tool {width:28px;}
+  #photodeck-designs .pd-focus .pd-tools {gap:0;}
+  #photodeck-designs .pd-compact .pd-workspace {grid-template-columns:minmax(0,1fr) 190px;}
+  #photodeck-designs .pd-compact .pd-tool {width:28px;}
+  #photodeck-designs .pd-ribbon .pd-workspace,#photodeck-designs .pd-touch .pd-workspace {grid-template-columns:minmax(0,1fr) 195px;}
+  #photodeck-designs .pd-ink .pd-workspace {grid-template-columns:44px minmax(0,1fr) 208px;}
+  #photodeck-designs .pd-tray button:nth-child(n+7) {display:none;}
+  #photodeck-designs .pd-options {gap:9px;}
+}
+@media(max-width:680px) {
+  #photodeck-designs .pd-stage {height:1390px;}
+  #photodeck-designs .pd-caption {gap:3px;flex-direction:column;}
+  #photodeck-designs .pd-app {height:auto;min-height:990px;overflow:visible;}
+  #photodeck-designs .pd-top {flex-wrap:wrap;padding:10px;gap:8px;}
+  #photodeck-designs .pd-brand {font-size:16px;}
+  #photodeck-designs .pd-head-actions {gap:1px;}
+  #photodeck-designs .pd-head-actions button {padding:6px;}
+  #photodeck-designs .pd-head-actions button[data-action=save] .pd-action-label {display:none;}
+  #photodeck-designs .pd-options {flex-wrap:wrap;gap:8px;padding:8px;}
+  #photodeck-designs .pd-option-extra {display:none!important;}
+  #photodeck-designs .pd-tabs {flex-wrap:wrap;padding:3px 8px;}
+  #photodeck-designs .pd-tabs .pd-second-tab {display:none;}
+  #photodeck-designs .pd-workspace,#photodeck-designs .pd-paper .pd-workspace,#photodeck-designs .pd-workbench .pd-workspace,#photodeck-designs .pd-ribbon .pd-workspace,#photodeck-designs .pd-ink .pd-workspace,#photodeck-designs .pd-compact .pd-workspace,#photodeck-designs .pd-touch .pd-workspace,#photodeck-designs .pd-modular .pd-workspace {
+    display:grid;grid-template-columns:minmax(0,1fr);grid-template-rows:auto 280px auto;grid-template-areas:"tools" "canvas" "inspector";flex:1;min-height:0;
+  }
+  #photodeck-designs .pd-tools,#photodeck-designs .pd-paper .pd-tools,#photodeck-designs .pd-workbench .pd-tools,#photodeck-designs .pd-compact .pd-tools,#photodeck-designs .pd-touch .pd-tools,#photodeck-designs .pd-modular .pd-tools {
+    flex-direction:row;flex-wrap:wrap;gap:3px;justify-content:center;align-items:center;border:0;border-bottom:1px solid var(--pd-line);padding:7px;position:static;transform:none;border-radius:0;box-shadow:none;max-width:100%;width:auto;
+  }
+  #photodeck-designs .pd-tool {width:34px;min-height:34px;}
+  #photodeck-designs .pd-paper .pd-tool {width:34px;}
+  #photodeck-designs .pd-paper .pd-tool-label {display:none;}
+  #photodeck-designs .pd-swatches {margin:0 3px;padding:0;}
+  #photodeck-designs .pd-inspector,#photodeck-designs .pd-workbench .pd-inspector,#photodeck-designs .pd-focus .pd-inspector,#photodeck-designs .pd-modular .pd-inspector {
+    display:grid;grid-template-columns:1fr;gap:14px;border:0;border-top:1px solid var(--pd-line);padding:14px;position:static;width:auto;border-radius:0;box-shadow:none;background:var(--pd-panel);
+  }
+  #photodeck-designs .pd-inspector .pd-history {display:none;}
+  #photodeck-designs .pd-inspector .pd-divider {display:none;}
+  #photodeck-designs .pd-hist {height:27px;}
+  #photodeck-designs .pd-layer {padding:7px 3px;}
+  #photodeck-designs .pd-inspector .pd-layer-buttons {display:flex;}
+  #photodeck-designs .pd-area,#photodeck-designs .pd-focus .pd-area,#photodeck-designs .pd-paper .pd-area,#photodeck-designs .pd-workbench .pd-area,#photodeck-designs .pd-ribbon .pd-area,#photodeck-designs .pd-touch .pd-area,#photodeck-designs .pd-modular .pd-area {height:auto;min-height:0;padding:27px 15px 18px;}
+  #photodeck-designs .pd-board {width:100%;max-width:335px;max-height:230px;}
+  #photodeck-designs .pd-art-text {font-size:clamp(22px,8cqw,43px);}
+  #photodeck-designs .pd-art-sub {font-size:clamp(8px,2cqw,11px);}
+  #photodeck-designs .pd-bottom {flex-wrap:wrap;padding:8px 10px;}
+  #photodeck-designs .pd-status {white-space:normal;}
+  #photodeck-designs .pd-focus .pd-workspace {display:grid;grid-template-columns:1fr;grid-template-rows:280px auto auto;grid-template-areas:"canvas" "tools" "inspector";}
+  #photodeck-designs .pd-focus .pd-tools {position:static;transform:none;flex-direction:row;flex-wrap:wrap;width:auto;max-width:100%;border-radius:0;box-shadow:none;padding:7px;justify-content:center;}
+  #photodeck-designs .pd-focus .pd-layer {gap:8px;}
+  #photodeck-designs .pd-focus .pd-color-panel {display:block;}
+  #photodeck-designs .pd-ribbon .pd-tools {display:none;}
+  #photodeck-designs .pd-ribbon .pd-workspace {grid-template-rows:280px auto;grid-template-areas:"canvas" "inspector";}
+  #photodeck-designs .pd-ribbon .pd-command-groups {gap:8px;padding:8px;flex-wrap:wrap;}
+  #photodeck-designs .pd-ribbon .pd-command-group {padding-right:8px;gap:2px;}
+  #photodeck-designs .pd-ribbon .pd-command-group button {padding:6px 8px;}
+  #photodeck-designs .pd-ribbon .pd-stage-tabs {gap:2px;padding:6px;flex-wrap:wrap;}
+  #photodeck-designs .pd-ribbon .pd-stage-tabs button {padding:5px 7px;}
+  #photodeck-designs .pd-ribbon .pd-command-group:last-child {display:none;}
+  #photodeck-designs .pd-touch .pd-tool {width:58px;min-height:56px;}
+  #photodeck-designs .pd-touch .pd-tools {gap:3px;}
+  #photodeck-designs .pd-touch .pd-workspace {grid-template-rows:280px auto auto;grid-template-areas:"canvas" "tools" "inspector";}
+  #photodeck-designs .pd-film .pd-tray {gap:5px;padding:7px;flex-wrap:wrap;}
+  #photodeck-designs .pd-film .pd-tray button:nth-child(n+5) {display:none;}
+  #photodeck-designs .pd-film .pd-options {display:none;}
+  #photodeck-designs .pd-modular .pd-workspace {padding:0;gap:0;}
+  #photodeck-designs .pd-modular .pd-inspector>section {box-shadow:none;}
+  #photodeck-designs .pd-workbench .pd-floating-bar {font-size:10px;}
+  #photodeck-designs .pd-workbench .pd-board {margin-top:0;}
+}
+@media(max-width:680px) {
+ #photodeck-designs .pd-graphite .pd-workspace,#photodeck-designs .pd-film .pd-workspace {grid-template-columns:1fr;grid-template-rows:auto 280px auto;grid-template-areas:"tools" "canvas" "inspector";}
+ #photodeck-designs .pd-graphite .pd-tools,#photodeck-designs .pd-workbench .pd-tools,#photodeck-designs .pd-modular .pd-tools {display:flex;flex-direction:row;flex-wrap:wrap;align-content:initial;padding:7px;gap:3px;}
+ #photodeck-designs .pd-graphite .pd-swatches,#photodeck-designs .pd-workbench .pd-swatches {padding-top:0;}
+ #photodeck-designs .pd-film .pd-workspace {flex:initial;}
+ #photodeck-designs .pd-film .pd-tools {flex-direction:row;flex-wrap:wrap;justify-content:center;}
+ #photodeck-designs .pd-film .pd-tray {flex-wrap:nowrap;}
+ #photodeck-designs .pd-film .pd-tray-label {display:none;}
+ #photodeck-designs .pd-film .pd-tray .pd-mini-photo {width:52px;}
+ #photodeck-designs .pd-touch .pd-inspector {display:block;}
+ #photodeck-designs .pd-touch .pd-color-panel {display:block;}
+}
+@media(pointer:coarse){
+  #photodeck-designs .pd-tool {min-height:44px;width:44px;}
+  #photodeck-designs .pd-app input,#photodeck-designs .pd-app select {font-size:16px;}
+}
+</style>
+<script>
+(() => {
+ const root=document.getElementById('photodeck-designs');
+ const designs={
+  graphite:{name:'Grafit',description:'Klasik araç rayı · katman ve renk paneli birlikte',scheme:'dark',accent:'#78d6ba',radius:5,tools:14},
+  paper:{name:'Kağıt',description:'Sıcak açık yüzeyler · isimli araçlar · sakin görsel hiyerarşi',scheme:'light',accent:'#315a47',radius:9,tools:10},
+  focus:{name:'Odak',description:'Geniş tuval · yüzen araç çubuğu · küçük katman paleti',scheme:'dark',accent:'#adc8ff',radius:12,tools:12},
+  film:{name:'Fotoğraf Masası',description:'Altta fotoğraf şeridi · ton ayarları ön planda',scheme:'dark',accent:'#e3b982',radius:3,tools:14},
+  workbench:{name:'Çalışma Tezgahı',description:'Solda özellikler · sağda araçlar · teknik çalışma düzeni',scheme:'dark',accent:'#8db9ee',radius:2,tools:14},
+  ribbon:{name:'Şerit',description:'Üstte gruplanmış komutlar · etiketli araçlar · öğrenmesi kolay',scheme:'light',accent:'#4976c4',radius:4,tools:14,onAccent:'#ffffff'},
+  ink:{name:'Çizim Atölyesi',description:'Fırça uçları ve renk paleti · çizim için ayrılmış alan',scheme:'dark',accent:'#d9b2e8',radius:7,tools:14},
+  compact:{name:'Kompakt',description:'Yatay araç rayı · sıkı yerleşim · küçük dizüstü ekranları',scheme:'dark',accent:'#81c6d8',radius:0,tools:14},
+  touch:{name:'Dokunmatik',description:'Büyük etiketli düğmeler · altta araçlar · dokunmaya uygun',scheme:'light',accent:'#206b57',radius:14,tools:14,onAccent:'#ffffff'},
+  modular:{name:'Modüler',description:'Ayrı panel blokları · taşınabilir panel fikri · esnek çalışma alanı',scheme:'dark',accent:'#bccd89',radius:8,tools:14}
+ };
+ const toolData=[['move','Taşı','V'],['scan','Seç','M'],['crop','Kırp','C'],['paintbrush','Fırça','B'],['pencil','Kalem','P'],['eraser','Silgi','E'],['stamp','Klon','S'],['paint-bucket','Kova','F'],['blend','Degrade','G'],['type','Metin','T'],['square','Şekil','U'],['circle','Elips','O'],['pipette','Damlalık','I'],['hand','El','H']];
+ const icon=name=>`<i data-lucide="${name}" aria-hidden="true"></i>`;
+ const btn=(name,label,action,extra='')=>`<button type="button" class="cursor-interaction ${extra}" aria-label="${label}" data-action="${action}">${icon(name)}<span class="pd-action-label">${label}</span></button>`;
+ const tools=limit=>toolData.slice(0,limit).map(([name,label,key],i)=>`<button type="button" class="pd-tool cursor-interaction ${i===3?'pd-active':''}" aria-label="${label} (${key})" aria-pressed="${i===3}" data-tooltip="${label} (${key})" data-tool="${label}">${icon(name)}<span class="pd-tool-label">${label}</span></button>`).join('');
+ const layerData=[['subtitle','Alt başlık','T',''],['title','HORIZON','T',''],['hills','Dağ silüetleri','','pd-hills'],['sky','Gökyüzü','','pd-sky']];
+ const layerMarkup=()=>layerData.map(([key,name,symbol,type])=>`<div class="pd-layer ${key==='hills'?'pd-current':''}" data-layer-row="${key}"><button type="button" class="pd-eye cursor-interaction" aria-label="${name} görünürlüğü" aria-pressed="true" data-layer="${key}">${icon('eye')}</button><span class="pd-thumb ${type}" aria-hidden="true">${symbol}</span><button type="button" class="pd-layer-name cursor-interaction" data-layer-select="${key}" data-tooltip="${name}">${name}</button></div>`).join('');
+ const adjustments=()=>['Parlaklık','Kontrast','Doygunluk'].map((n,i)=>`<label class="pd-adjustment"><span>${n}<output>0</output></span><input type="range" min="-50" max="50" value="0" aria-label="${n}" data-adjust="${i}"></label>`).join('');
+ const histogram=()=>`<div class="pd-hist" aria-label="Örnek görüntünün ton dağılımı">${Array.from({length:45},(_,i)=>`<i style="height:${8+Math.round(22*Math.exp(-Math.pow((i-15)/8,2)))+Math.round(11*Math.exp(-Math.pow((i-34)/5,2)))+((i*13)%8)}px"></i>`).join('')}</div>`;
+ const inspector=()=>`<aside class="pd-inspector" aria-label="Katmanlar ve ayarlar">
+  <section class="pd-brush-library"><div class="pd-panel-title">FIRÇA UÇLARI</div><div class="pd-brush-presets">${['Yuvarlak','Yumuşak','Kalem'].map((name,i)=>`<button type="button" class="cursor-interaction ${i===0?'pd-active':''}" data-preset="${name}"><span class="pd-brush-stroke"></span>${name}</button>`).join('')}</div></section>
+  <section class="pd-palette" aria-label="Renk paleti">${['#e8d4b3','#81c2b3','#536caa','#d390a0','#c7b5e3','#dbe5e0','#2b414e'].map(color=>`<button type="button" class="cursor-interaction" style="--swatch:${color}" data-color="${color}" aria-label="Renk ${color}"></button>`).join('')}</section>
+  <section class="pd-color-panel"><div class="pd-panel-title">RENK & TON ${icon('sliders-horizontal')}</div>${histogram()}${adjustments()}</section>
+  <div class="pd-divider"></div>
+  <section class="pd-layer-panel"><div class="pd-panel-title">KATMANLAR <button type="button" class="cursor-interaction" data-action="layer-options" aria-label="Katman seçenekleri">···</button></div><div class="pd-layer-top"><select aria-label="Harmanlama modu"><option>Normal</option><option>Çarp</option><option>Ekran</option><option>Kaplama</option></select><span>%100</span></div>${layerMarkup()}<div class="pd-layer-buttons">${[['plus','Katman ekle'],['copy','Çoğalt'],['square-dashed','Maske'],['lock-keyhole','Kilit'],['trash-2','Sil']].map(([name,label])=>`<button type="button" class="cursor-interaction" aria-label="${label}" data-tooltip="${label}" data-action="${label}">${icon(name)}</button>`).join('')}</div></section>
+  <section class="pd-history"><div class="pd-panel-title">GEÇMİŞ</div><div class="pd-history-line">${icon('history')} Örnek çalışma açıldı</div></section>
+ </aside>`;
+ const tray=()=>`<div class="pd-tray" aria-label="Fotoğraf şeridi"><span class="pd-tray-label">FOTOĞRAFLAR</span>${['Horizon','Kıyı','Orman','Zirve','Akşam','Sis','Gökyüzü'].map((n,i)=>`<button type="button" class="cursor-interaction ${i===0?'pd-active':''}" data-photo="${n}" aria-pressed="${i===0}"><div class="pd-mini-photo" style="filter:hue-rotate(${i*12}deg)"></div>${n}</button>`).join('')}</div>`;
+ const ribbon=()=>`<div class="pd-stage-tabs" role="group" aria-label="Komut grupları">${['Düzenle','Görüntü','Katman','Görünüm'].map((n,i)=>`<button type="button" class="cursor-interaction ${i===0?'pd-active':''}" data-command-tab="${n}">${n}</button>`).join('')}</div><div class="pd-command-groups">${[[['move','Taşı'],['scan','Seç'],['crop','Kırp']],[['paintbrush','Fırça'],['eraser','Silgi'],['stamp','Klon']],[['type','Metin'],['square','Şekil'],['sliders-horizontal','Renk']]].map((group,i)=>`<div class="pd-command-group">${group.map(([ic,n])=>`<button type="button" class="cursor-interaction" data-tool="${n}" aria-pressed="false">${icon(ic)}${n}</button>`).join('')}<small>${['Dönüştür','Rötuş','Tasarım'][i]}</small></div>`).join('')}</div>`;
+ root.querySelectorAll('.pd-mount').forEach(mount=>{
+  const key=mount.dataset.design,d=designs[key];
+  mount.innerHTML=`<div class="pd-caption"><strong>${d.name}</strong><span>${d.description}</span></div>
+  <div class="pd-app pd-${key}" aria-label="${d.name} tasarım seçenekleri" data-app="${key}">
+   <header class="pd-top"><div class="pd-brand"><span class="pd-logo">P</span>PhotoDeck</div><nav class="pd-menus" aria-label="Ana menü">${['Dosya','Düzenle','Görüntü','Katman','Görünüm'].map(n=>`<button type="button" class="cursor-interaction" data-action="${n}">${n}</button>`).join('')}</nav><div class="pd-spacer"></div><div class="pd-head-actions">${btn('undo-2','Geri al','undo')}${btn('save','Kaydet','save')}${btn('arrow-up-right','Dışa aktar','export','pd-primary')}</div></header>
+   ${key==='ribbon'?ribbon():''}
+   <div class="pd-tabs"><button type="button" class="pd-tab-active cursor-interaction" data-action="document">${icon('image')} Horizon.pdeck<span class="pd-tab-close" aria-hidden="true">×</span></button><button type="button" class="pd-second-tab cursor-interaction" data-action="second-document">Poster.pdeck</button><div class="pd-spacer"></div><button type="button" class="cursor-interaction" data-action="new-document" aria-label="Yeni belge">${icon('plus')}</button></div>
+   <div class="pd-options"><span class="pd-option-name">Fırça</span><span class="pd-rule"></span><label>Boyut <input type="number" min="1" max="512" value="32" aria-label="Fırça boyutu"><span>px</span></label><label>Sertlik <input type="number" min="0" max="100" value="80" aria-label="Fırça sertliği"><span>%</span></label><label class="pd-option-extra">Akış <input type="number" min="1" max="100" value="100" aria-label="Fırça akışı"><span>%</span></label></div>
+   <div class="pd-workspace"><nav class="pd-tools" aria-label="Araçlar">${tools(d.tools)}<div class="pd-swatches"><input type="color" class="pd-color" value="#70c8b0" aria-label="Ön plan rengi"></div></nav>
+   <main class="pd-area" aria-label="Düzenleme tuvali"><div class="pd-ruler" aria-hidden="true"><span>0</span><span>200</span><span>400</span><span>600</span><span>800</span><span>1000</span><span>1200</span><span>1400</span></div><div class="pd-floating-bar"><span>RGB · 8 bit</span><span>Horizon.pdeck</span></div><div class="pd-board"><canvas width="1400" height="1000" class="pd-scene" role="img" aria-label="Horizon dağ kompozisyonu"></canvas><span class="pd-art-text">HORIZON</span><span class="pd-art-sub">KENDİ YOLUNU BUL</span></div><span class="pd-area-label">1400 × 1000 px</span></main>
+   ${inspector()}</div>${key==='film'?tray():''}
+   <footer class="pd-bottom"><span class="pd-status" aria-live="polite">Fırça · B</span><span class="pd-zoom"><span class="pd-layer-count">4 katman</span><span>·</span><button type="button" class="cursor-interaction" data-action="zoom-out" aria-label="Uzaklaştır">−</button><span class="pd-zoom-value">%70</span><button type="button" class="cursor-interaction" data-action="zoom-in" aria-label="Yakınlaştır">+</button><button type="button" class="cursor-interaction" data-action="fit">Sığdır</button></span></footer>
+  </div>`;
+  const app=mount.querySelector('.pd-app');
+  const state={...d,tool:'Fırça',zoom:70,visible:{subtitle:true,title:true,hills:true,sky:true},adjust:[0,0,0],density:key==='compact'?12:13};
+  const scene=app.querySelector('canvas'),ctx=scene.getContext('2d');
+  const status=message=>app.querySelector('.pd-status').textContent=message;
+  function polygon(points,color){ctx.beginPath();points.forEach(([x,y],i)=>i?ctx.lineTo(x,y):ctx.moveTo(x,y));ctx.closePath();ctx.fillStyle=color;ctx.fill();}
+  function draw(){
+   ctx.clearRect(0,0,1400,1000);
+   ctx.fillStyle='#a9b3b4';ctx.fillRect(0,0,1400,1000);
+   if(state.visible.sky){const g=ctx.createLinearGradient(0,0,0,1000);g.addColorStop(0,'#172e47');g.addColorStop(.48,'#7ba9ab');g.addColorStop(1,'#c7cdc0');ctx.fillStyle=g;ctx.fillRect(0,0,1400,1000);ctx.fillStyle='#e2d4b6';ctx.beginPath();ctx.arc(1050,225,63,0,Math.PI*2);ctx.fill();}
+   if(state.visible.hills){polygon([[0,620],[200,340],[340,510],[590,240],[900,600],[1120,390],[1400,560],[1400,1000],[0,1000]],'#627f85');polygon([[475,398],[590,240],[731,405],[620,355],[582,375],[551,338]],'#aec4bf');polygon([[0,750],[190,640],[360,725],[690,475],[930,780],[1150,570],[1400,730],[1400,1000],[0,1000]],'#244e5a');polygon([[0,825],[285,735],[455,905],[700,770],[1020,880],[1270,735],[1400,800],[1400,1000],[0,1000]],'#102e39');}
+   app.querySelector('.pd-art-text').hidden=!state.visible.title;app.querySelector('.pd-art-sub').hidden=!state.visible.subtitle;
+   scene.style.filter=`brightness(${1+state.adjust[0]/100}) contrast(${1+state.adjust[1]/100}) saturate(${1+state.adjust[2]/100})`;
+   app.style.colorScheme=state.scheme;app.style.setProperty('--pd-accent',state.accent);app.style.setProperty('--pd-radius',state.radius+'px');app.style.setProperty('--pd-font',state.density+'px');if(state.onAccent)app.style.setProperty('--pd-on-accent',state.onAccent);
+   app.querySelector('.pd-layer-count').textContent=Object.values(state.visible).filter(Boolean).length+' görünür';
+  }
+  draw();
+  app.addEventListener('click',e=>{
+   const button=e.target.closest('button');if(!button)return;
+   if(button.dataset.tool){state.tool=button.dataset.tool;app.querySelectorAll('[data-tool]').forEach(b=>{const active=b.dataset.tool===state.tool;b.classList.toggle('pd-active',active);b.setAttribute('aria-pressed',String(active));});app.querySelector('.pd-option-name').textContent=state.tool;status(state.tool+' seçildi');}
+   if(button.dataset.layer){const k=button.dataset.layer;state.visible[k]=!state.visible[k];button.setAttribute('aria-pressed',String(state.visible[k]));button.style.opacity=state.visible[k]?'1':'.45';status(layerData.find(l=>l[0]===k)[1]+(state.visible[k]?' gösterildi':' gizlendi'));draw();}
+   if(button.dataset.layerSelect){app.querySelectorAll('.pd-layer').forEach(row=>row.classList.toggle('pd-current',row.dataset.layerRow===button.dataset.layerSelect));status(button.textContent+' seçildi');}
+   if(button.dataset.photo){app.querySelectorAll('[data-photo]').forEach(b=>{b.classList.toggle('pd-active',b===button);b.setAttribute('aria-pressed',String(b===button));});scene.style.filter=`hue-rotate(${['Horizon','Kıyı','Orman','Zirve','Akşam','Sis','Gökyüzü'].indexOf(button.dataset.photo)*12}deg)`;status(button.dataset.photo+' · şerit önizlemesi');}
+   if(button.dataset.preset){app.querySelectorAll('[data-preset]').forEach(b=>b.classList.toggle('pd-active',b===button));status(button.dataset.preset+' fırça ucu seçildi');}
+   if(button.dataset.color){app.querySelector('input[type=color]').value=button.dataset.color;status('Ön plan rengi: '+button.dataset.color);}
+   if(button.dataset.commandTab){app.querySelectorAll('[data-command-tab]').forEach(b=>b.classList.toggle('pd-active',b===button));status(button.dataset.commandTab+' komut grubu');}
+   if(button.dataset.action){const a=button.dataset.action;if(a==='zoom-in'||a==='zoom-out'||a==='fit'){state.zoom=a==='fit'?70:Math.min(130,Math.max(30,state.zoom+(a==='zoom-in'?10:-10)));app.querySelector('.pd-zoom-value').textContent='%'+state.zoom;app.querySelector('.pd-board').style.transform=`scale(${Math.min(1.08,state.zoom/70)})`;status('Yakınlık: %'+state.zoom);}else if(a==='undo'){state.adjust=[0,0,0];app.querySelectorAll('[data-adjust]').forEach(input=>{input.value=0;input.closest('label').querySelector('output').textContent='0';});draw();status('Renk önizlemesi sıfırlandı');}else status((a==='save'?'Kaydet':a==='export'?'Dışa aktar':button.getAttribute('aria-label')||button.textContent.trim())+' · tasarım önizlemesi');}
+  });
+  app.addEventListener('input',e=>{if(e.target.matches('[data-adjust]')){state.adjust[Number(e.target.dataset.adjust)]=Number(e.target.value);e.target.closest('label').querySelector('output').textContent=e.target.value;draw();status(e.target.getAttribute('aria-label')+': '+e.target.value);}if(e.target.type==='color')status('Ön plan rengi: '+e.target.value);});
+  if(globalThis.Tweak){const tweak=new Tweak({container:app,onChange:draw});tweak.addColorPicker(state,'accent',{label:'Vurgu rengi',reference:'--pd-accent'});tweak.addSlider(state,'radius',{label:'Köşe yumuşaklığı',min:0,max:18,step:1,unit:'px'});tweak.addSelect(state,'scheme',{label:'Görünüm',options:[{label:'Koyu',value:'dark'},{label:'Açık',value:'light'}]});}
+ });
+ if(globalThis.lucide)lucide.createIcons({attrs:{width:17,height:17}});
+})();
+</script>

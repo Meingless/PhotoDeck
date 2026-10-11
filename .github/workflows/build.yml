@@ -1,0 +1,109 @@
+name: Early access packages
+on:
+  workflow_dispatch:
+  push:
+    tags: ['v*']
+permissions:
+  contents: read
+jobs:
+  build:
+    name: ${{ matrix.label }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-22.04
+            arch: gcc_64
+            label: linux-x86_64
+            cmake_args: ''
+          - os: windows-2022
+            arch: win64_msvc2022_64
+            label: windows-x64
+            cmake_args: ''
+          - os: macos-15-intel
+            arch: clang_64
+            label: macos-intel
+            cmake_args: '-DCMAKE_OSX_ARCHITECTURES=x86_64 -DCMAKE_OSX_DEPLOYMENT_TARGET=12.0'
+          - os: macos-15
+            arch: clang_64
+            label: macos-apple-silicon
+            cmake_args: '-DCMAKE_OSX_ARCHITECTURES=arm64 -DCMAKE_OSX_DEPLOYMENT_TARGET=12.0'
+    runs-on: ${{ matrix.os }}
+    env:
+      PHOTO_VERSION: 0.2.0-ea.1
+      QT_QPA_PLATFORM: offscreen
+    steps:
+      - uses: actions/checkout@v4
+      - name: Linux runtime libraries
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y libxcb-cursor0 libxkbcommon-x11-0 libopengl0 libxcb-icccm4 libxcb-keysyms1 libxcb-image0 libxcb-render-util0 libxcb-xinerama0
+      - uses: jurplel/install-qt-action@v4
+        with:
+          version: '6.8.3'
+          arch: ${{ matrix.arch }}
+          modules: 'qtimageformats'
+          cache: true
+      - name: Configure
+        run: cmake -S . -B build-release -DCMAKE_BUILD_TYPE=Release ${{ matrix.cmake_args }}
+      - name: Build
+        run: cmake --build build-release --config Release --parallel 4
+      - name: Functional tests
+        run: ctest --test-dir build-release -C Release --output-on-failure --output-junit tests.xml
+      - name: Windows portable package
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $folder = "dist/PhotoDeck-$env:PHOTO_VERSION-windows-x64"
+          New-Item -ItemType Directory -Force $folder | Out-Null
+          Copy-Item build-release/Release/photodeck.exe "$folder/PhotoDeck.exe"
+          windeployqt --release --compiler-runtime --no-translations --no-system-d3d-compiler --no-opengl-sw "$folder/PhotoDeck.exe"
+          if ($LASTEXITCODE -ne 0) { throw "windeployqt failed" }
+          Copy-Item README.md,EARLY-ACCESS.md,LICENSE $folder/
+          Copy-Item packaging/THIRD-PARTY.md $folder/
+          Copy-Item -Recurse packaging/licenses,examples $folder/
+          & "$folder/PhotoDeck.exe" --no-settings --preset focus --screenshot windows-startup.png
+          if ($LASTEXITCODE -ne 0 -or !(Test-Path windows-startup.png)) { throw "Windows package startup failed" }
+          Compress-Archive -Path $folder -DestinationPath "$folder.zip"
+      - name: macOS application package
+        if: runner.os == 'macOS'
+        run: |
+          folder="dist/PhotoDeck-$PHOTO_VERSION-${{ matrix.label }}"
+          mkdir -p "$folder"
+          cp -R build-release/photodeck.app "$folder/PhotoDeck.app"
+          macdeployqt "$folder/PhotoDeck.app"
+          cp README.md EARLY-ACCESS.md LICENSE packaging/THIRD-PARTY.md "$folder/"
+          cp -R packaging/licenses examples "$folder/"
+          codesign --force --deep --sign - "$folder/PhotoDeck.app"
+          "$folder/PhotoDeck.app/Contents/MacOS/photodeck" --no-settings --preset focus --screenshot macos-startup.png
+          test -s macos-startup.png
+          codesign --verify --deep --strict "$folder/PhotoDeck.app"
+          ditto -c -k --sequesterRsrc --keepParent "$folder" "$folder.zip"
+      - name: Linux portable package
+        if: runner.os == 'Linux'
+        run: |
+          python3 scripts/package-linux-portable.py --binary build-release/photodeck --qt "$QT_ROOT_DIR" --output dist --version "$PHOTO_VERSION"
+          "dist/PhotoDeck-$PHOTO_VERSION-linux-x86_64/launch.sh" --no-settings --preset focus --screenshot linux-startup.png
+          test -s linux-startup.png
+      - name: Checksums
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import pathlib,hashlib
+          p=pathlib.Path('dist')
+          lines=[hashlib.sha256(f.read_bytes()).hexdigest()+'  '+f.name for f in sorted(p.iterdir()) if f.is_file() and (f.name.endswith('.zip') or f.name.endswith('.tar.gz'))]
+          (p/'SHA256SUMS.txt').write_text('\n'.join(lines)+'\n')
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: PhotoDeck-${{ matrix.label }}
+          path: |
+            dist/*.zip
+            dist/*.tar.gz
+            dist/SHA256SUMS.txt
+            build-release/tests.xml
+            *-startup.png
+          if-no-files-found: warn
+          retention-days: 30

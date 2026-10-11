@@ -1,0 +1,13 @@
+/build*/
+/bin/
+/dist/
+/artifacts/
+*.user
+*.o
+.qmake.stash
+.DS_Store
+/designs/ui-variations/previews/
+/designs/ui-variations/preview.html
+/designs/ui-variations/overview.png
+/designs/ui-variations/verification.*
+/designs/ui-variations/carousel-verification.json

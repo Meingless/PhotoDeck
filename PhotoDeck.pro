@@ -1,0 +1,17 @@
+QT += widgets
+CONFIG += c++17 release
+CONFIG -= debug
+TEMPLATE = app
+TARGET = photodeck
+DESTDIR = bin
+SOURCES += src/main.cpp src/document.cpp src/canvas.cpp src/mainwindow.cpp
+HEADERS += src/document.h src/canvas.h src/mainwindow.h
+!msvc:QMAKE_CXXFLAGS += -Wall -Wextra
+msvc:QMAKE_CXXFLAGS += /utf-8
+unix:!macx:target.path = /usr/local/bin
+unix:!macx:INSTALLS += target
+macx:QMAKE_INFO_PLIST = packaging/Info.plist
+RESOURCES += resources.qrc
+
+SOURCES += src/appearance.cpp
+HEADERS += src/appearance.h
