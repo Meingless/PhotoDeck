@@ -11,3 +11,5 @@
 /designs/ui-variations/overview.png
 /designs/ui-variations/verification.*
 /designs/ui-variations/carousel-verification.json
+/designs/ui-variations/render-previews.mjs
+/designs/ui-variations/verify-carousel.mjs
