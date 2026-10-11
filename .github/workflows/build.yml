@@ -13,7 +13,7 @@ jobs:
       matrix:
         include:
           - os: ubuntu-22.04
-            arch: gcc_64
+            arch: linux_gcc_64
             label: linux-x86_64
             cmake_args: ''
           - os: windows-2022
@@ -65,8 +65,8 @@ jobs:
           Copy-Item README.md,EARLY-ACCESS.md,LICENSE $folder/
           Copy-Item packaging/THIRD-PARTY.md $folder/
           Copy-Item -Recurse packaging/licenses,examples $folder/
-          & "$folder/PhotoDeck.exe" --no-settings --preset focus --screenshot windows-startup.png
-          if ($LASTEXITCODE -ne 0 -or !(Test-Path windows-startup.png)) { throw "Windows package startup failed" }
+          $process = Start-Process -FilePath (Resolve-Path "$folder/PhotoDeck.exe") -ArgumentList '--no-settings','--preset','focus','--screenshot',"$PWD/windows-startup.png" -Wait -PassThru -RedirectStandardOutput windows-startup.log -RedirectStandardError windows-startup-error.log
+          if ($process.ExitCode -ne 0 -or !(Test-Path windows-startup.png)) { Get-Content windows-startup-error.log; throw "Windows package startup failed with exit $($process.ExitCode)" }
           Compress-Archive -Path $folder -DestinationPath "$folder.zip"
       - name: macOS application package
         env:
@@ -109,5 +109,6 @@ jobs:
             dist/SHA256SUMS.txt
             build-release/tests.xml
             *-startup.png
+            *-startup*.log
           if-no-files-found: warn
           retention-days: 30

@@ -461,7 +461,7 @@ class PhotoDeckTests : public QObject {
                     return;
                 stage = 3;
                 QTest::mouseClick(buttons->button(QDialogButtonBox::Ok), Qt::LeftButton);
-            } else if (stage == 3 && dialog->windowTitle() == "Toplu işlem") {
+            } else if (stage == 3 && qobject_cast<QMessageBox *>(dialog)) {
                 auto *box = qobject_cast<QMessageBox *>(dialog);
                 if (!box)
                     return;
