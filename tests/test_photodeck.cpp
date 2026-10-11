@@ -392,8 +392,7 @@ class PhotoDeckTests : public QObject {
         auto *timer = window->findChild<QTimer *>("autosaveTimer");
         QVERIFY(timer);
         timer->setInterval(10);
-        QTest::qWait(50);
-        QVERIFY(!dir.entryList({"*.pdeck"}, QDir::Files).isEmpty());
+        QTRY_VERIFY_WITH_TIMEOUT(!QDir(dirPath).entryList({"*.pdeck"}, QDir::Files).isEmpty(), 5000);
         delete window; // Abrupt destruction skips closeEvent, as a crashed session would.
         MainWindow recovered(true, false);
         QTimer::singleShot(1, [] {
@@ -401,8 +400,7 @@ class PhotoDeckTests : public QObject {
             if (box)
                 QTest::mouseClick(box->button(QMessageBox::Yes), Qt::LeftButton);
         });
-        QTest::qWait(60);
-        QVERIFY(recovered.currentDocument());
+        QTRY_VERIFY_WITH_TIMEOUT(recovered.currentDocument() != nullptr, 5000);
         QVERIFY(recovered.currentDocument()->dirty);
         QCOMPARE(recovered.currentDocument()->composite().pixelColor(3, 3), QColor(Qt::cyan));
         QVERIFY(recovered.currentDocument()->path.isEmpty());
