@@ -593,6 +593,25 @@ class PhotoDeckTests : public QObject {
         QVERIFY(window.findChild<QFrame *>("floatingTools")->isHidden());
         QVERIFY(window.uiSettings().layersPosition.x() >= 0);
     }
+    void customizationShortcutSurvivesHiddenChrome() {
+        MainWindow window(false, false);
+        window.show();
+        window.activateWindow();
+        window.demo();
+        auto settings = window.uiSettings();
+        settings.showMenu = false;
+        settings.showStatus = false;
+        window.applyUiSettings(settings, false, false);
+        window.findChild<QToolBar *>("documentToolbar")->hide();
+        QTest::qWait(50);
+        QSignalSpy spy(window.findChild<QAction *>("ui.customize"), &QAction::triggered);
+        QTimer::singleShot(50, [] {
+            if (auto *dialog = qobject_cast<QDialog *>(QApplication::activeModalWidget()))
+                dialog->reject();
+        });
+        QTest::keyClick(window.currentCanvas(), Qt::Key_P, Qt::ControlModifier | Qt::AltModifier);
+        QCOMPARE(spy.count(), 1);
+    }
     void representativePerformance() {
         Document d;
         d.makeDemo();

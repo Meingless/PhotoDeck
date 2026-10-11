@@ -271,6 +271,7 @@ QAction *MainWindow::action(const QString &id, const QString &text, const QKeySe
         fn();
     });
     actions[id] = a;
+    addAction(a); // Shortcuts remain reachable when users hide menus and toolbars.
     return a;
 }
 void MainWindow::buildMenus() {
