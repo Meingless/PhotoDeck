@@ -1,4 +1,4 @@
-# PhotoDeck 0.3.0 Early Access
+# PhotoDeck 0.4.0 Early Access
 
 AI içermeyen, tamamen yerel, C++/Qt 6 ile geliştirilen fotoğraf ve katman düzenleyici. Linux, Windows ve macOS için ortak kaynak kullanır. Tarayıcı motoru, Python çalışma zamanı, bulut hesabı, abonelik veya ağ servisi gerekmez.
 
@@ -21,6 +21,8 @@ Varsayılan görünüm **Odak**. Çalışma alanı menüsünde Grafit, Kağıt, 
 - Fırça, kalem, silgi, aynı katmandan klon damgası, bağlı alana boya kovası, iki renkli degrade, dikdörtgen, elips ve damlalık.
 - Dikdörtgen/eliptik seçim, serbest/çokgen kement ve toleranslı sihirli değnek. Yeni/ekle/çıkar/kesiştir; ters çevirme, kenar yumuşatma ve büyütme/küçültme. Seçim alfası çizim, silme, kopyalama ve maske oluşturma işlemlerinde korunur.
 - Seçili piksel silme, kırpma, oranı koruyan yeniden boyutlandırma, 90° dönüş ve aynalama.
+- Ctrl+T ile kaynak koruyan katman dönüşümü: ölçek, keyfi açı, eğme, aynalama ve dört köşeli perspektif. Kaynak piksel, metin ve maske korunur; önizleme iptal edilebilir ve tek adımda geri alınır.
+- Dokuz sabitleme noktasıyla tuval boyutu; tuval dışındaki kaynak pikselleri silmez. Görünür katmanları birleştirme tuval dışındaki alanları ve gizli katmanları korur. Tuvale düzleştirme saydamlığı koruyup gizli katmanları ve tuval dışını kaldırır.
 - Kaynak pikselleri koruyan parlaklık, kontrast, doygunluk, siyah beyaz ve kutu bulanıklığı.
 - Seviyeler (giriş/çıkış aralığı, gamma), pozlama, RGB ve ayrı kanal eğrileri; hue, vibrance, temel kanal renk dengesi, invert, threshold ve posterize. Ctrl+L ile canlı önizleme; iptal geri döner, kabul tek geri alma adımıdır.
 - Yerel fontlarla çok satırlı metin, boyut, kalınlık ve renk. Metin katmanına çift tıklayarak düzenleme.
@@ -34,13 +36,15 @@ Kısayollar: V taşı, M seç, C kırp, B fırça, P kalem, E silgi, S klon, F k
 
 Shift+M eliptik seçim, L kement, Shift+L çokgen kement, W sihirli değnek. Çokgen kement Enter/çift tıklamayla tamamlanır, Esc iptal eder. Seçim sırasında Shift ekler, Alt çıkarır, Shift+Alt kesiştirir; araç seçeneklerinden aynı modlar seçilebilir. Ctrl+Shift+I seçimi ters çevirir. Seçimler bu sürümde geçicidir; proje veya belge geçmişine kaydedilmez.
 
-0.3 projeleri `.pdeck` sürüm 2 olarak kaydedilir; eski sürüm 1 projeleri açılabilir. 0.2 uygulaması sürüm 2 dosyalarını açamaz; eski uygulamayla kullanacağınız orijinal projeleri ayrı saklayın.
+0.4 projeleri `.pdeck` sürüm 3 olarak kaydedilir; eski sürüm 1 ve 2 projeleri açılabilir. 0.2/0.3 uygulamaları sürüm 3 dosyalarını açamaz; eski uygulamayla kullanacağınız orijinalleri ayrı saklayın. `tests/fixtures/v2-demo.pdeck`, yayımlanmış 0.3 AppImage'ıyla oluşturulmuş gerçek bir uyumluluk örneğidir.
+
+Dönüşmüş katmanda piksel boyamak/silmek için Katman → Görünümü rasterleştir kullanın. Bu açık adım dönüşümü, maskeyi ve renk ayarlarını kaynak piksellere uygular; metin düzenlenebilirliği kaldırılır, görünür sonuç ve geri alma korunur. Tüm görüntüye boyutlandırma/90° dönüş/aynalama uygulanması da dönüştürülmüş katmanları önce rasterleştirir. Serbest dönüşüm şu an sayısal bir pencereyle yapılır; tuval üstü tutamaçlar ve warp henüz yoktur.
 
 Açılıştaki Horizon kompozisyonu PhotoDeck için kodla çizilmiş özgün bir örnektir. `examples/Horizon.pdeck` dosyası dört ayrı düzenlenebilir katman içerir.
 
 ## Hafiflik ve güvenlik sınırları
 
-Tuval en fazla 16 megapiksel, her kenar en fazla 16384 piksel. En fazla 64 katman ve 256 MiB kaynak piksel/maske verisi. Geçmiş en fazla 30 durum ve canlı belgeden ayrı toplam 128 MiB benzersiz piksel verisi saklar; büyük belgelerde eski adımlar daha erken atılır. Paylaşılan görüntü tamponları gereksiz kopyaları azaltır; filtre sonuçları önbelleğe alınır. Bu sınırlar toplam süreç RAM'inin üst sınırı değildir: tuval önizlemesi, filtre tamponları, Qt ve dosya kodlama ek bellek kullanır.
+Tuval en fazla 16 megapiksel, her kenar en fazla 16384 piksel. En fazla 64 katman ve 256 MiB kaynak piksel/maske verisi; katmanların toplam dönüşmüş görünüm alanı da 256 MiB ile sınırlıdır. Geçmiş en fazla 30 durum ve canlı belgeden ayrı toplam 128 MiB benzersiz piksel verisi saklar; büyük belgelerde eski adımlar daha erken atılır. Paylaşılan görüntü tamponları gereksiz kopyaları azaltır; filtre sonuçları önbelleğe alınır. Bu sınırlar toplam süreç RAM'inin üst sınırı değildir: tuval önizlemesi, filtre/dönüşüm tamponları, Qt ve dosya kodlama ek bellek kullanır.
 
 Bozuk proje okumaları geçici belge üzerinde doğrulanır ve açık belgeyi değiştirmez. Uzunluk, boyut, katman sayısı, maske boyutu ve sayısal parametreler sınırlanır. Proje dosyalarında komut, betik veya harici kaynak çalıştırılmaz. Başarısız kayıt açık belgenin kaydedilmiş durumunu değiştirmez. Proje/geçmiş ayrıdır: undo geçmişi dosyaya yazılmaz. Kurtarma kopyaları son 45 saniyedeki değişiklikleri her zaman kapsamayabilir; büyük belgelerde PNG kodlama arayüzde kısa beklemeye neden olabilir.
 
@@ -66,16 +70,16 @@ Dağıtılmış Linux paketini tek dosyalık AppImage olarak hazırlamak için `
 
 ```sh
 python3 scripts/package-appimage.py \
-  --package dist/PhotoDeck-0.3.0-ea.1-linux-x86_64 \
+  --package dist/PhotoDeck-0.4.0-ea.1-linux-x86_64 \
   --appimagetool /path/to/appimagetool \
-  --output dist/PhotoDeck-0.3.0-ea.1-x86_64.AppImage
+  --output dist/PhotoDeck-0.4.0-ea.1-x86_64.AppImage
 ```
 
-AppImage'a çalıştırma izni verip açın: `chmod +x PhotoDeck-0.3.0-ea.1-x86_64.AppImage`. FUSE bulunmayan sistemlerde `APPIMAGE_EXTRACT_AND_RUN=1 ./PhotoDeck-0.3.0-ea.1-x86_64.AppImage` kullanılabilir. Windows taşınabilir paketindeki `PhotoDeck.exe`, yanındaki DLL ve eklenti klasörleriyle birlikte taşınmalıdır. macOS paketindeki `.app` tüm içeriğiyle korunmalıdır.
+AppImage'a çalıştırma izni verip açın: `chmod +x PhotoDeck-0.4.0-ea.1-x86_64.AppImage`. FUSE bulunmayan sistemlerde `APPIMAGE_EXTRACT_AND_RUN=1 ./PhotoDeck-0.4.0-ea.1-x86_64.AppImage` kullanılabilir. Windows taşınabilir paketindeki `PhotoDeck.exe`, yanındaki DLL ve eklenti klasörleriyle birlikte taşınmalıdır. macOS paketindeki `.app` tüm içeriğiyle korunmalıdır.
 
 ## Mevcut kapsam
 
-RGB 8 bit raster düzenleme. PSD/PSB, RAW, CMYK/ICC, 16/32-bit, ayar katmanları, kanal mikseri/seçici renk, serbest dönüşüm, gruplar/akıllı nesneler, vektör yolları/SVG, edge-aware seçim düzeltme, tablet basıncı, Actions/ABR/eklenti uyumluluğu ve Timeline henüz yoktur. Eğriler parça parça doğrusal; renk dengesi tüm tonlara uygulanan kanal kaydırması; feather kutu yumuşatmasıdır. Photoshop'un gelişmiş seçenekleriyle eşdeğer oldukları iddia edilmez. Yeniden boyutlandırma, dönüş/aynalama ve piksel araçları metni rasterleştirir; undo ile geri dönülebilir. Bulanıklık katmanın tamamına uygulanır; yerel sonuç için maske kullanılır. Kırpma dışarı taşan kaynak pikselleri saklar. Katman kilidi doğrudan düzenlemeyi engeller; tüm görüntü dönüşümleri bütün katmanları dönüştürür.
+RGB 8 bit raster düzenleme. PSD/PSB, RAW, CMYK/ICC, 16/32-bit, ayar katmanları, kanal mikseri/seçici renk, gruplar/bağlı veya gömülü akıllı nesneler, warp/puppet warp, vektör yolları/SVG, edge-aware seçim düzeltme, tablet basıncı, Actions/ABR/eklenti uyumluluğu ve Timeline henüz yoktur. Eğriler parça parça doğrusal; renk dengesi tüm tonlara uygulanan kanal kaydırması; feather kutu yumuşatmasıdır. Photoshop'un gelişmiş seçenekleriyle eşdeğer oldukları iddia edilmez. Yeniden boyutlandırma, tüm görüntü dönüş/aynalaması ve piksel araçları metni rasterleştirir; undo ile geri dönülebilir. Bulanıklık katmanın tamamına uygulanır; yerel sonuç için maske kullanılır. Kırpma dışarı taşan kaynak pikselleri saklar. Katman kilidi doğrudan düzenlemeyi engeller; tüm görüntü dönüşümleri bütün katmanları dönüştürür.
 
 Bu ilk kullanılabilir sürüm Photoshop'un bütün profesyonel iş akışlarına eşdeğer değildir. Minimum donanım koşulları düşük özellikli gerçek cihazlarda ölçülmemiştir. Yerel ölçümler `artifacts/verification.md` dosyasında tutulur.
 
@@ -87,4 +91,4 @@ Uygulama kodu ve örnek çizim MIT lisanslıdır. Qt ayrı LGPLv3/GPLv3 veya tic
 
 İşlev doğrulama kapsamı: [docs/FEATURE-AUDIT.md](docs/FEATURE-AUDIT.md).
 
-Tüm Photoshop alanlarının karşılaştırması ve açık farklar: [docs/PHOTOSHOP-COMPARISON.md](docs/PHOTOSHOP-COMPARISON.md). 0.3 bu farkların ilk kısmını kapatır; karşılaştırma çalışması devam eder.
+Tüm Photoshop alanlarının karşılaştırması ve açık farklar: [docs/PHOTOSHOP-COMPARISON.md](docs/PHOTOSHOP-COMPARISON.md). 0.3 ve 0.4 farkların bir kısmını kapatır; karşılaştırma çalışması devam eder.

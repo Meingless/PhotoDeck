@@ -140,7 +140,8 @@ quint32 noise(int x, int y) {
     return v;
 }
 } // namespace
-void compose(QImage &destination, const QImage &source, QPoint offset, double opacity, int mode) {
+void compose(QImage &destination, const QImage &source, QPoint offset, double opacity, int mode,
+             QPoint documentOrigin) {
     if (source.isNull() || destination.isNull() || !std::isfinite(opacity) || opacity <= 0)
         return;
     opacity = std::clamp(opacity, 0.0, 1.0);
@@ -164,7 +165,7 @@ void compose(QImage &destination, const QImage &source, QPoint offset, double op
             QRgb sp = qUnpremultiply(src[x - offset.x()]);
             double as = qAlpha(sp) / 255.0 * opacity;
             if (mode == 6)
-                as = noise(x, y) / 4294967296.0 < as ? 1 : 0;
+                as = noise(x + documentOrigin.x(), y + documentOrigin.y()) / 4294967296.0 < as ? 1 : 0;
             if (as == 0)
                 continue;
             QRgb bp = qUnpremultiply(dest[x]);

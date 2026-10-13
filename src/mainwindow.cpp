@@ -1,6 +1,7 @@
 #include "mainwindow.h"
 #include "blending.h"
 #include "tonedialog.h"
+#include "transformdialog.h"
 #include <QActionGroup>
 #include <QApplication>
 #include <QCheckBox>
@@ -419,18 +420,18 @@ void MainWindow::buildMenus() {
                 error("Pano görüntüsü boyut veya bellek sınırını aşıyor.");
                 return;
             }
-            mutate([im](Document *doc) {
-                Layer l;
-                l.name = "Panodan";
-                l.pixels = im;
-                doc->state.layers.insert(doc->state.active + 1, l);
-                ++doc->state.active;
-                doc->editingMask = false;
-            });
+            Layer layer;
+            layer.name = "Panodan";
+            layer.pixels = im;
+            QString e;
+            if (!d->insertLayer(layer, "Panodan katman", &e))
+                error(e);
         }
     }));
     auto *image = menuBar()->addMenu("&Görüntü");
     image->addAction(action("resize", "Görüntü boyutu…", {}, [this] { resizeDocument(); }));
+    image->addAction(action("canvasSize", "Tuval boyutu…", QKeySequence("Ctrl+Alt+C"),
+                            [this] { changeCanvasSize(); }));
     image->addAction(action("crop", "Seçime göre kırp", QKeySequence("Ctrl+Shift+X"), [this] {
         if (auto *d = currentDocument()) {
             QString err;
@@ -509,6 +510,43 @@ void MainWindow::buildMenus() {
         }
     }));
     auto *layer = menuBar()->addMenu("&Katman");
+    layer->addAction(action("transform", "Kaynak koruyan serbest dönüşüm…", QKeySequence("Ctrl+T"),
+                            [this] { transformLayer(); }));
+    layer->addAction(action("resetTransform", "Dönüşümü sıfırla", {}, [this] {
+        if (auto *d = currentDocument()) {
+            d->beginEdit();
+            QString e;
+            if (d->setLayerTransform({}, &e))
+                d->commit("Dönüşüm sıfırlandı");
+            else {
+                d->cancelEdit();
+                error(e);
+            }
+        }
+    }));
+    layer->addAction(action("rasterize", "Görünümü rasterleştir (maske/ayarlar dahil)", {}, [this] {
+        if (auto *d = currentDocument()) {
+            QString e;
+            if (!d->rasterizeLayer(&e))
+                error(e);
+        }
+    }));
+    layer->addAction(
+        action("mergeVisible", "Görünür katmanları birleştir", QKeySequence("Ctrl+Shift+E"), [this] {
+            if (auto *d = currentDocument()) {
+                QString e;
+                if (!d->mergeVisible(&e))
+                    error(e);
+            }
+        }));
+    layer->addAction(action("flatten", "Tuvale düzleştir (gizli katmanları kaldır)", {}, [this] {
+        if (auto *d = currentDocument()) {
+            QString e;
+            if (!d->flatten(&e))
+                error(e);
+        }
+    }));
+    layer->addSeparator();
     layer->addAction(action("addLayer", "Yeni katman", QKeySequence("Ctrl+Shift+N"), [this] {
         if (auto *d = currentDocument()) {
             QString e;
@@ -525,8 +563,12 @@ void MainWindow::buildMenus() {
     }));
     layer->addAction(action("selectLayerPixels", "Katman alfasını seç", {}, [this] {
         if (auto *d = currentDocument()) {
-            const auto &l = d->state.layers[d->state.active];
-            d->selection = Selection::fromAlpha(l.pixels, l.offset, d->state.size);
+            Layer source = d->state.layers[d->state.active];
+            source.mask = {};
+            source.blur = 0;
+            source.cache = {};
+            d->selection =
+                Selection::fromAlpha(source.rendered(), source.renderedOffset(), d->state.size);
             d->changed();
         }
     }));
@@ -609,7 +651,7 @@ void MainWindow::buildMenus() {
             "gerekmez.");
     }));
     help->addAction(action("about", "PhotoDeck hakkında", {}, [this] {
-        QMessageBox::about(this, "PhotoDeck 0.3.0 · Erken erişim",
+        QMessageBox::about(this, "PhotoDeck 0.4.0 · Erken erişim",
                            "<h2>PhotoDeck</h2><p>Hafif, yerel fotoğraf ve katman düzenleyici.</p><p>Qt "
                            "6 / C++ · Linux / Windows / macOS</p><p>AI, reklam, telemetri ve abonelik "
                            "içermez.</p><p>Bu sürüm RGB raster düzenlemeye odaklanır. PSD/RAW, CMYK/ICC "
@@ -1036,6 +1078,8 @@ void MainWindow::updateActionAvailability() {
     actions["shrinkSelection"]->setEnabled(present && !d->selection.isEmpty());
     actions["crop"]->setEnabled(present && d->selection.hasPixels());
     actions["tones"]->setEnabled(present && !d->state.layers[d->state.active].locked);
+    for (const auto &id : {"transform", "resetTransform", "rasterize"})
+        actions[id]->setEnabled(present && !d->state.layers[d->state.active].locked);
     actions["redo"]->setEnabled(present && d->canRedo());
     actions["deleteLayer"]->setEnabled(present && d->state.layers.size() > 1);
     actions["editText"]->setEnabled(present && !d->state.layers[d->state.active].text.isEmpty() &&
@@ -1105,8 +1149,8 @@ void MainWindow::refresh() {
                              .arg(active.pixels.width())
                              .arg(active.pixels.height())
                              .arg(active.text.isEmpty() ? "Piksel katmanı" : "Düzenlenebilir metin")
-                             .arg(active.offset.x())
-                             .arg(active.offset.y()));
+                             .arg(active.renderedOffset().x())
+                             .arg(active.renderedOffset().y()));
     maskButton->setText(active.mask.isNull() ? "◧  Katman maskesi ekle"
                         : d->editingMask     ? "◧  Piksele geri dön"
                                              : "◧  Maskeyi düzenle");
@@ -1321,6 +1365,65 @@ void MainWindow::closeEvent(QCloseEvent *e) {
     for (const auto &file : recoveryFiles)
         QFile::remove(file);
     e->accept();
+}
+void MainWindow::transformLayer() {
+    auto *d = currentDocument();
+    if (!d || d->state.layers[d->state.active].locked)
+        return;
+    d->beginEdit();
+    TransformDialog dialog(d, this);
+    if (dialog.exec() == QDialog::Accepted) {
+        QString e;
+        if (d->setLayerTransform(dialog.transform(), &e))
+            d->commit("Kaynak koruyan dönüşüm");
+        else {
+            d->cancelEdit();
+            error(e);
+        }
+    } else
+        d->cancelEdit();
+}
+void MainWindow::changeCanvasSize() {
+    auto *d = currentDocument();
+    if (!d)
+        return;
+    QDialog dialog(this);
+    dialog.setObjectName("canvasSizeDialog");
+    dialog.setWindowTitle("Tuval boyutu");
+    auto *layout = new QVBoxLayout(&dialog);
+    auto *form = new QFormLayout;
+    auto *width = new QSpinBox;
+    width->setObjectName("canvasWidth");
+    width->setRange(1, 16384);
+    width->setValue(d->state.size.width());
+    auto *height = new QSpinBox;
+    height->setObjectName("canvasHeight");
+    height->setRange(1, 16384);
+    height->setValue(d->state.size.height());
+    auto *anchor = new QComboBox;
+    anchor->setObjectName("canvasAnchor");
+    anchor->addItems({"Sol üst", "Üst orta", "Sağ üst", "Sol orta", "Merkez", "Sağ orta", "Sol alt",
+                      "Alt orta", "Sağ alt"});
+    anchor->setCurrentIndex(4);
+    form->addRow("Genişlik (px)", width);
+    form->addRow("Yükseklik (px)", height);
+    form->addRow("Sabitleme noktası", anchor);
+    layout->addLayout(form);
+    auto *note = new QLabel("Katmanlar yeniden örneklenmez. Tuval dışındaki kaynak pikseller korunur.");
+    note->setWordWrap(true);
+    layout->addWidget(note);
+    auto *buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
+    layout->addWidget(buttons);
+    connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
+    connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+    if (dialog.exec() != QDialog::Accepted)
+        return;
+    QString e;
+    int index = anchor->currentIndex();
+    if (!d->canvasSize({width->value(), height->value()}, {index % 3, index / 3}, &e))
+        error(e);
+    else
+        currentCanvas()->fit();
 }
 void MainWindow::resizeDocument() {
     auto *d = currentDocument();

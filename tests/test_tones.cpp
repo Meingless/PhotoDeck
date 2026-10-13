@@ -213,7 +213,7 @@ class ToneTests : public QObject {
         QVERIFY(d.dirty);
         QCOMPARE(d.state.layers[d.state.active].rendered(), rendered);
     }
-    void nativeV2RoundTripAndLegacyV1() {
+    void nativeCurrentRoundTripAndLegacyV1() {
         Document d;
         QVERIFY(d.create({20, 15}));
         d.state.layers[0].pixels.fill(QColor(120, 80, 60, 90));

@@ -6,6 +6,7 @@
 #include <QImage>
 #include <QObject>
 #include <QPainter>
+#include <QTransform>
 #include <QVector>
 #include <functional>
 
@@ -14,6 +15,8 @@ struct Layer {
     QImage pixels;
     QImage mask; // ARGB, grayscale: white reveals, black conceals.
     QPoint offset;
+    QTransform
+        geometry; // Local source pixels -> local transformed coordinates; offset is document position.
     bool visible = true, locked = false;
     qreal opacity = 1;
     int blend = 0;
@@ -26,7 +29,12 @@ struct Layer {
     mutable qint64 cacheKey = 0, maskKey = 0;
     mutable int cacheB = 999, cacheC = 999, cacheS = 999, cacheBlur = 999;
     mutable ToneSettings cacheTones;
+    mutable QTransform cacheGeometry;
     QImage rendered() const;
+    QRect transformedBounds() const;
+    QPoint renderedOffset() const;
+    bool validGeometry() const;
+    Layer rasterized() const;
 };
 struct State {
     QSize size;
@@ -53,6 +61,7 @@ class Document : public QObject {
     bool create(QSize size, bool white = false);
     bool importImage(const QString &path, bool asLayer, QString *error);
     bool addLayer(const QString &name, QString *error = nullptr);
+    bool insertLayer(Layer layer, const QString &label, QString *error = nullptr);
     bool duplicate(QString *error);
     void deleteLayer();
     void reorder(int delta);
@@ -63,6 +72,11 @@ class Document : public QObject {
     bool resize(QSize size, QString *error);
     bool rotate(bool clockwise, QString *error);
     bool flip(bool horizontal, QString *error = nullptr);
+    bool setLayerTransform(const QTransform &transform, QString *error = nullptr);
+    bool rasterizeLayer(QString *error = nullptr);
+    bool canvasSize(QSize size, QPoint anchor, QString *error = nullptr);
+    bool mergeVisible(QString *error = nullptr);
+    bool flatten(QString *error = nullptr);
     void adjust(int b, int c, int s);
     bool adjustTones(const ToneSettings &settings, QString *error = nullptr);
     bool addText(QString text, QFont font, QColor color, QPoint at, QString *error);

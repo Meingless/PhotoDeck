@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.21)
-project(PhotoDeck VERSION 0.3.0 LANGUAGES CXX)
+project(PhotoDeck VERSION 0.4.0 LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_AUTOMOC ON)
@@ -15,6 +15,7 @@ add_library(photodeck-core STATIC
     src/tones.cpp src/tones.h src/tonedialog.cpp src/tonedialog.h
     src/selection.cpp src/selection.h
     src/blending.cpp src/blending.h
+    src/transformdialog.cpp src/transformdialog.h
     src/document.cpp src/document.h
     src/canvas.cpp src/canvas.h
     src/mainwindow.cpp src/mainwindow.h
@@ -59,4 +60,8 @@ if(BUILD_TESTING)
     target_link_libraries(photodeck-blending-tests PRIVATE photodeck-core Qt6::Test)
     add_test(NAME photodeck-blending COMMAND photodeck-blending-tests)
     set_tests_properties(photodeck-blending PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 60)
+    qt_add_executable(photodeck-transforms-tests tests/test_transforms.cpp resources.qrc)
+    target_link_libraries(photodeck-transforms-tests PRIVATE photodeck-core Qt6::Test)
+    add_test(NAME photodeck-transforms COMMAND photodeck-transforms-tests)
+    set_tests_properties(photodeck-transforms PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 60)
 endif()

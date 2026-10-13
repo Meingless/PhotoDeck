@@ -9,3 +9,6 @@ RESOURCES += ../resources.qrc
 msvc:QMAKE_CXXFLAGS += /utf-8
 SOURCES += ../src/blending.cpp
 HEADERS += ../src/blending.h
+
+SOURCES += ../src/transformdialog.cpp
+HEADERS += ../src/transformdialog.h

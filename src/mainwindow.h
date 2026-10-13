@@ -117,6 +117,8 @@ class MainWindow : public QMainWindow {
     bool confirmClose(int index);
     void closeTab(int index);
     void resizeDocument();
+    void changeCanvasSize();
+    void transformLayer();
     void textDialog(QPoint point, bool edit = false);
     void renameLayer();
     void chooseColor();

@@ -1,4 +1,4 @@
-# PhotoDeck 0.3.0 Early Access 1
+# PhotoDeck 0.4.0 Early Access 1
 
 AI içermeyen yerel fotoğraf ve katman düzenleyici. Erken erişim sürümüdür; önemli orijinalleri koruyun ve ayrı proje kopyalarıyla çalışın.
 
@@ -22,8 +22,12 @@ Kaynak ve lisanslar paketle birlikte hazırlanır. Üçüncü taraf yazılım bi
 
 Ctrl+L ton penceresi; Shift+M eliptik seçim, L kement, Shift+L çokgen kement, W değnek. Çokgen Enter/çift tıklamayla tamamlanır, Esc iptal eder. Seçimde Shift ekle, Alt çıkar, Shift+Alt kesiştir. Ctrl+Shift+I seçimi ters çevirir. Seçimler henüz geçicidir; proje/geçmişe kaydedilmez.
 
-Yeni projeler .pdeck sürüm 2'dir. Sürüm 1 projeleri açılır; PhotoDeck 0.2 sürüm 2 projelerini açamaz. Eski uygulama için kullanacağınız orijinal projeleri ayrı koruyun.
+Yeni projeler .pdeck sürüm 3'tür. Sürüm 1/2 projeleri açılır; PhotoDeck 0.2/0.3 sürüm 3 projelerini açamaz. Eski uygulama için kullanacağınız orijinalleri ayrı koruyun.
 
-Linux AppImage tek dosyalık alternatifidir: çalıştırma izni verin; FUSE yoksa `APPIMAGE_EXTRACT_AND_RUN=1 ./PhotoDeck-0.3.0-ea.1-x86_64.AppImage`. Kütüphaneler AppImage içindedir.
+Linux AppImage tek dosyalık alternatifidir: çalıştırma izni verin; FUSE yoksa `APPIMAGE_EXTRACT_AND_RUN=1 ./PhotoDeck-0.4.0-ea.1-x86_64.AppImage`. Kütüphaneler AppImage içindedir.
 
 Photoshop karşılaştırması ve kapanmamış farklar docs/PHOTOSHOP-COMPARISON.md içindedir. Bu sürüm tam Photoshop eşdeğerliği değildir.
+
+0.4 ekleri: Ctrl+T ile kaynak koruyan sayısal ölçek/dönüş/eğme ve dört köşeli perspektif; Ctrl+Alt+C ile dokuz sabitleme noktalı tuval boyutu; Ctrl+Shift+E ile görünür katmanları birleştirme. Birleştirme tuval dışı pikselleri ve gizli katmanları korur. Tuvale düzleştirme gizli katmanları ve tuval dışını kaldırır, saydamlığı korur. Bütün işlemler geri alınabilir.
+
+Dönüşüm sırasında metin ve maskeler kaynakta kalır. Boyama/silme için Katman → Görünümü rasterleştir gerekir; bu adım maske/renk ayarlarını uygular ve metni piksele dönüştürür. Tüm görüntü boyutlandırma/90° dönüş/aynalaması da dönüştürülmüş katmanları rasterleştirir. Tuval üstü dönüşüm tutamaçları ve warp henüz yoktur. Kaynak verilerinden ayrı, toplam dönüşmüş görünüm alanı 256 MiB ile sınırlanır.

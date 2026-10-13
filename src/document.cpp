@@ -13,6 +13,7 @@
 #include <QTextLayout>
 #include <QtMath>
 #include <cmath>
+#include <limits>
 #include <memory>
 #include <vector>
 
@@ -28,7 +29,7 @@ bool sameLayer(const Layer &a, const Layer &b) {
            a.visible == b.visible && a.locked == b.locked && a.opacity == b.opacity &&
            a.blend == b.blend && a.brightness == b.brightness && a.contrast == b.contrast &&
            a.saturation == b.saturation && a.blur == b.blur && a.text == b.text && a.font == b.font &&
-           a.color == b.color && a.tones == b.tones;
+           a.color == b.color && a.tones == b.tones && a.geometry == b.geometry;
 }
 bool sameContent(const State &a, const State &b) {
     if (a.size != b.size || a.layers.size() != b.layers.size())
@@ -47,14 +48,21 @@ bool validState(const State &s, QString *error) {
     if (!Document::validSize(s.size) || s.layers.isEmpty() || s.layers.size() > 64 || s.active < 0 ||
         s.active >= s.layers.size() || bytes(s) > Document::MaxLayerBytes)
         return fail();
+    qint64 renderBytes = 0;
     for (const auto &l : s.layers) {
         if (!Document::validSize(l.pixels.size()) ||
+            l.pixels.format() != QImage::Format_ARGB32_Premultiplied ||
             (!l.mask.isNull() && l.mask.size() != l.pixels.size()) || !Document::validOffset(l.offset) ||
+            (!l.mask.isNull() && l.mask.format() != QImage::Format_ARGB32_Premultiplied) ||
             !std::isfinite(l.opacity) || l.opacity < 0 || l.opacity > 1 || l.blend < 0 ||
             l.blend >= Blending::Count || qAbs(qint64(l.brightness)) > 100 ||
             qAbs(qint64(l.contrast)) > 100 || qAbs(qint64(l.saturation)) > 100 || l.blur < 0 ||
             l.blur > 20 || l.name.size() > 16384 || l.text.size() > 16384 ||
-            l.font.toString().size() > 16384 || !l.tones.valid())
+            l.font.toString().size() > 16384 || !l.tones.valid() || !l.validGeometry())
+            return fail();
+        const QSize size = l.transformedBounds().size();
+        renderBytes += qint64(size.width()) * size.height() * 4;
+        if (renderBytes > Document::MaxLayerBytes)
             return fail();
     }
     return true;
@@ -63,6 +71,25 @@ bool offsetError(QString *error) {
     if (error)
         *error = "Dönüşüm katman konumu sınırını aşıyor. Katmanı tuvale yaklaştırın.";
     return false;
+}
+bool normalizeGeometry(State &state, QString *error) {
+    qint64 required = 0;
+    for (const auto &l : state.layers) {
+        if (!l.validGeometry())
+            return offsetError(error);
+        required += l.geometry.isIdentity()
+                        ? l.pixels.sizeInBytes() + l.mask.sizeInBytes()
+                        : qint64(l.transformedBounds().width()) * l.transformedBounds().height() * 4;
+    }
+    if (required > Document::MaxLayerBytes) {
+        if (error)
+            *error = "Dönüşümün rasterleştirilmesi 256 MiB katman sınırını aşıyor.";
+        return false;
+    }
+    for (auto &l : state.layers)
+        if (!l.geometry.isIdentity())
+            l = l.rasterized();
+    return true;
 }
 void clearCaches(State &s) {
     for (auto &l : s.layers)
@@ -206,13 +233,65 @@ bool readImageRecord(QDataStream &stream, QImage &image, qint64 &remaining) {
 }
 } // namespace
 
+QRect Layer::transformedBounds() const {
+    if (geometry.isIdentity())
+        return pixels.rect();
+    QRectF bounds = geometry.mapRect(QRectF(QPointF(), QSizeF(pixels.size())));
+    if (!std::isfinite(bounds.left()) || !std::isfinite(bounds.top()) ||
+        !std::isfinite(bounds.right()) || !std::isfinite(bounds.bottom()) ||
+        qAbs(bounds.left()) > Document::MaxCoordinate || qAbs(bounds.top()) > Document::MaxCoordinate ||
+        qAbs(bounds.right()) > Document::MaxCoordinate ||
+        qAbs(bounds.bottom()) > Document::MaxCoordinate)
+        return {};
+    return bounds.toAlignedRect();
+}
+bool Layer::validGeometry() const {
+    const double values[] = {geometry.m11(), geometry.m12(), geometry.m13(),
+                             geometry.m21(), geometry.m22(), geometry.m23(),
+                             geometry.m31(), geometry.m32(), geometry.m33()};
+    for (double v : values)
+        if (!std::isfinite(v) || qAbs(v) > Document::MaxCoordinate)
+            return false;
+    if (!geometry.isInvertible())
+        return false;
+    // A projective horizon must not cross the source rectangle: it would produce an unbounded image.
+    double minimum = std::numeric_limits<double>::infinity(), maximum = -minimum;
+    for (QPointF p : {QPointF(0, 0), QPointF(pixels.width(), 0), QPointF(0, pixels.height()),
+                      QPointF(pixels.width(), pixels.height())}) {
+        double w = geometry.m13() * p.x() + geometry.m23() * p.y() + geometry.m33();
+        minimum = qMin(minimum, w);
+        maximum = qMax(maximum, w);
+    }
+    if (!(minimum > 1e-8 || maximum < -1e-8))
+        return false;
+    QRect bounds = transformedBounds();
+    return Document::validSize(bounds.size()) && Document::validOffset(offset + bounds.topLeft());
+}
+QPoint Layer::renderedOffset() const {
+    return offset + transformedBounds().topLeft();
+}
+Layer Layer::rasterized() const {
+    Layer layer = *this;
+    layer.pixels = rendered();
+    layer.offset = renderedOffset();
+    layer.geometry = {};
+    layer.mask = {};
+    layer.text.clear();
+    layer.brightness = layer.contrast = layer.saturation = layer.blur = 0;
+    layer.tones = {};
+    layer.cache = {};
+    return layer;
+}
 QImage Layer::rendered() const {
+    if (!validGeometry() || pixels.format() != QImage::Format_ARGB32_Premultiplied ||
+        (!mask.isNull() && mask.format() != QImage::Format_ARGB32_Premultiplied))
+        return {};
     if (mask.isNull() && brightness == 0 && contrast == 0 && saturation == 0 && blur == 0 &&
-        tones.isIdentity())
+        tones.isIdentity() && geometry.isIdentity())
         return pixels;
     if (!cache.isNull() && cacheKey == pixels.cacheKey() && maskKey == mask.cacheKey() &&
         cacheB == brightness && cacheC == contrast && cacheS == saturation && cacheBlur == blur &&
-        cacheTones == tones)
+        cacheTones == tones && cacheGeometry == geometry)
         return cache;
     cache = boxBlur(pixels, blur).convertToFormat(QImage::Format_ARGB32);
     double factor = std::pow(2.0, contrast / 50.0), sat = 1.0 + saturation / 100.0;
@@ -234,6 +313,17 @@ QImage Layer::rendered() const {
         }
     }
     cache = cache.convertToFormat(QImage::Format_ARGB32_Premultiplied);
+    if (!geometry.isIdentity()) {
+        const QRect bounds = transformedBounds();
+        QImage result(bounds.size(), QImage::Format_ARGB32_Premultiplied);
+        result.fill(Qt::transparent);
+        QPainter p(&result);
+        p.setRenderHint(QPainter::SmoothPixmapTransform);
+        p.setTransform(geometry * QTransform::fromTranslate(-bounds.left(), -bounds.top()));
+        p.drawImage(QPoint(), cache);
+        p.end();
+        cache = result;
+    }
     cacheKey = pixels.cacheKey();
     maskKey = mask.cacheKey();
     cacheB = brightness;
@@ -241,6 +331,7 @@ QImage Layer::rendered() const {
     cacheS = saturation;
     cacheBlur = blur;
     cacheTones = tones;
+    cacheGeometry = geometry;
     return cache;
 }
 Document::Document(QObject *parent) : QObject(parent) {}
@@ -258,7 +349,7 @@ QImage Document::composite() const {
     out.fill(Qt::transparent);
     for (const auto &l : state.layers)
         if (l.visible)
-            Blending::compose(out, l.rendered(), l.offset, l.opacity, l.blend);
+            Blending::compose(out, l.rendered(), l.renderedOffset(), l.opacity, l.blend);
     return out;
 }
 bool Document::validOffset(QPoint offset) {
@@ -327,57 +418,61 @@ QImage Document::readImage(const QString &file, QString *error) {
     }
     return out.convertToFormat(QImage::Format_ARGB32_Premultiplied);
 }
+bool Document::insertLayer(Layer layer, const QString &label, QString *error) {
+    if (state.layers.isEmpty() || !validSize(layer.pixels.size()) ||
+        (!layer.mask.isNull() && layer.mask.size() != layer.pixels.size())) {
+        if (error)
+            *error = "Belge veya katman görüntüsü geçersiz.";
+        return false;
+    }
+    layer.pixels = layer.pixels.convertToFormat(QImage::Format_ARGB32_Premultiplied);
+    if (!layer.mask.isNull())
+        layer.mask = layer.mask.convertToFormat(QImage::Format_ARGB32_Premultiplied);
+    layer.cache = {};
+    State pending = state;
+    pending.layers.insert(pending.active + 1, layer);
+    ++pending.active;
+    if (!validState(pending, error))
+        return false;
+    beginEdit();
+    state = pending;
+    editingMask = false;
+    commit(label);
+    return true;
+}
 bool Document::importImage(const QString &file, bool asLayer, QString *error) {
     QImage image = readImage(file, error);
     if (image.isNull())
         return false;
-    if (asLayer) {
-        if (!allows(image.sizeInBytes(), error))
-            return false;
-        beginEdit();
-    } else
-        state = {image.size(), {}, 0};
-    Layer l;
-    l.name = QFileInfo(file).completeBaseName();
-    l.pixels = image;
-    state.layers.append(l);
-    state.active = state.layers.size() - 1;
-    editingMask = false;
+    Layer layer;
+    layer.name = QFileInfo(file).completeBaseName();
+    layer.pixels = image;
     if (asLayer)
-        commit("Görüntü katmanı eklendi");
-    else {
-        path.clear();
-        title = QFileInfo(file).fileName();
-        resetHistory("Görüntü açıldı");
-    }
+        return insertLayer(layer, "Görüntü katmanı eklendi", error);
+    state = {image.size(), {layer}, 0};
+    path.clear();
+    title = QFileInfo(file).fileName();
+    resetHistory("Görüntü açıldı");
     return true;
 }
 bool Document::addLayer(const QString &name, QString *error) {
     if (!allows(qint64(state.size.width()) * state.size.height() * 4, error))
         return false;
-    beginEdit();
-    Layer l;
-    l.name = name;
-    l.pixels = QImage(state.size, QImage::Format_ARGB32_Premultiplied);
-    l.pixels.fill(Qt::transparent);
-    state.layers.insert(state.active + 1, l);
-    ++state.active;
-    editingMask = false;
-    commit("Yeni katman");
-    return true;
+    Layer layer;
+    layer.name = name;
+    layer.pixels = QImage(state.size, QImage::Format_ARGB32_Premultiplied);
+    layer.pixels.fill(Qt::transparent);
+    return insertLayer(layer, "Yeni katman", error);
 }
 bool Document::duplicate(QString *error) {
-    const Layer source = state.layers[state.active];
-    if (!allows(source.pixels.sizeInBytes() + source.mask.sizeInBytes(), error))
+    if (state.layers.isEmpty()) {
+        if (error)
+            *error = "Belge boş.";
         return false;
-    beginEdit();
-    Layer l = source;
-    l.name += " kopya";
-    l.cache = {};
-    state.layers.insert(state.active + 1, l);
-    ++state.active;
-    commit("Katman çoğaltıldı");
-    return true;
+    }
+    Layer layer = state.layers[state.active];
+    layer.name += " kopya";
+    return insertLayer(layer, "Katman çoğaltıldı", error);
 }
 void Document::deleteLayer() {
     if (state.layers.size() <= 1)
@@ -413,7 +508,19 @@ bool Document::addMask(QString *error) {
     l.mask.fill(Qt::white);
     if (!selection.isEmpty()) {
         l.mask.fill(Qt::black);
-        selection.paint(l.mask, l.offset, [&](QPainter &p) { p.fillRect(l.mask.rect(), Qt::white); });
+        if (l.geometry.isIdentity())
+            selection.paint(l.mask, l.offset,
+                            [&](QPainter &p) { p.fillRect(l.mask.rect(), Qt::white); });
+        else {
+            for (int y = 0; y < l.mask.height(); ++y) {
+                auto *row = reinterpret_cast<QRgb *>(l.mask.scanLine(y));
+                for (int x = 0; x < l.mask.width(); ++x) {
+                    QPointF point = l.geometry.map(QPointF(x + .5, y + .5)) + l.offset;
+                    int v = selection.valueAt({qFloor(point.x()), qFloor(point.y())});
+                    row[x] = qRgb(v, v, v);
+                }
+            }
+        }
     }
     editingMask = true;
     commit("Katman maskesi");
@@ -443,26 +550,32 @@ bool Document::crop(QRect rect, QString *error) {
             *error = "Kırpmak için tuval üzerinde bir alan seçin.";
         return false;
     }
-    for (const auto &l : state.layers)
-        if (!validOffset(l.offset - rect.topLeft()))
-            return offsetError(error);
-    beginEdit();
-    state.size = rect.size();
-    for (auto &l : state.layers)
+    State pending = state;
+    pending.size = rect.size();
+    for (auto &l : pending.layers)
         l.offset -= rect.topLeft();
+    if (!validState(pending, error))
+        return false;
+    beginEdit();
+    state = pending;
     selection = {};
     commit("Tuval kırpıldı");
     return true;
 }
 bool Document::resize(QSize size, QString *error) {
+    State pending = state;
+    if (!normalizeGeometry(pending, error))
+        return false;
+
     if (!validSize(size)) {
         if (error)
             *error = "Geçersiz boyut (en fazla 16 megapiksel).";
         return false;
     }
-    qreal sx = qreal(size.width()) / state.size.width(), sy = qreal(size.height()) / state.size.height();
+    qreal sx = qreal(size.width()) / pending.size.width(),
+          sy = qreal(size.height()) / pending.size.height();
     qint64 needed = 0;
-    for (const auto &l : state.layers) {
+    for (const auto &l : pending.layers) {
         QSize ls(qMax(1, qRound(l.pixels.width() * sx)), qMax(1, qRound(l.pixels.height() * sy)));
         if (!validSize(ls)) {
             if (error)
@@ -480,7 +593,7 @@ bool Document::resize(QSize size, QString *error) {
         return false;
     }
     beginEdit();
-    for (auto &l : state.layers) {
+    for (auto &l : pending.layers) {
         QSize ls(qMax(1, qRound(l.pixels.width() * sx)), qMax(1, qRound(l.pixels.height() * sy)));
         l.pixels = l.pixels.scaled(ls, Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
         if (!l.mask.isNull())
@@ -488,14 +601,19 @@ bool Document::resize(QSize size, QString *error) {
         l.offset = {qRound(l.offset.x() * sx), qRound(l.offset.y() * sy)};
         l.text.clear();
     }
-    state.size = size;
+    pending.size = size;
     selection = {};
+    state = pending;
     commit("Görüntü boyutu");
     return true;
 }
 bool Document::rotate(bool cw, QString *error) {
-    int w = state.size.width(), h = state.size.height();
-    for (const auto &l : state.layers) {
+    State pending = state;
+    if (!normalizeGeometry(pending, error))
+        return false;
+
+    int w = pending.size.width(), h = pending.size.height();
+    for (const auto &l : pending.layers) {
         QPoint offset = cw ? QPoint(h - l.offset.y() - l.pixels.height(), l.offset.x())
                            : QPoint(l.offset.y(), w - l.offset.x() - l.pixels.width());
         if (!validOffset(offset))
@@ -504,7 +622,7 @@ bool Document::rotate(bool cw, QString *error) {
     beginEdit();
     QTransform t;
     t.rotate(cw ? 90 : -90);
-    for (auto &l : state.layers) {
+    for (auto &l : pending.layers) {
         QSize old = l.pixels.size();
         l.pixels = l.pixels.transformed(t);
         if (!l.mask.isNull())
@@ -513,34 +631,172 @@ bool Document::rotate(bool cw, QString *error) {
                       : QPoint(l.offset.y(), w - l.offset.x() - old.width());
         l.text.clear();
     }
-    state.size.transpose();
+    pending.size.transpose();
     selection = {};
+    state = pending;
     commit("90° döndürme");
     return true;
 }
 bool Document::flip(bool h, QString *error) {
-    for (const auto &l : state.layers) {
+    State pending = state;
+    if (!normalizeGeometry(pending, error))
+        return false;
+
+    for (const auto &l : pending.layers) {
         QPoint offset = l.offset;
         if (h)
-            offset.setX(state.size.width() - l.offset.x() - l.pixels.width());
+            offset.setX(pending.size.width() - l.offset.x() - l.pixels.width());
         else
-            offset.setY(state.size.height() - l.offset.y() - l.pixels.height());
+            offset.setY(pending.size.height() - l.offset.y() - l.pixels.height());
         if (!validOffset(offset))
             return offsetError(error);
     }
     beginEdit();
-    for (auto &l : state.layers) {
+    for (auto &l : pending.layers) {
         l.pixels = flippedImage(l.pixels, h);
         if (!l.mask.isNull())
             l.mask = flippedImage(l.mask, h);
         if (h)
-            l.offset.setX(state.size.width() - l.offset.x() - l.pixels.width());
+            l.offset.setX(pending.size.width() - l.offset.x() - l.pixels.width());
         else
-            l.offset.setY(state.size.height() - l.offset.y() - l.pixels.height());
+            l.offset.setY(pending.size.height() - l.offset.y() - l.pixels.height());
         l.text.clear();
     }
     selection = {};
+    state = pending;
     commit("Görüntü çevrildi");
+    return true;
+}
+bool Document::setLayerTransform(const QTransform &transform, QString *error) {
+    if (state.layers.isEmpty() || state.layers[state.active].locked) {
+        if (error)
+            *error = "Katman kilitli veya belge boş.";
+        return false;
+    }
+    State pending = state;
+    pending.layers[pending.active].geometry = transform;
+    if (!validState(pending, error)) {
+        if (error)
+            *error =
+                "Dönüşüm geçersiz, sonsuz veya 16 MP / 256 MiB görünüm / koordinat sınırını aşıyor.";
+        return false;
+    }
+    state.layers[state.active].geometry = transform;
+    changed();
+    return true;
+}
+bool Document::rasterizeLayer(QString *error) {
+    if (state.layers.isEmpty() || state.layers[state.active].locked) {
+        if (error)
+            *error = "Katman kilitli veya belge boş.";
+        return false;
+    }
+    const auto &l = state.layers[state.active];
+    if (!l.validGeometry())
+        return offsetError(error);
+    Layer raster = l.rasterized();
+    if (raster.pixels.isNull() ||
+        !allows(raster.pixels.sizeInBytes() - l.pixels.sizeInBytes() - l.mask.sizeInBytes(), error, 0))
+        return false;
+    beginEdit();
+    state.layers[state.active] = raster;
+    editingMask = false;
+    commit("Katman görünümü rasterleştirildi");
+    return true;
+}
+bool Document::canvasSize(QSize size, QPoint anchor, QString *error) {
+    if (!validSize(size) || anchor.x() < 0 || anchor.x() > 2 || anchor.y() < 0 || anchor.y() > 2) {
+        if (error)
+            *error = "Tuval boyutu veya sabitleme noktası geçersiz.";
+        return false;
+    }
+    QPoint delta(qRound((size.width() - state.size.width()) * anchor.x() / 2.0),
+                 qRound((size.height() - state.size.height()) * anchor.y() / 2.0));
+    State pending = state;
+    pending.size = size;
+    for (auto &l : pending.layers)
+        l.offset += delta;
+    if (!validState(pending, error))
+        return false;
+    beginEdit();
+    state = pending;
+    selection = {};
+    commit("Tuval boyutu değişti");
+    return true;
+}
+bool Document::mergeVisible(QString *error) {
+    int visible = 0, upper = -1;
+    qint64 hiddenBytes = 0;
+    QRect bounds;
+    for (int i = 0; i < state.layers.size(); ++i) {
+        const auto &l = state.layers[i];
+        if (l.visible) {
+            if (!l.validGeometry())
+                return offsetError(error);
+            ++visible;
+            upper = i;
+            bounds = bounds.united(QRect(l.renderedOffset(), l.transformedBounds().size()));
+        } else
+            hiddenBytes += l.pixels.sizeInBytes() + l.mask.sizeInBytes();
+    }
+    if (!visible) {
+        if (error)
+            *error = "Birleştirilecek görünür katman yok.";
+        return false;
+    }
+    if (!validSize(bounds.size()) || !validOffset(bounds.topLeft()) ||
+        hiddenBytes + qint64(bounds.width()) * bounds.height() * 4 > MaxLayerBytes) {
+        if (error)
+            *error =
+                "Birleşik katman 16 MP / 256 MiB sınırını aşıyor. Katmanları birbirine yaklaştırın.";
+        return false;
+    }
+    Layer merged;
+    merged.name = "Birleştirilmiş";
+    merged.offset = bounds.topLeft();
+    merged.pixels = QImage(bounds.size(), QImage::Format_ARGB32_Premultiplied);
+    merged.pixels.fill(Qt::transparent);
+    for (const auto &l : state.layers)
+        if (l.visible)
+            Blending::compose(merged.pixels, l.rendered(), l.renderedOffset() - bounds.topLeft(),
+                              l.opacity, l.blend, bounds.topLeft());
+    if (merged.pixels.isNull())
+        return false;
+    State pending = state;
+    pending.layers.clear();
+    int insertion = 0;
+    for (int i = 0; i < state.layers.size(); ++i)
+        if (!state.layers[i].visible) {
+            if (i < upper)
+                ++insertion;
+            pending.layers.append(state.layers[i]);
+        }
+    pending.layers.insert(insertion, merged);
+    pending.active = insertion;
+    if (!validState(pending, error))
+        return false;
+    beginEdit();
+    state = pending;
+    editingMask = false;
+    commit("Görünür katmanlar birleştirildi");
+    return true;
+}
+bool Document::flatten(QString *error) {
+    if (!validSize(state.size)) {
+        if (error)
+            *error = "Belge boyutu geçersiz.";
+        return false;
+    }
+    Layer merged;
+    merged.name = "Düzleştirilmiş";
+    merged.pixels = composite();
+    if (merged.pixels.isNull())
+        return false;
+    beginEdit();
+    state.layers = {merged};
+    state.active = 0;
+    editingMask = false;
+    commit("Belge düzleştirildi (saydamlık korundu)");
     return true;
 }
 void Document::adjust(int b, int c, int s) {
@@ -563,6 +819,11 @@ bool Document::adjustTones(const ToneSettings &settings, QString *error) {
     return true;
 }
 bool Document::addText(QString text, QFont font, QColor color, QPoint at, QString *error) {
+    if (!validOffset(at) || text.size() > 16384) {
+        if (error)
+            *error = "Metin uzunluğu veya konumu sınırı aşıyor.";
+        return false;
+    }
     QImage image = textImage(text, font, color);
     if (image.isNull()) {
         if (error)
@@ -571,7 +832,6 @@ bool Document::addText(QString text, QFont font, QColor color, QPoint at, QStrin
     }
     if (!allows(image.sizeInBytes(), error))
         return false;
-    beginEdit();
     Layer l;
     l.name = text.left(24);
     l.text = text;
@@ -579,11 +839,7 @@ bool Document::addText(QString text, QFont font, QColor color, QPoint at, QStrin
     l.color = color;
     l.pixels = image;
     l.offset = at;
-    state.layers.insert(state.active + 1, l);
-    ++state.active;
-    editingMask = false;
-    commit("Metin eklendi");
-    return true;
+    return insertLayer(l, "Metin eklendi", error);
 }
 bool Document::editText(QString text, QFont font, QColor color, QString *error) {
     auto &l = state.layers[state.active];
@@ -592,12 +848,30 @@ bool Document::editText(QString text, QFont font, QColor color, QString *error) 
             *error = "Katman kilitli.";
         return false;
     }
+    if (text.size() > 16384) {
+        if (error)
+            *error = "Metin uzunluğu sınırı aşıyor.";
+        return false;
+    }
     QImage image = textImage(text, font, color);
     if (image.isNull() || bytes(state) - l.pixels.sizeInBytes() - l.mask.sizeInBytes() +
                                   image.sizeInBytes() * (l.mask.isNull() ? 1 : 2) >
                               MaxLayerBytes) {
         if (error)
             *error = "Metin görüntüsü boyut veya bellek sınırını aşıyor.";
+        return false;
+    }
+    Layer candidate = l;
+    candidate.pixels = image;
+    candidate.mask = {};
+    candidate.text = text;
+    candidate.font = font;
+    candidate.color = color;
+    State pending = state;
+    pending.layers[pending.active] = candidate;
+    if (!validState(pending, error)) {
+        if (error)
+            *error = "Dönüşmüş metin boyut veya konum sınırını aşıyor.";
         return false;
     }
     beginEdit();
@@ -724,13 +998,14 @@ bool Document::save(const QString &file, QString *error, bool markClean) {
     }
     QDataStream out(&f);
     out.setVersion(QDataStream::Qt_6_2);
-    out << quint32(0x50444543) << quint32(2) << state.size << qint32(state.active)
+    out << quint32(0x50444543) << quint32(3) << state.size << qint32(state.active)
         << qint32(state.layers.size());
     for (const auto &l : state.layers) {
         out << l.name << l.offset << l.visible << l.locked << double(l.opacity) << qint32(l.blend)
             << qint32(l.brightness) << qint32(l.contrast) << qint32(l.saturation) << qint32(l.blur)
             << l.text << l.font.toString() << l.color;
         l.tones.write(out);
+        out << l.geometry;
         if (!writeImage(out, l.pixels) || !writeImage(out, l.mask)) {
             if (error)
                 *error = "Katman görüntüsü yazılamadı.";
@@ -769,8 +1044,8 @@ bool Document::load(const QString &file, QString *error) {
     qint32 active = 0, count = 0;
     State pending;
     in >> magic >> version >> pending.size >> active >> count;
-    if (magic != 0x50444543 || (version != 1 && version != 2) || !validSize(pending.size) || count < 1 ||
-        count > 64 || active < 0 || active >= count)
+    if (magic != 0x50444543 || (version != 1 && version != 2 && version != 3) ||
+        !validSize(pending.size) || count < 1 || count > 64 || active < 0 || active >= count)
         return fail();
     pending.active = active;
     qint64 remaining = MaxLayerBytes;
@@ -817,6 +1092,8 @@ bool Document::load(const QString &file, QString *error) {
         l.font.fromString(font);
         if (version >= 2 && !ToneSettings::read(in, l.tones))
             return fail();
+        if (version >= 3)
+            in >> l.geometry;
         if (!readImageRecord(in, l.pixels, remaining) || l.pixels.isNull() ||
             !readImageRecord(in, l.mask, remaining) ||
             (!l.mask.isNull() && l.mask.size() != l.pixels.size()))

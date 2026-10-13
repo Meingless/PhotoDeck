@@ -11,3 +11,6 @@ SOURCES += ../src/selection.cpp
 HEADERS += ../src/selection.h
 SOURCES += ../src/blending.cpp
 HEADERS += ../src/blending.h
+
+SOURCES += ../src/transformdialog.cpp
+HEADERS += ../src/transformdialog.h

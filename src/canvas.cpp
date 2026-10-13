@@ -417,6 +417,11 @@ void Canvas::mousePressEvent(QMouseEvent *e) {
         emit toolHint("Düzenlemek için görünür, kilidi açık bir katman seçin.");
         return;
     }
+    if (!l.geometry.isIdentity() && tool != Move) {
+        emit toolHint(
+            "Bu katmanın dönüşümü kaynak korur. Boyamak için Katman → Görünümü rasterleştir kullanın.");
+        return;
+    }
     if (tool == Clone && (document->editingMask || !hasClone)) {
         emit toolHint("Klonlama: önce Alt + tıklama ile piksel katmanından kaynak seçin.");
         return;
@@ -455,7 +460,14 @@ void Canvas::advanceGesture(QPointF position, Qt::KeyboardModifiers modifiers) {
     if (tool == Move) {
         auto &l = document->state.layers[document->state.active];
         QPoint offset = initialOffset + (hover - press).toPoint();
-        l.offset = {qBound(-32768, offset.x(), 32768), qBound(-32768, offset.y(), 32768)};
+        Layer candidate = l;
+        candidate.offset = {qBound(-Document::MaxCoordinate, offset.x(), Document::MaxCoordinate),
+                            qBound(-Document::MaxCoordinate, offset.y(), Document::MaxCoordinate)};
+        if (!candidate.validGeometry()) {
+            emit toolHint("Katman konumu güvenli koordinat sınırını aşıyor.");
+            return;
+        }
+        l.offset = candidate.offset;
         document->changed();
     } else if (tool == Brush || tool == Pencil || tool == Eraser || tool == Clone) {
         if (QLineF(last, hover).length() > .001)
@@ -636,6 +648,10 @@ void Canvas::deleteSelection() {
     auto &l = document->state.layers[document->state.active];
     if (l.locked)
         return;
+    if (!l.geometry.isIdentity()) {
+        emit toolHint("Silmek için önce Katman → Görünümü rasterleştir kullanın.");
+        return;
+    }
     document->beginEdit();
     bool edited = document->selection.paint(target(), l.offset, [&](QPainter &p) {
         QRect region = document->selection.isEmpty() ? QRect(QPoint(), document->state.size)

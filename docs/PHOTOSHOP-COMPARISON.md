@@ -131,3 +131,10 @@ Tüm başlangıç farklarını kapatma hedefi devam eder. Bu ara sürüm kalan s
 tamamlanmış saymaz. Sonraki uygulama alanları dönüşüm/katman yönetimi, fırça ve
 tablet, retouch/filtre, vektör/metin, renk/format ve otomasyondur; başlangıç
 envanterindeki diğer alanlar da aynı hedefin parçalarıdır.
+
+## 0.4 ikinci aşama — dönüşüm ve birleştirme
+
+- Katman kaynağından ayrı dönüşüm matrisi; ölçek, açı, shear, mirror ve dört köşeli projective dönüşüm. Maske/metin kaynakta korunur. Qt'nin yerel QTransform/QPainter hesapları kullanılır. Tek adımlı undo, preview cancel, bozuk/singular/unbounded matrix reddi ve eski v1/v2 proje okuması `test_transforms.cpp` ile doğrulanır.
+- Dokuz anchor ile tuval boyutu; kaynakları yeniden örneklemez. Görünür katman birleştirmesi bütün görünür katman alanını korur; hidden katmanlar yerinde kalır. Dissolve deseni belge koordinatında sabit tutulur. Flatten açıkça tuvale kırpar ve hidden katmanları kaldırır, alfa korunur.
+- Yeni `.pdeck` v3 kayıtları, source matrix ve v2 ton alanlarını saklar. Gerçek v2 örneği yayımlanan 0.3 AppImage'ından oluşturuldu. Katman ekleme/paste/duplicate tek model doğrulamasına bağlandı; kaynak ve türetilmiş görünüm bütçeleri ayrı denetlenir.
+- Açık kalan farklar: tuval üstü transform tutamaçları, ayrı mask transform/link, warp/puppet warp, hizalama/dağıtma, merge-down ve çoklu katman işlemleri. Sayısal source transform, linked/embedded editable Smart Object veya Smart Filter eşdeğerliği olarak işaretlenmez. Pixel painting için explicit rasterize gerekir; whole-image resize/rotate/flip dönüştürülmüş katmanı rasterleştirir. Başlangıç envanterinin diğer açık alanları aynı hedef kapsamında devam eder.

@@ -30,7 +30,7 @@ jobs:
             cmake_args: '-DCMAKE_OSX_ARCHITECTURES=arm64 -DCMAKE_OSX_DEPLOYMENT_TARGET=12.0'
     runs-on: ${{ matrix.os }}
     env:
-      PHOTO_VERSION: 0.3.0-ea.1
+      PHOTO_VERSION: 0.4.0-ea.1
       QT_QPA_PLATFORM: offscreen
     steps:
       - uses: actions/checkout@v4
@@ -81,7 +81,7 @@ jobs:
           Copy-Item "$env:QT_ROOT_DIR/plugins/platforms/qoffscreen.dll" "$folder/platforms/"
           Copy-Item "$env:QT_ROOT_DIR/bin/Qt6Test.dll" "$folder/"
           $env:QT_QPA_PLATFORM = 'offscreen'
-          foreach ($test in 'photodeck-tests','photodeck-feature-audit','photodeck-tones-tests','photodeck-selections-tests','photodeck-blending-tests') {
+          foreach ($test in 'photodeck-tests','photodeck-feature-audit','photodeck-tones-tests','photodeck-selections-tests','photodeck-blending-tests','photodeck-transforms-tests') {
             Copy-Item "build-release/Release/$test.exe" "$folder/$test.exe"
             & "$folder/$test.exe" -o "$PWD/$test-packaged.xml,junitxml" -o "$PWD/$test-packaged.txt,txt"
             if ($LASTEXITCODE -ne 0) { throw "Packaged runtime audit failed: $test" }
@@ -113,7 +113,7 @@ jobs:
           test -s linux-startup.png
           package="dist/PhotoDeck-$PHOTO_VERSION-linux-x86_64"
           cp "$QT_ROOT_DIR/lib/libQt6Test.so.6" "$package/lib/"
-          for test in photodeck-tests photodeck-feature-audit photodeck-tones-tests photodeck-selections-tests photodeck-blending-tests; do
+          for test in photodeck-tests photodeck-feature-audit photodeck-tones-tests photodeck-selections-tests photodeck-blending-tests photodeck-transforms-tests; do
             cp "build-release/$test" "$package/bin/$test"
             LD_LIBRARY_PATH="$PWD/$package/lib" QT_PLUGIN_PATH="$PWD/$package/plugins" "$package/bin/$test" -o "$PWD/$test-packaged.xml,junitxml" -o "$PWD/$test-packaged.txt,txt"
             rm "$package/bin/$test"
