@@ -547,6 +547,32 @@ void MainWindow::buildMenus() {
         }
     }));
     layer->addSeparator();
+    layer->addAction(action("mergeDown", "Alta birleştir", QKeySequence("Ctrl+E"), [this] {
+        if (auto *d = currentDocument()) {
+            QString e;
+            if (!d->mergeDown(&e))
+                error(e);
+        }
+    }));
+    layer->addAction(
+        action("clipLayer", "Alt katmana kırp / kırpmayı kaldır", QKeySequence("Ctrl+Alt+G"), [this] {
+            if (auto *d = currentDocument()) {
+                QString e;
+                if (!d->setClipping(!d->state.layers[d->state.active].clipped, &e))
+                    error(e);
+            }
+        }));
+    for (bool cut : {false, true})
+        layer->addAction(action(cut ? "selectionCutLayer" : "selectionCopyLayer",
+                                cut ? "Seçimi yeni katmana kes (maske/ayar uygulanır)"
+                                    : "Seçimi yeni katmana kopyala (maske/ayar uygulanır)",
+                                QKeySequence(cut ? "Ctrl+Shift+J" : "Ctrl+Alt+J"), [this, cut] {
+                                    if (auto *d = currentDocument()) {
+                                        QString e;
+                                        if (!d->layerViaSelection(cut, &e))
+                                            error(e);
+                                    }
+                                }));
     layer->addAction(action("addLayer", "Yeni katman", QKeySequence("Ctrl+Shift+N"), [this] {
         if (auto *d = currentDocument()) {
             QString e;
@@ -554,10 +580,17 @@ void MainWindow::buildMenus() {
                 error(e);
         }
     }));
-    layer->addAction(action("duplicate", "Katmanı çoğalt", QKeySequence("Ctrl+J"), [this] {
+    layer->addAction(action("duplicate", "Katmanı / seçimi çoğalt", QKeySequence("Ctrl+J"), [this] {
         if (currentDocument()) {
             QString e;
-            if (!currentDocument()->duplicate(&e))
+            if (!currentDocument()->layerViaSelection(false, &e))
+                error(e);
+        }
+    }));
+    layer->addAction(action("duplicateWhole", "Katmanın tamamını çoğalt", {}, [this] {
+        if (auto *d = currentDocument()) {
+            QString e;
+            if (!d->duplicate(&e))
                 error(e);
         }
     }));
@@ -651,7 +684,7 @@ void MainWindow::buildMenus() {
             "gerekmez.");
     }));
     help->addAction(action("about", "PhotoDeck hakkında", {}, [this] {
-        QMessageBox::about(this, "PhotoDeck 0.4.0 · Erken erişim",
+        QMessageBox::about(this, "PhotoDeck 0.5.0 · Erken erişim",
                            "<h2>PhotoDeck</h2><p>Hafif, yerel fotoğraf ve katman düzenleyici.</p><p>Qt "
                            "6 / C++ · Linux / Windows / macOS</p><p>AI, reklam, telemetri ve abonelik "
                            "içermez.</p><p>Bu sürüm RGB raster düzenlemeye odaklanır. PSD/RAW, CMYK/ICC "
@@ -1082,6 +1115,12 @@ void MainWindow::updateActionAvailability() {
         actions[id]->setEnabled(present && !d->state.layers[d->state.active].locked);
     actions["redo"]->setEnabled(present && d->canRedo());
     actions["deleteLayer"]->setEnabled(present && d->state.layers.size() > 1);
+    actions["clipLayer"]->setEnabled(present && !d->state.layers[d->state.active].locked &&
+                                     (d->state.active > 0 || d->state.layers[d->state.active].clipped));
+    actions["mergeDown"]->setEnabled(present && d->state.active > 0);
+    actions["selectionCutLayer"]->setEnabled(present && d->selection.hasPixels() &&
+                                             !d->state.layers[d->state.active].locked);
+    actions["selectionCopyLayer"]->setEnabled(present);
     actions["editText"]->setEnabled(present && !d->state.layers[d->state.active].text.isEmpty() &&
                                     !d->state.layers[d->state.active].locked);
     actions["removeMask"]->setEnabled(present && !d->state.layers[d->state.active].mask.isNull() &&
@@ -1131,7 +1170,8 @@ void MainWindow::refresh() {
         QImage preview = l.rendered().scaled(50, 36, Qt::KeepAspectRatio, Qt::SmoothTransformation);
         p.drawImage((50 - preview.width()) / 2, (36 - preview.height()) / 2, preview);
         p.end();
-        auto *item = new QListWidgetItem(QIcon(thumb), l.name + (l.locked ? "  ◇" : "") +
+        auto *item = new QListWidgetItem(QIcon(thumb), (l.clipped ? "↳  " : "") + l.name +
+                                                           (l.locked ? "  ◇" : "") +
                                                            (!l.mask.isNull() ? "  ◧" : ""));
         item->setFlags(item->flags() | Qt::ItemIsUserCheckable);
         item->setCheckState(l.visible ? Qt::Checked : Qt::Unchecked);

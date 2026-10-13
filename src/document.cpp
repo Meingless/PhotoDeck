@@ -29,7 +29,8 @@ bool sameLayer(const Layer &a, const Layer &b) {
            a.visible == b.visible && a.locked == b.locked && a.opacity == b.opacity &&
            a.blend == b.blend && a.brightness == b.brightness && a.contrast == b.contrast &&
            a.saturation == b.saturation && a.blur == b.blur && a.text == b.text && a.font == b.font &&
-           a.color == b.color && a.tones == b.tones && a.geometry == b.geometry;
+           a.color == b.color && a.tones == b.tones && a.geometry == b.geometry &&
+           a.clipped == b.clipped;
 }
 bool sameContent(const State &a, const State &b) {
     if (a.size != b.size || a.layers.size() != b.layers.size())
@@ -46,7 +47,7 @@ bool validState(const State &s, QString *error) {
         return false;
     };
     if (!Document::validSize(s.size) || s.layers.isEmpty() || s.layers.size() > 64 || s.active < 0 ||
-        s.active >= s.layers.size() || bytes(s) > Document::MaxLayerBytes)
+        s.active >= s.layers.size() || bytes(s) > Document::MaxLayerBytes || s.layers.first().clipped)
         return fail();
     qint64 renderBytes = 0;
     for (const auto &l : s.layers) {
@@ -90,6 +91,25 @@ bool normalizeGeometry(State &state, QString *error) {
         if (!l.geometry.isIdentity())
             l = l.rasterized();
     return true;
+}
+void renderLayers(QImage &output, QPoint origin, const QVector<Layer> &layers) {
+    for (int i = 0; i < layers.size();) {
+        const Layer &base = layers[i];
+        int end = i + 1;
+        while (end < layers.size() && layers[end].clipped)
+            ++end;
+        if (base.visible) {
+            QImage group = base.rendered();
+            const QPoint at = base.renderedOffset();
+            for (int child = i + 1; child < end; ++child)
+                if (layers[child].visible)
+                    Blending::clipCompose(group, layers[child].rendered(),
+                                          layers[child].renderedOffset() - at, layers[child].opacity,
+                                          layers[child].blend, at);
+            Blending::compose(output, group, at - origin, base.opacity, base.blend, origin);
+        }
+        i = end;
+    }
 }
 void clearCaches(State &s) {
     for (auto &l : s.layers)
@@ -347,9 +367,7 @@ QImage Document::composite() const {
         return {};
     QImage out(state.size, QImage::Format_ARGB32_Premultiplied);
     out.fill(Qt::transparent);
-    for (const auto &l : state.layers)
-        if (l.visible)
-            Blending::compose(out, l.rendered(), l.renderedOffset(), l.opacity, l.blend);
+    renderLayers(out, {}, state.layers);
     return out;
 }
 bool Document::validOffset(QPoint offset) {
@@ -478,7 +496,11 @@ void Document::deleteLayer() {
     if (state.layers.size() <= 1)
         return;
     beginEdit();
+    if (!state.layers[state.active].clipped)
+        for (int i = state.active + 1; i < state.layers.size() && state.layers[i].clipped; ++i)
+            state.layers[i].clipped = false;
     state.layers.removeAt(state.active);
+    state.layers.first().clipped = false;
     state.active = qMin(state.active, int(state.layers.size() - 1));
     editingMask = false;
     commit("Katman silindi");
@@ -490,6 +512,7 @@ void Document::reorder(int delta) {
     beginEdit();
     state.layers.swapItemsAt(state.active, to);
     state.active = to;
+    state.layers.first().clipped = false;
     commit("Katman sırası");
 }
 bool Document::addMask(QString *error) {
@@ -725,30 +748,43 @@ bool Document::canvasSize(QSize size, QPoint anchor, QString *error) {
     return true;
 }
 bool Document::mergeVisible(QString *error) {
-    int visible = 0, upper = -1;
-    qint64 hiddenBytes = 0;
+    QVector<bool> merge(state.layers.size(), false);
     QRect bounds;
-    for (int i = 0; i < state.layers.size(); ++i) {
-        const auto &l = state.layers[i];
-        if (l.visible) {
-            if (!l.validGeometry())
-                return offsetError(error);
-            ++visible;
-            upper = i;
-            bounds = bounds.united(QRect(l.renderedOffset(), l.transformedBounds().size()));
-        } else
-            hiddenBytes += l.pixels.sizeInBytes() + l.mask.sizeInBytes();
+    int upper = -1;
+    for (int i = 0; i < state.layers.size();) {
+        int end = i + 1;
+        while (end < state.layers.size() && state.layers[end].clipped)
+            ++end;
+        if (state.layers[i].visible) {
+            bounds = bounds.united(
+                QRect(state.layers[i].renderedOffset(), state.layers[i].transformedBounds().size()));
+            for (int j = i; j < end; ++j) {
+                if (!state.layers[j].visible) {
+                    if (error)
+                        *error = "Gizli kırpılan katman içeren grubu birleştirmeden önce kırpma "
+                                 "ilişkisini kaldırın veya katmanı görünür yapın.";
+                    return false;
+                }
+                merge[j] = true;
+                upper = j;
+            }
+        }
+        i = end;
     }
-    if (!visible) {
+    // Independent visible layers are bases too; each base contributes its complete extent.
+    if (upper < 0) {
         if (error)
             *error = "Birleştirilecek görünür katman yok.";
         return false;
     }
+    qint64 hiddenBytes = 0;
+    for (int i = 0; i < state.layers.size(); ++i)
+        if (!merge[i])
+            hiddenBytes += state.layers[i].pixels.sizeInBytes() + state.layers[i].mask.sizeInBytes();
     if (!validSize(bounds.size()) || !validOffset(bounds.topLeft()) ||
         hiddenBytes + qint64(bounds.width()) * bounds.height() * 4 > MaxLayerBytes) {
         if (error)
-            *error =
-                "Birleşik katman 16 MP / 256 MiB sınırını aşıyor. Katmanları birbirine yaklaştırın.";
+            *error = "Birleşik katman boyut veya bellek sınırını aşıyor.";
         return false;
     }
     Layer merged;
@@ -756,17 +792,12 @@ bool Document::mergeVisible(QString *error) {
     merged.offset = bounds.topLeft();
     merged.pixels = QImage(bounds.size(), QImage::Format_ARGB32_Premultiplied);
     merged.pixels.fill(Qt::transparent);
-    for (const auto &l : state.layers)
-        if (l.visible)
-            Blending::compose(merged.pixels, l.rendered(), l.renderedOffset() - bounds.topLeft(),
-                              l.opacity, l.blend, bounds.topLeft());
-    if (merged.pixels.isNull())
-        return false;
+    renderLayers(merged.pixels, bounds.topLeft(), state.layers);
     State pending = state;
     pending.layers.clear();
     int insertion = 0;
     for (int i = 0; i < state.layers.size(); ++i)
-        if (!state.layers[i].visible) {
+        if (!merge[i]) {
             if (i < upper)
                 ++insertion;
             pending.layers.append(state.layers[i]);
@@ -797,6 +828,137 @@ bool Document::flatten(QString *error) {
     state.active = 0;
     editingMask = false;
     commit("Belge düzleştirildi (saydamlık korundu)");
+    return true;
+}
+bool Document::setClipping(bool clipped, QString *error) {
+    if (state.layers.isEmpty() || state.layers[state.active].locked || (clipped && state.active == 0)) {
+        if (error)
+            *error = "Alt katmanı olmayan veya kilitli bir katman kırpılamaz.";
+        return false;
+    }
+    beginEdit();
+    state.layers[state.active].clipped = clipped;
+    commit(clipped ? "Kırpma maskesi oluşturuldu" : "Kırpma maskesi kaldırıldı");
+    return true;
+}
+bool Document::layerViaSelection(bool cut, QString *error) {
+    if (selection.isEmpty() && !cut)
+        return duplicate(error);
+    if (state.layers.isEmpty() || !selection.hasPixels()) {
+        if (error)
+            *error = "Önce piksel içeren bir seçim yapın.";
+        return false;
+    }
+    const int index = state.active;
+    const Layer &original = state.layers[index];
+    if (cut && (original.locked || original.clipped ||
+                (index + 1 < state.layers.size() && state.layers[index + 1].clipped))) {
+        if (error)
+            *error = "Kesme için kilidi/kırpma ilişkisini kaldırın veya grubu birleştirin.";
+        return false;
+    }
+    Layer raster = original.rasterized();
+    QRect region = selection.bounds().intersected(QRect(raster.offset, raster.pixels.size()));
+    if (region.isEmpty()) {
+        if (error)
+            *error = "Seçim etkin katmanla kesişmiyor.";
+        return false;
+    }
+    Layer copied = raster;
+    copied.name = original.name + (cut ? " seçim kesimi" : " seçim kopyası");
+    copied.offset = region.topLeft();
+    copied.pixels = raster.pixels.copy(region.translated(-raster.offset));
+    bool hasPixels = false;
+    for (int y = 0; y < copied.pixels.height(); ++y) {
+        auto *row = reinterpret_cast<QRgb *>(copied.pixels.scanLine(y));
+        for (int x = 0; x < copied.pixels.width(); ++x) {
+            row[x] = selection.mixPixel(0, row[x], copied.offset + QPoint(x, y));
+            hasPixels |= qAlpha(row[x]) != 0;
+        }
+    }
+    if (!hasPixels) {
+        if (error)
+            *error = "Seçimde etkin katmana ait görünür piksel yok.";
+        return false;
+    }
+    if (cut)
+        selection.paint(raster.pixels, raster.offset, [&](QPainter &p) {
+            p.setCompositionMode(QPainter::CompositionMode_Clear);
+            p.fillRect(raster.pixels.rect(), Qt::transparent);
+        });
+    State pending = state;
+    if (cut)
+        pending.layers[index] = raster;
+    // A new independent copy belongs above the active clipping stack, not inside its base/child
+    // relation.
+    int at = index + 1;
+    if (!original.clipped)
+        while (at < pending.layers.size() && pending.layers[at].clipped)
+            ++at;
+    copied.clipped = original.clipped;
+    pending.layers.insert(at, copied);
+    pending.active = at;
+    if (!validState(pending, error))
+        return false;
+    beginEdit();
+    state = pending;
+    editingMask = false;
+    commit(cut ? "Seçim yeni katmana kesildi" : "Seçim yeni katmana kopyalandı");
+    return true;
+}
+bool Document::mergeDown(QString *error) {
+    const int top = state.active;
+    if (top <= 0 || state.layers[top].locked || state.layers[top - 1].locked ||
+        !state.layers[top].visible || !state.layers[top - 1].visible || state.layers[top - 1].clipped) {
+        if (error)
+            *error = "Alta birleştirme için görünür, kilidi açık ve kırpma grubunun temeli olan bir alt "
+                     "katman gerekir.";
+        return false;
+    }
+    const Layer &base = state.layers[top - 1], &upper = state.layers[top];
+    QRect bounds(base.renderedOffset(), base.transformedBounds().size());
+    if (!upper.clipped)
+        bounds = bounds.united(QRect(upper.renderedOffset(), upper.transformedBounds().size()));
+    if (!validSize(bounds.size()) || !validOffset(bounds.topLeft())) {
+        if (error)
+            *error = "Birleşik alan boyut sınırını aşıyor.";
+        return false;
+    }
+    Layer merged;
+    merged.name = upper.name;
+    merged.offset = bounds.topLeft();
+    if (upper.clipped) {
+        merged.pixels = base.rendered();
+        merged.opacity = base.opacity;
+        merged.blend = base.blend;
+        Blending::clipCompose(merged.pixels, upper.rendered(), upper.renderedOffset() - bounds.topLeft(),
+                              upper.opacity, upper.blend, bounds.topLeft());
+    } else {
+        merged.pixels = QImage(bounds.size(), QImage::Format_ARGB32_Premultiplied);
+        merged.pixels.fill(Qt::transparent);
+        renderLayers(merged.pixels, bounds.topLeft(), {base, upper});
+    }
+    State pending = state;
+    pending.layers[top - 1] = merged;
+    pending.layers.removeAt(top);
+    pending.active = top - 1;
+    if (!validState(pending, error))
+        return false;
+    QImage before(bounds.size(), QImage::Format_ARGB32_Premultiplied);
+    before.fill(Qt::transparent);
+    QImage after = before;
+    renderLayers(before, bounds.topLeft(), state.layers);
+    renderLayers(after, bounds.topLeft(), pending.layers);
+    if (before != after) {
+        if (error)
+            *error = "Bu harmanlama/kırpma zinciri alta birleştirmede görünümü değiştiriyor. Görünür "
+                     "katmanları birleştir seçeneğini kullanın.";
+        return false;
+    }
+    beginEdit();
+    state = pending;
+    editingMask = false;
+    commit("Alta birleştirildi");
     return true;
 }
 void Document::adjust(int b, int c, int s) {
@@ -998,14 +1160,14 @@ bool Document::save(const QString &file, QString *error, bool markClean) {
     }
     QDataStream out(&f);
     out.setVersion(QDataStream::Qt_6_2);
-    out << quint32(0x50444543) << quint32(3) << state.size << qint32(state.active)
+    out << quint32(0x50444543) << quint32(4) << state.size << qint32(state.active)
         << qint32(state.layers.size());
     for (const auto &l : state.layers) {
         out << l.name << l.offset << l.visible << l.locked << double(l.opacity) << qint32(l.blend)
             << qint32(l.brightness) << qint32(l.contrast) << qint32(l.saturation) << qint32(l.blur)
             << l.text << l.font.toString() << l.color;
         l.tones.write(out);
-        out << l.geometry;
+        out << l.geometry << l.clipped;
         if (!writeImage(out, l.pixels) || !writeImage(out, l.mask)) {
             if (error)
                 *error = "Katman görüntüsü yazılamadı.";
@@ -1044,7 +1206,7 @@ bool Document::load(const QString &file, QString *error) {
     qint32 active = 0, count = 0;
     State pending;
     in >> magic >> version >> pending.size >> active >> count;
-    if (magic != 0x50444543 || (version != 1 && version != 2 && version != 3) ||
+    if (magic != 0x50444543 || (version != 1 && version != 2 && version != 3 && version != 4) ||
         !validSize(pending.size) || count < 1 || count > 64 || active < 0 || active >= count)
         return fail();
     pending.active = active;
@@ -1094,6 +1256,8 @@ bool Document::load(const QString &file, QString *error) {
             return fail();
         if (version >= 3)
             in >> l.geometry;
+        if (version >= 4)
+            in >> l.clipped;
         if (!readImageRecord(in, l.pixels, remaining) || l.pixels.isNull() ||
             !readImageRecord(in, l.mask, remaining) ||
             (!l.mask.isNull() && l.mask.size() != l.pixels.size()))

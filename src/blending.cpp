@@ -101,6 +101,44 @@ RGB blend(RGB b, RGB s, int mode) {
     for (int i = 0; i < 3; ++i) {
         double cb = b[i], cs = s[i], v = cs;
         switch (mode) {
+        case 1:
+            v = cb * cs;
+            break;
+        case 2:
+            v = cb + cs - cb * cs;
+            break;
+        case 3:
+            v = cb <= .5 ? 2 * cb * cs : 1 - 2 * (1 - cb) * (1 - cs);
+            break;
+        case 4:
+            v = std::min(cb, cs);
+            break;
+        case 5:
+            v = std::max(cb, cs);
+            break;
+        case 7:
+            v = burn(cb, cs);
+            break;
+        case 10:
+            v = dodge(cb, cs);
+            break;
+        case 13:
+            if (cs <= .5)
+                v = cb - (1 - 2 * cs) * cb * (1 - cb);
+            else {
+                double d = cb <= .25 ? ((16 * cb - 12) * cb + 4) * cb : std::sqrt(cb);
+                v = cb + (2 * cs - 1) * (d - cb);
+            }
+            break;
+        case 14:
+            v = cs <= .5 ? 2 * cb * cs : 1 - 2 * (1 - cb) * (1 - cs);
+            break;
+        case 19:
+            v = std::abs(cb - cs);
+            break;
+        case 20:
+            v = cb + cs - 2 * cb * cs;
+            break;
         case 8:
             v = cb + cs - 1;
             break;
@@ -180,6 +218,41 @@ void compose(QImage &destination, const QImage &source, QPoint offset, double op
             const int a = qRound(alpha * 255);
             dest[x] = qRgba(qBound(0, qRound(c[0] * 255), a), qBound(0, qRound(c[1] * 255), a),
                             qBound(0, qRound(c[2] * 255), a), a);
+        }
+    }
+}
+void clipCompose(QImage &destination, const QImage &source, QPoint offset, double opacity, int mode,
+                 QPoint documentOrigin) {
+    if (source.isNull() || destination.isNull() || !std::isfinite(opacity) || opacity <= 0)
+        return;
+    if (destination.format() != QImage::Format_ARGB32_Premultiplied)
+        destination = destination.convertToFormat(QImage::Format_ARGB32_Premultiplied);
+    QImage pixels = source.convertToFormat(QImage::Format_ARGB32_Premultiplied);
+    opacity = std::clamp(opacity, 0.0, 1.0);
+    QRect region = pixels.rect().translated(offset).intersected(destination.rect());
+    for (int y = region.top(); y <= region.bottom(); ++y) {
+        QRgb *row = reinterpret_cast<QRgb *>(destination.scanLine(y));
+        const QRgb *src = reinterpret_cast<const QRgb *>(pixels.constScanLine(y - offset.y()));
+        for (int x = region.left(); x <= region.right(); ++x) {
+            const int alpha = qAlpha(row[x]);
+            if (!alpha)
+                continue;
+            QRgb top = qUnpremultiply(src[x - offset.x()]);
+            double weight = qAlpha(top) / 255.0 * opacity;
+            if (mode == 6)
+                weight = noise(x + documentOrigin.x(), y + documentOrigin.y()) / 4294967296.0 < weight
+                             ? 1
+                             : 0;
+            if (!weight)
+                continue;
+            QRgb bottom = qUnpremultiply(row[x]);
+            RGB base{qRed(bottom) / 255.0, qGreen(bottom) / 255.0, qBlue(bottom) / 255.0};
+            RGB color{qRed(top) / 255.0, qGreen(top) / 255.0, qBlue(top) / 255.0};
+            RGB mixed = blend(base, color, mode);
+            for (int i = 0; i < 3; ++i)
+                mixed[i] = (base[i] * (1 - weight) + mixed[i] * weight) * alpha;
+            row[x] = qRgba(qBound(0, qRound(mixed[0]), alpha), qBound(0, qRound(mixed[1]), alpha),
+                           qBound(0, qRound(mixed[2]), alpha), alpha);
         }
     }
 }

@@ -18,6 +18,7 @@ struct Layer {
     QTransform
         geometry; // Local source pixels -> local transformed coordinates; offset is document position.
     bool visible = true, locked = false;
+    bool clipped = false; // A run of clipped layers belongs to the preceding non-clipped base.
     qreal opacity = 1;
     int blend = 0;
     int brightness = 0, contrast = 0, saturation = 0, blur = 0;
@@ -77,6 +78,9 @@ class Document : public QObject {
     bool canvasSize(QSize size, QPoint anchor, QString *error = nullptr);
     bool mergeVisible(QString *error = nullptr);
     bool flatten(QString *error = nullptr);
+    bool setClipping(bool clipped, QString *error = nullptr);
+    bool layerViaSelection(bool cut, QString *error = nullptr);
+    bool mergeDown(QString *error = nullptr);
     void adjust(int b, int c, int s);
     bool adjustTones(const ToneSettings &settings, QString *error = nullptr);
     bool addText(QString text, QFont font, QColor color, QPoint at, QString *error);
