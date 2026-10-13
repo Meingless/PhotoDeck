@@ -1,5 +1,6 @@
 #include "mainwindow.h"
 #include "blending.h"
+#include "effectdialog.h"
 #include "tonedialog.h"
 #include "transformdialog.h"
 #include <QActionGroup>
@@ -475,6 +476,21 @@ void MainWindow::buildMenus() {
         }
     }));
     auto *filters = menuBar()->addMenu("&Filtre");
+    filters->addAction(
+        action("photoFilters", "Gaussian, keskinleştirme ve klasik filtreler…", {}, [this] {
+            auto *d = currentDocument();
+            if (!d || d->state.layers[d->state.active].locked)
+                return;
+            d->beginEdit();
+            FilterDialog dialog(d, this);
+            if (dialog.exec() == QDialog::Accepted)
+                d->commit("Klasik fotoğraf filtreleri");
+            else
+                d->cancelEdit();
+        }));
+    filters->addAction(action("resetFilters", "Klasik filtreleri sıfırla", {}, [this] {
+        mutate([](Document *d) { d->adjustFilters(FilterSettings{}); });
+    }));
     filters->addAction(action("tones", "Seviyeler, eğriler ve renk…", QKeySequence("Ctrl+L"), [this] {
         auto *d = currentDocument();
         if (!d || d->state.layers[d->state.active].locked)
@@ -599,6 +615,7 @@ void MainWindow::buildMenus() {
             Layer source = d->state.layers[d->state.active];
             source.mask = {};
             source.blur = 0;
+            source.filters = {};
             source.cache = {};
             d->selection =
                 Selection::fromAlpha(source.rendered(), source.renderedOffset(), d->state.size);
@@ -647,6 +664,18 @@ void MainWindow::buildMenus() {
         if (currentDocument())
             currentDocument()->removeMask();
     }));
+    layer->addAction(action("maskSettings", "Maske yoğunluğu / kenar yumuşatma…", {}, [this] {
+        auto *d = currentDocument();
+        if (!d || d->state.layers[d->state.active].locked ||
+            d->state.layers[d->state.active].mask.isNull())
+            return;
+        d->beginEdit();
+        MaskDialog dialog(d, this);
+        if (dialog.exec() == QDialog::Accepted)
+            d->commit("Maske ayarları");
+        else
+            d->cancelEdit();
+    }));
     auto *view = menuBar()->addMenu("&Görünüm");
     view->addAction(action("fit", "Ekrana sığdır", QKeySequence("Ctrl+0"), [this] {
         if (currentCanvas())
@@ -684,7 +713,7 @@ void MainWindow::buildMenus() {
             "gerekmez.");
     }));
     help->addAction(action("about", "PhotoDeck hakkında", {}, [this] {
-        QMessageBox::about(this, "PhotoDeck 0.5.0 · Erken erişim",
+        QMessageBox::about(this, "PhotoDeck 0.6.0 · Erken erişim",
                            "<h2>PhotoDeck</h2><p>Hafif, yerel fotoğraf ve katman düzenleyici.</p><p>Qt "
                            "6 / C++ · Linux / Windows / macOS</p><p>AI, reklam, telemetri ve abonelik "
                            "içermez.</p><p>Bu sürüm RGB raster düzenlemeye odaklanır. PSD/RAW, CMYK/ICC "
@@ -1111,6 +1140,10 @@ void MainWindow::updateActionAvailability() {
     actions["shrinkSelection"]->setEnabled(present && !d->selection.isEmpty());
     actions["crop"]->setEnabled(present && d->selection.hasPixels());
     actions["tones"]->setEnabled(present && !d->state.layers[d->state.active].locked);
+    actions["photoFilters"]->setEnabled(present && !d->state.layers[d->state.active].locked);
+    actions["resetFilters"]->setEnabled(present && !d->state.layers[d->state.active].locked);
+    actions["maskSettings"]->setEnabled(present && !d->state.layers[d->state.active].locked &&
+                                        !d->state.layers[d->state.active].mask.isNull());
     for (const auto &id : {"transform", "resetTransform", "rasterize"})
         actions[id]->setEnabled(present && !d->state.layers[d->state.active].locked);
     actions["redo"]->setEnabled(present && d->canRedo());

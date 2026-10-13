@@ -1,4 +1,5 @@
 #pragma once
+#include "filters.h"
 #include "selection.h"
 #include "tones.h"
 #include <QColor>
@@ -23,6 +24,8 @@ struct Layer {
     int blend = 0;
     int brightness = 0, contrast = 0, saturation = 0, blur = 0;
     ToneSettings tones;
+    FilterSettings filters;
+    MaskSettings maskSettings;
     QString text;
     QFont font;
     QColor color = Qt::white;
@@ -31,6 +34,8 @@ struct Layer {
     mutable int cacheB = 999, cacheC = 999, cacheS = 999, cacheBlur = 999;
     mutable ToneSettings cacheTones;
     mutable QTransform cacheGeometry;
+    mutable FilterSettings cacheFilters;
+    mutable MaskSettings cacheMaskSettings;
     QImage rendered() const;
     QRect transformedBounds() const;
     QPoint renderedOffset() const;
@@ -83,6 +88,8 @@ class Document : public QObject {
     bool mergeDown(QString *error = nullptr);
     void adjust(int b, int c, int s);
     bool adjustTones(const ToneSettings &settings, QString *error = nullptr);
+    bool adjustFilters(const FilterSettings &settings, QString *error = nullptr);
+    bool adjustMask(const MaskSettings &settings, QString *error = nullptr);
     bool addText(QString text, QFont font, QColor color, QPoint at, QString *error);
     bool editText(QString text, QFont font, QColor color, QString *error = nullptr);
     void beginEdit();

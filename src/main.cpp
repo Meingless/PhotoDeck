@@ -8,7 +8,7 @@ int main(int argc, char **argv) {
     QApplication app(argc, argv);
     app.setApplicationName("PhotoDeck");
     app.setOrganizationName("PhotoDeck");
-    app.setApplicationVersion("0.5.0-ea.1");
+    app.setApplicationVersion("0.6.0-ea.1");
     QImageReader::setAllocationLimit(128);
     app.setStyle("Fusion");
     app.setWindowIcon(QIcon(":/photodeck.png"));

@@ -30,7 +30,7 @@ bool sameLayer(const Layer &a, const Layer &b) {
            a.blend == b.blend && a.brightness == b.brightness && a.contrast == b.contrast &&
            a.saturation == b.saturation && a.blur == b.blur && a.text == b.text && a.font == b.font &&
            a.color == b.color && a.tones == b.tones && a.geometry == b.geometry &&
-           a.clipped == b.clipped;
+           a.clipped == b.clipped && a.filters == b.filters && a.maskSettings == b.maskSettings;
 }
 bool sameContent(const State &a, const State &b) {
     if (a.size != b.size || a.layers.size() != b.layers.size())
@@ -59,7 +59,8 @@ bool validState(const State &s, QString *error) {
             l.blend >= Blending::Count || qAbs(qint64(l.brightness)) > 100 ||
             qAbs(qint64(l.contrast)) > 100 || qAbs(qint64(l.saturation)) > 100 || l.blur < 0 ||
             l.blur > 20 || l.name.size() > 16384 || l.text.size() > 16384 ||
-            l.font.toString().size() > 16384 || !l.tones.valid() || !l.validGeometry())
+            l.font.toString().size() > 16384 || !l.tones.valid() || !l.filters.valid() ||
+            !l.maskSettings.valid() || !l.validGeometry())
             return fail();
         const QSize size = l.transformedBounds().size();
         renderBytes += qint64(size.width()) * size.height() * 4;
@@ -299,6 +300,8 @@ Layer Layer::rasterized() const {
     layer.text.clear();
     layer.brightness = layer.contrast = layer.saturation = layer.blur = 0;
     layer.tones = {};
+    layer.filters = {};
+    layer.maskSettings = {};
     layer.cache = {};
     return layer;
 }
@@ -306,19 +309,20 @@ QImage Layer::rendered() const {
     if (!validGeometry() || pixels.format() != QImage::Format_ARGB32_Premultiplied ||
         (!mask.isNull() && mask.format() != QImage::Format_ARGB32_Premultiplied))
         return {};
-    if (mask.isNull() && brightness == 0 && contrast == 0 && saturation == 0 && blur == 0 &&
-        tones.isIdentity() && geometry.isIdentity())
+    const bool activeMask = !mask.isNull() && maskSettings.enabled && maskSettings.density > 0;
+    if (!activeMask && filters.isIdentity() && brightness == 0 && contrast == 0 && saturation == 0 &&
+        blur == 0 && tones.isIdentity() && geometry.isIdentity())
         return pixels;
     if (!cache.isNull() && cacheKey == pixels.cacheKey() && maskKey == mask.cacheKey() &&
         cacheB == brightness && cacheC == contrast && cacheS == saturation && cacheBlur == blur &&
-        cacheTones == tones && cacheGeometry == geometry)
+        cacheTones == tones && cacheGeometry == geometry && cacheFilters == filters &&
+        cacheMaskSettings == maskSettings)
         return cache;
     cache = boxBlur(pixels, blur).convertToFormat(QImage::Format_ARGB32);
     double factor = std::pow(2.0, contrast / 50.0), sat = 1.0 + saturation / 100.0;
     ToneMapper mapper(tones);
     for (int y = 0; y < cache.height(); ++y) {
         auto *row = reinterpret_cast<QRgb *>(cache.scanLine(y));
-        const auto *mr = mask.isNull() ? nullptr : reinterpret_cast<const QRgb *>(mask.constScanLine(y));
         for (int x = 0; x < cache.width(); ++x) {
             QRgb v = row[x];
             double r = qRed(v), g = qGreen(v), b = qBlue(v), lum = 0.2126 * r + 0.7152 * g + 0.0722 * b;
@@ -326,10 +330,27 @@ QImage Layer::rendered() const {
             g = (lum + (g - lum) * sat - 127.5) * factor + 127.5 + brightness * 2.55;
             b = (lum + (b - lum) * sat - 127.5) * factor + 127.5 + brightness * 2.55;
             int a = qAlpha(v);
-            if (mr)
-                a = a * qRed(mr[x]) / 255;
             row[x] = mapper.map(qRgba(qBound(0, qRound(r), 255), qBound(0, qRound(g), 255),
                                       qBound(0, qRound(b), 255), a));
+        }
+    }
+    if (!filters.isIdentity())
+        cache = Filters::apply(cache.convertToFormat(QImage::Format_ARGB32_Premultiplied), filters)
+                    .convertToFormat(QImage::Format_ARGB32);
+    if (cache.isNull())
+        return {};
+    if (activeMask) {
+        QImage coverage = Filters::maskCoverage(mask, maskSettings);
+        if (coverage.isNull())
+            return {};
+        for (int y = 0; y < cache.height(); ++y) {
+            auto *row = reinterpret_cast<QRgb *>(cache.scanLine(y));
+            const uchar *mr = coverage.constScanLine(y);
+            for (int x = 0; x < cache.width(); ++x) {
+                QRgb p = row[x];
+                int weight = mr[x];
+                row[x] = qRgba(qRed(p), qGreen(p), qBlue(p), qAlpha(p) * weight / 255);
+            }
         }
     }
     cache = cache.convertToFormat(QImage::Format_ARGB32_Premultiplied);
@@ -352,6 +373,8 @@ QImage Layer::rendered() const {
     cacheBlur = blur;
     cacheTones = tones;
     cacheGeometry = geometry;
+    cacheFilters = filters;
+    cacheMaskSettings = maskSettings;
     return cache;
 }
 Document::Document(QObject *parent) : QObject(parent) {}
@@ -527,6 +550,7 @@ bool Document::addMask(QString *error) {
     if (!allows(l.pixels.sizeInBytes(), error, 0))
         return false;
     beginEdit();
+    l.maskSettings = {};
     l.mask = QImage(l.pixels.size(), QImage::Format_ARGB32_Premultiplied);
     l.mask.fill(Qt::white);
     if (!selection.isEmpty()) {
@@ -555,6 +579,7 @@ void Document::removeMask() {
         return;
     beginEdit();
     l.mask = {};
+    l.maskSettings = {};
     editingMask = false;
     commit("Maske kaldırıldı");
 }
@@ -980,6 +1005,27 @@ bool Document::adjustTones(const ToneSettings &settings, QString *error) {
     changed();
     return true;
 }
+bool Document::adjustFilters(const FilterSettings &settings, QString *error) {
+    if (state.layers.isEmpty() || state.layers[state.active].locked || !settings.valid()) {
+        if (error)
+            *error = "Katman kilitli veya filtre ayarları geçersiz.";
+        return false;
+    }
+    state.layers[state.active].filters = settings;
+    changed();
+    return true;
+}
+bool Document::adjustMask(const MaskSettings &settings, QString *error) {
+    if (state.layers.isEmpty() || state.layers[state.active].locked ||
+        state.layers[state.active].mask.isNull() || !settings.valid()) {
+        if (error)
+            *error = "Maske yok, katman kilitli veya maske ayarları geçersiz.";
+        return false;
+    }
+    state.layers[state.active].maskSettings = settings;
+    changed();
+    return true;
+}
 bool Document::addText(QString text, QFont font, QColor color, QPoint at, QString *error) {
     if (!validOffset(at) || text.size() > 16384) {
         if (error)
@@ -1160,7 +1206,7 @@ bool Document::save(const QString &file, QString *error, bool markClean) {
     }
     QDataStream out(&f);
     out.setVersion(QDataStream::Qt_6_2);
-    out << quint32(0x50444543) << quint32(4) << state.size << qint32(state.active)
+    out << quint32(0x50444543) << quint32(5) << state.size << qint32(state.active)
         << qint32(state.layers.size());
     for (const auto &l : state.layers) {
         out << l.name << l.offset << l.visible << l.locked << double(l.opacity) << qint32(l.blend)
@@ -1168,6 +1214,8 @@ bool Document::save(const QString &file, QString *error, bool markClean) {
             << l.text << l.font.toString() << l.color;
         l.tones.write(out);
         out << l.geometry << l.clipped;
+        l.filters.write(out);
+        l.maskSettings.write(out);
         if (!writeImage(out, l.pixels) || !writeImage(out, l.mask)) {
             if (error)
                 *error = "Katman görüntüsü yazılamadı.";
@@ -1206,7 +1254,8 @@ bool Document::load(const QString &file, QString *error) {
     qint32 active = 0, count = 0;
     State pending;
     in >> magic >> version >> pending.size >> active >> count;
-    if (magic != 0x50444543 || (version != 1 && version != 2 && version != 3 && version != 4) ||
+    if (magic != 0x50444543 ||
+        (version != 1 && version != 2 && version != 3 && version != 4 && version != 5) ||
         !validSize(pending.size) || count < 1 || count > 64 || active < 0 || active >= count)
         return fail();
     pending.active = active;
@@ -1258,6 +1307,9 @@ bool Document::load(const QString &file, QString *error) {
             in >> l.geometry;
         if (version >= 4)
             in >> l.clipped;
+        if (version >= 5 &&
+            (!FilterSettings::read(in, l.filters) || !MaskSettings::read(in, l.maskSettings)))
+            return fail();
         if (!readImageRecord(in, l.pixels, remaining) || l.pixels.isNull() ||
             !readImageRecord(in, l.mask, remaining) ||
             (!l.mask.isNull() && l.mask.size() != l.pixels.size()))

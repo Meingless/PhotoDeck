@@ -14,3 +14,9 @@ HEADERS += ../src/blending.h
 
 SOURCES += ../src/transformdialog.cpp
 HEADERS += ../src/transformdialog.h
+
+SOURCES += ../src/filters.cpp
+HEADERS += ../src/filters.h
+
+SOURCES += ../src/effectdialog.cpp
+HEADERS += ../src/effectdialog.h

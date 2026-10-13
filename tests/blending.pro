@@ -10,3 +10,9 @@ msvc:QMAKE_CXXFLAGS += /utf-8
 
 SOURCES += ../src/transformdialog.cpp
 HEADERS += ../src/transformdialog.h
+
+SOURCES += ../src/filters.cpp
+HEADERS += ../src/filters.h
+
+SOURCES += ../src/effectdialog.cpp
+HEADERS += ../src/effectdialog.h

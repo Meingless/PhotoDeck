@@ -1,4 +1,4 @@
-# PhotoDeck 0.5.0 Early Access
+# PhotoDeck 0.6.0 Early Access
 
 AI içermeyen, tamamen yerel, C++/Qt 6 ile geliştirilen fotoğraf ve katman düzenleyici. Linux, Windows ve macOS için ortak kaynak kullanır. Tarayıcı motoru, Python çalışma zamanı, bulut hesabı, abonelik veya ağ servisi gerekmez.
 
@@ -27,6 +27,8 @@ Varsayılan görünüm **Odak**. Çalışma alanı menüsünde Grafit, Kağıt, 
 - Ctrl+T ile kaynak koruyan katman dönüşümü: ölçek, keyfi açı, eğme, aynalama ve dört köşeli perspektif. Kaynak piksel, metin ve maske korunur; önizleme iptal edilebilir ve tek adımda geri alınır.
 - Dokuz sabitleme noktasıyla tuval boyutu; tuval dışındaki kaynak pikselleri silmez. Görünür katmanları birleştirme tuval dışındaki alanları ve gizli katmanları korur. Tuvale düzleştirme saydamlığı koruyup gizli katmanları ve tuval dışını kaldırır.
 - Kaynak pikselleri koruyan parlaklık, kontrast, doygunluk, siyah beyaz ve kutu bulanıklığı.
+- Kaynak koruyan Gaussian, unsharp keskinleştirme (miktar/yarıçap/eşik), high-pass, tekrarlanabilir tek renkli/renkli gren ve pikselleştirme. Canlı önizleme kapatılabilir; kabul tek geri alma adımı, iptal tam geri dönüş sağlar.
+- Maske etkinleştirme, yoğunluk ve Gaussian kenar yumuşatma; orijinal maske pikselleri korunur. Katman → Maske yoğunluğu / kenar yumuşatma penceresinden ayarlanır.
 - Seviyeler (giriş/çıkış aralığı, gamma), pozlama, RGB ve ayrı kanal eğrileri; hue, vibrance, temel kanal renk dengesi, invert, threshold ve posterize. Ctrl+L ile canlı önizleme; iptal geri döner, kabul tek geri alma adımıdır.
 - Yerel fontlarla çok satırlı metin, boyut, kalınlık ve renk. Metin katmanına çift tıklayarak düzenleme.
 - PNG/JPEG/WebP/BMP ve TIFF içe/dışa aktarma; GIF ilk kare içe aktarımı. WebP/TIFF sistemin Qt görüntü eklentisine bağlıdır. Çalışma belgesi RGB 8 bittir; yüksek bit derinlikli girdiler 8 bite dönüşür. Çok sayfalı TIFF/animasyonlu GIF yalnızca ilk görüntüyü açar.
@@ -39,7 +41,7 @@ Kısayollar: V taşı, M seç, C kırp, B fırça, P kalem, E silgi, S klon, F k
 
 Shift+M eliptik seçim, L kement, Shift+L çokgen kement, W sihirli değnek. Çokgen kement Enter/çift tıklamayla tamamlanır, Esc iptal eder. Seçim sırasında Shift ekler, Alt çıkarır, Shift+Alt kesiştirir; araç seçeneklerinden aynı modlar seçilebilir. Ctrl+Shift+I seçimi ters çevirir. Seçimler bu sürümde geçicidir; proje veya belge geçmişine kaydedilmez.
 
-0.5 projeleri `.pdeck` sürüm 4 olarak kaydedilir; eski sürüm 1/2/3 projeleri açılabilir. Eski uygulamalar sürüm 4 dosyalarını açamaz; orijinalleri ayrı saklayın. v2/v3 uyumluluk örnekleri yayımlanmış 0.3/0.4 AppImage'larıyla oluşturuldu.
+0.6 projeleri `.pdeck` sürüm 5 olarak kaydedilir; eski sürüm 1/2/3/4 projeleri açılabilir. Eski uygulamalar sürüm 5 dosyalarını açamaz; orijinalleri ayrı saklayın. v2/v3/v4 uyumluluk örnekleri yayımlanmış 0.3/0.4/0.5 AppImage'larıyla oluşturuldu.
 
 Kırpma zinciri katman sırasına bağlıdır. Temel katmanı silmek çocukların kırpmasını kaldırır; sıralama/yeni katman yerleştirme hangi temel katmana kırpıldığını değiştirebilir. Gizli temelli gruplar görünür birleştirmede korunur. Görünür temeli ve gizli kırpılan çocuğu olan gruplar birleştirilmeden önce ayrılmalı veya görünür yapılmalıdır; ilişkiler sessizce kaybedilmez. Feather ile kesme, kısmi alfa sınırlarında iki ayrı katman oluşturduğu için sert seçim gibi piksel piksel aynı görünümü garanti etmez.
 
@@ -75,12 +77,12 @@ Dağıtılmış Linux paketini tek dosyalık AppImage olarak hazırlamak için `
 
 ```sh
 python3 scripts/package-appimage.py \
-  --package dist/PhotoDeck-0.5.0-ea.1-linux-x86_64 \
+  --package dist/PhotoDeck-0.6.0-ea.1-linux-x86_64 \
   --appimagetool /path/to/appimagetool \
-  --output dist/PhotoDeck-0.5.0-ea.1-x86_64.AppImage
+  --output dist/PhotoDeck-0.6.0-ea.1-x86_64.AppImage
 ```
 
-AppImage'a çalıştırma izni verip açın: `chmod +x PhotoDeck-0.5.0-ea.1-x86_64.AppImage`. FUSE bulunmayan sistemlerde `APPIMAGE_EXTRACT_AND_RUN=1 ./PhotoDeck-0.5.0-ea.1-x86_64.AppImage` kullanılabilir. Windows taşınabilir paketindeki `PhotoDeck.exe`, yanındaki DLL ve eklenti klasörleriyle birlikte taşınmalıdır. macOS paketindeki `.app` tüm içeriğiyle korunmalıdır.
+AppImage'a çalıştırma izni verip açın: `chmod +x PhotoDeck-0.6.0-ea.1-x86_64.AppImage`. FUSE bulunmayan sistemlerde `APPIMAGE_EXTRACT_AND_RUN=1 ./PhotoDeck-0.6.0-ea.1-x86_64.AppImage` kullanılabilir. Windows taşınabilir paketindeki `PhotoDeck.exe`, yanındaki DLL ve eklenti klasörleriyle birlikte taşınmalıdır. macOS paketindeki `.app` tüm içeriğiyle korunmalıdır.
 
 ## Mevcut kapsam
 
@@ -96,4 +98,6 @@ Uygulama kodu ve örnek çizim MIT lisanslıdır. Qt ayrı LGPLv3/GPLv3 veya tic
 
 İşlev doğrulama kapsamı: [docs/FEATURE-AUDIT.md](docs/FEATURE-AUDIT.md).
 
-Tüm Photoshop alanlarının karşılaştırması ve açık farklar: [docs/PHOTOSHOP-COMPARISON.md](docs/PHOTOSHOP-COMPARISON.md). 0.3–0.5 farkların bir kısmını kapatır; karşılaştırma çalışması devam eder.
+Filtre sırası pikselleştirme → gren → Gaussian → high-pass → unsharp; eski kutu bulanıklığı ve ton ayarları bunlardan önce, maske ve katman dönüşümü sonra uygulanır. Gaussian ayrılabilir, normalize edilmiş gerçek çekirdek kullanır; yarıçap 0–16 px, sigma `max(0.5, yarıçap/2)` ve sınır piksel tekrarları vardır. Maske feather aynı Gaussian yöntemidir. Filtreler RGB 8 bit ve katman ölçeğindedir; reorderable Smart Filter stack, filter mask, lens/motion blur, adaptive/smart sharpen veya Photoshop preset uyumluluğu değildir. Büyük görüntü ve yarıçap CPU/bellek maliyetini artırır; canlı önizleme kapatılabilir.
+
+Tüm Photoshop alanlarının karşılaştırması ve açık farklar: [docs/PHOTOSHOP-COMPARISON.md](docs/PHOTOSHOP-COMPARISON.md). 0.3–0.6 farkların bir kısmını kapatır; karşılaştırma çalışması devam eder.

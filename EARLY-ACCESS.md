@@ -1,4 +1,4 @@
-# PhotoDeck 0.5.0 Early Access 1
+# PhotoDeck 0.6.0 Early Access 1
 
 AI içermeyen yerel fotoğraf ve katman düzenleyici. Erken erişim sürümüdür; önemli orijinalleri koruyun ve ayrı proje kopyalarıyla çalışın.
 
@@ -22,9 +22,9 @@ Kaynak ve lisanslar paketle birlikte hazırlanır. Üçüncü taraf yazılım bi
 
 Ctrl+L ton penceresi; Shift+M eliptik seçim, L kement, Shift+L çokgen kement, W değnek. Çokgen Enter/çift tıklamayla tamamlanır, Esc iptal eder. Seçimde Shift ekle, Alt çıkar, Shift+Alt kesiştir. Ctrl+Shift+I seçimi ters çevirir. Seçimler henüz geçicidir; proje/geçmişe kaydedilmez.
 
-Yeni projeler .pdeck sürüm 4'tür. Sürüm 1/2/3 projeleri açılır; eski uygulamalar sürüm 4 projelerini açamaz. Orijinalleri ayrı koruyun.
+Yeni projeler .pdeck sürüm 5'tir. Sürüm 1/2/3/4 projeleri açılır; eski uygulamalar sürüm 5 projelerini açamaz. Orijinalleri ayrı koruyun.
 
-Linux AppImage tek dosyalık alternatifidir: çalıştırma izni verin; FUSE yoksa `APPIMAGE_EXTRACT_AND_RUN=1 ./PhotoDeck-0.5.0-ea.1-x86_64.AppImage`. Kütüphaneler AppImage içindedir.
+Linux AppImage tek dosyalık alternatifidir: çalıştırma izni verin; FUSE yoksa `APPIMAGE_EXTRACT_AND_RUN=1 ./PhotoDeck-0.6.0-ea.1-x86_64.AppImage`. Kütüphaneler AppImage içindedir.
 
 Photoshop karşılaştırması ve kapanmamış farklar docs/PHOTOSHOP-COMPARISON.md içindedir. Bu sürüm tam Photoshop eşdeğerliği değildir.
 
@@ -35,3 +35,5 @@ Dönüşüm sırasında metin ve maskeler kaynakta kalır. Boyama/silme için Ka
 0.5: Ctrl+Alt+G kırpma maskesi; Ctrl+J seçim yoksa çoğaltma, varsa seçimi yeni katmana kopyalama; Ctrl+Shift+J seçimi kesme; Ctrl+E alta birleştirme. Temel katmanın alfa/maskesi/görünürlüğü ve opaklığı kırpma zincirine uygulanır. Kopya/cut maske, renk ayarları ve dönüşümü raster piksellere uygular; cut kaynak metni de rasterleştirir. Feather cut kenarı, sert seçim gibi aynı alfa sonucunu garanti etmez.
 
 Kilitli veya kırpma zincirindeki katmandan kesme; gizli kırpılan çocuğu olan görünür grupta merge-visible; bağımlı blend/clip görünümünü değiştiren merge-down reddedilir. Kırpma ilişkisini kaldırma/görünürlüğü değiştirme veya görünür birleştirme kullanılabilir. Temel silinirse çocukların kırpması kaldırılır; katman sırası kırpma temelini belirler. Bu sınırlar tam Photoshop parity olarak işaretlenmez.
+
+0.6: Filtre → Gaussian, keskinleştirme ve klasik filtreler; katman ölçeğinde Gaussian, unsharp miktar/yarıçap/eşik, high-pass, seeded uniform mono/color gren ve mosaic. Kaynak pikseller/metin korunur, canlı önizleme kapatılır, iptal ve tek undo vardır. Maske yoğunluğu/feather/enable kaynak maskeyi değiştirmez. Radius sınırı 16 px; Gaussian sigma max(0.5,radius/2), edge-clamp kullanır. Sıra mosaic→noise→Gaussian→high-pass→unsharp; ton ayarı önce, maske/dönüşüm sonra. Büyük radius/görüntü CPU ve bellek kullanımı artırır. Reorderable smart-filter stack, ayrı filter mask, lens/motion blur, smart sharpen ve native Photoshop presets henüz yoktur.
