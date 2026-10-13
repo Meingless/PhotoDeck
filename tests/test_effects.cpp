@@ -343,7 +343,7 @@ class EffectTests : public QObject {
                 return;
             }
             filter->findChild<QSpinBox *>("gaussian")->setValue(3);
-            QTest::qWait(100);
+            QTRY_COMPARE_WITH_TIMEOUT(d->state.layers[0].filters.gaussian, 3, 2000);
             preview = d->composite() != before;
             filter->findChild<QCheckBox *>("liveFilterPreview")->setChecked(false);
             QCOMPARE(d->composite(), before);
