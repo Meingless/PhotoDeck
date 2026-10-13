@@ -1,4 +1,5 @@
 #include "document.h"
+#include "blending.h"
 #include <QBuffer>
 #include <QDataStream>
 #include <QFile>
@@ -27,7 +28,7 @@ bool sameLayer(const Layer &a, const Layer &b) {
            a.visible == b.visible && a.locked == b.locked && a.opacity == b.opacity &&
            a.blend == b.blend && a.brightness == b.brightness && a.contrast == b.contrast &&
            a.saturation == b.saturation && a.blur == b.blur && a.text == b.text && a.font == b.font &&
-           a.color == b.color;
+           a.color == b.color && a.tones == b.tones;
 }
 bool sameContent(const State &a, const State &b) {
     if (a.size != b.size || a.layers.size() != b.layers.size())
@@ -49,10 +50,11 @@ bool validState(const State &s, QString *error) {
     for (const auto &l : s.layers) {
         if (!Document::validSize(l.pixels.size()) ||
             (!l.mask.isNull() && l.mask.size() != l.pixels.size()) || !Document::validOffset(l.offset) ||
-            !std::isfinite(l.opacity) || l.opacity < 0 || l.opacity > 1 || l.blend < 0 || l.blend > 5 ||
-            qAbs(qint64(l.brightness)) > 100 || qAbs(qint64(l.contrast)) > 100 ||
-            qAbs(qint64(l.saturation)) > 100 || l.blur < 0 || l.blur > 20 || l.name.size() > 16384 ||
-            l.text.size() > 16384 || l.font.toString().size() > 16384)
+            !std::isfinite(l.opacity) || l.opacity < 0 || l.opacity > 1 || l.blend < 0 ||
+            l.blend >= Blending::Count || qAbs(qint64(l.brightness)) > 100 ||
+            qAbs(qint64(l.contrast)) > 100 || qAbs(qint64(l.saturation)) > 100 || l.blur < 0 ||
+            l.blur > 20 || l.name.size() > 16384 || l.text.size() > 16384 ||
+            l.font.toString().size() > 16384 || !l.tones.valid())
             return fail();
     }
     return true;
@@ -205,13 +207,16 @@ bool readImageRecord(QDataStream &stream, QImage &image, qint64 &remaining) {
 } // namespace
 
 QImage Layer::rendered() const {
-    if (mask.isNull() && brightness == 0 && contrast == 0 && saturation == 0 && blur == 0)
+    if (mask.isNull() && brightness == 0 && contrast == 0 && saturation == 0 && blur == 0 &&
+        tones.isIdentity())
         return pixels;
     if (!cache.isNull() && cacheKey == pixels.cacheKey() && maskKey == mask.cacheKey() &&
-        cacheB == brightness && cacheC == contrast && cacheS == saturation && cacheBlur == blur)
+        cacheB == brightness && cacheC == contrast && cacheS == saturation && cacheBlur == blur &&
+        cacheTones == tones)
         return cache;
     cache = boxBlur(pixels, blur).convertToFormat(QImage::Format_ARGB32);
     double factor = std::pow(2.0, contrast / 50.0), sat = 1.0 + saturation / 100.0;
+    ToneMapper mapper(tones);
     for (int y = 0; y < cache.height(); ++y) {
         auto *row = reinterpret_cast<QRgb *>(cache.scanLine(y));
         const auto *mr = mask.isNull() ? nullptr : reinterpret_cast<const QRgb *>(mask.constScanLine(y));
@@ -224,8 +229,8 @@ QImage Layer::rendered() const {
             int a = qAlpha(v);
             if (mr)
                 a = a * qRed(mr[x]) / 255;
-            row[x] = qRgba(qBound(0, qRound(r), 255), qBound(0, qRound(g), 255),
-                           qBound(0, qRound(b), 255), a);
+            row[x] = mapper.map(qRgba(qBound(0, qRound(r), 255), qBound(0, qRound(g), 255),
+                                      qBound(0, qRound(b), 255), a));
         }
     }
     cache = cache.convertToFormat(QImage::Format_ARGB32_Premultiplied);
@@ -235,6 +240,7 @@ QImage Layer::rendered() const {
     cacheC = contrast;
     cacheS = saturation;
     cacheBlur = blur;
+    cacheTones = tones;
     return cache;
 }
 Document::Document(QObject *parent) : QObject(parent) {}
@@ -243,33 +249,16 @@ bool Document::validSize(QSize s) {
            qint64(s.width()) * s.height() <= MaxPixels;
 }
 QPainter::CompositionMode Document::compositionMode(int b) {
-    switch (b) {
-    case 1:
-        return QPainter::CompositionMode_Multiply;
-    case 2:
-        return QPainter::CompositionMode_Screen;
-    case 3:
-        return QPainter::CompositionMode_Overlay;
-    case 4:
-        return QPainter::CompositionMode_Darken;
-    case 5:
-        return QPainter::CompositionMode_Lighten;
-    default:
-        return QPainter::CompositionMode_SourceOver;
-    }
+    return Blending::painterMode(b);
 }
 QImage Document::composite() const {
     if (!validSize(state.size))
         return {};
     QImage out(state.size, QImage::Format_ARGB32_Premultiplied);
     out.fill(Qt::transparent);
-    QPainter p(&out);
     for (const auto &l : state.layers)
-        if (l.visible) {
-            p.setOpacity(l.opacity);
-            p.setCompositionMode(compositionMode(l.blend));
-            p.drawImage(l.offset, l.rendered());
-        }
+        if (l.visible)
+            Blending::compose(out, l.rendered(), l.offset, l.opacity, l.blend);
     return out;
 }
 bool Document::validOffset(QPoint offset) {
@@ -312,9 +301,11 @@ QImage Document::readImage(const QString &file, QString *error) {
     QImageReader reader(file);
     reader.setAutoTransform(true);
     const QByteArray format = reader.format().toLower();
-    if (format != "png" && format != "jpeg" && format != "jpg" && format != "webp" && format != "bmp") {
+    if (format != "png" && format != "jpeg" && format != "jpg" && format != "webp" && format != "bmp" &&
+        format != "gif" && format != "tif" && format != "tiff") {
         if (error)
-            *error = "Desteklenen görüntüler: PNG, JPEG, WebP ve BMP. Katmanlı projeler için .pdeck "
+            *error = "Desteklenen görüntüler: PNG, JPEG, WebP, BMP, GIF ve TIFF. Katmanlı projeler için "
+                     ".pdeck "
                      "kullanın.";
         return {};
     }
@@ -422,8 +413,7 @@ bool Document::addMask(QString *error) {
     l.mask.fill(Qt::white);
     if (!selection.isEmpty()) {
         l.mask.fill(Qt::black);
-        QPainter p(&l.mask);
-        p.fillRect(selection.translated(-l.offset), Qt::white);
+        selection.paint(l.mask, l.offset, [&](QPainter &p) { p.fillRect(l.mask.rect(), Qt::white); });
     }
     editingMask = true;
     commit("Katman maskesi");
@@ -561,6 +551,16 @@ void Document::adjust(int b, int c, int s) {
     l.contrast = qBound(-100, c, 100);
     l.saturation = qBound(-100, s, 100);
     changed();
+}
+bool Document::adjustTones(const ToneSettings &settings, QString *error) {
+    if (state.layers.isEmpty() || state.layers[state.active].locked || !settings.valid()) {
+        if (error)
+            *error = "Katman kilitli veya ton ayarları geçersiz.";
+        return false;
+    }
+    state.layers[state.active].tones = settings;
+    changed();
+    return true;
 }
 bool Document::addText(QString text, QFont font, QColor color, QPoint at, QString *error) {
     QImage image = textImage(text, font, color);
@@ -724,12 +724,13 @@ bool Document::save(const QString &file, QString *error, bool markClean) {
     }
     QDataStream out(&f);
     out.setVersion(QDataStream::Qt_6_2);
-    out << quint32(0x50444543) << quint32(1) << state.size << qint32(state.active)
+    out << quint32(0x50444543) << quint32(2) << state.size << qint32(state.active)
         << qint32(state.layers.size());
     for (const auto &l : state.layers) {
         out << l.name << l.offset << l.visible << l.locked << double(l.opacity) << qint32(l.blend)
             << qint32(l.brightness) << qint32(l.contrast) << qint32(l.saturation) << qint32(l.blur)
             << l.text << l.font.toString() << l.color;
+        l.tones.write(out);
         if (!writeImage(out, l.pixels) || !writeImage(out, l.mask)) {
             if (error)
                 *error = "Katman görüntüsü yazılamadı.";
@@ -768,8 +769,8 @@ bool Document::load(const QString &file, QString *error) {
     qint32 active = 0, count = 0;
     State pending;
     in >> magic >> version >> pending.size >> active >> count;
-    if (magic != 0x50444543 || version != 1 || !validSize(pending.size) || count < 1 || count > 64 ||
-        active < 0 || active >= count)
+    if (magic != 0x50444543 || (version != 1 && version != 2) || !validSize(pending.size) || count < 1 ||
+        count > 64 || active < 0 || active >= count)
         return fail();
     pending.active = active;
     qint64 remaining = MaxLayerBytes;
@@ -803,8 +804,9 @@ bool Document::load(const QString &file, QString *error) {
             return fail();
         in >> l.color;
         if (in.status() != QDataStream::Ok || !std::isfinite(opacity) || opacity < 0 || opacity > 1 ||
-            blend < 0 || blend > 5 || qAbs(qint64(b)) > 100 || qAbs(qint64(c)) > 100 ||
-            qAbs(qint64(s)) > 100 || blur < 0 || blur > 20 || !validOffset(l.offset))
+            blend < 0 || blend >= (version == 1 ? 6 : Blending::Count) || qAbs(qint64(b)) > 100 ||
+            qAbs(qint64(c)) > 100 || qAbs(qint64(s)) > 100 || blur < 0 || blur > 20 ||
+            !validOffset(l.offset))
             return fail();
         l.opacity = opacity;
         l.blend = blend;
@@ -813,6 +815,8 @@ bool Document::load(const QString &file, QString *error) {
         l.saturation = s;
         l.blur = blur;
         l.font.fromString(font);
+        if (version >= 2 && !ToneSettings::read(in, l.tones))
+            return fail();
         if (!readImageRecord(in, l.pixels, remaining) || l.pixels.isNull() ||
             !readImageRecord(in, l.mask, remaining) ||
             (!l.mask.isNull() && l.mask.size() != l.pixels.size()))
@@ -832,7 +836,9 @@ bool Document::exportImage(const QString &file, int quality, QString *error) {
     QByteArray format = QFileInfo(file).suffix().toLower().toLatin1();
     if (format == "jpg")
         format = "jpeg";
-    if (!QList<QByteArray>{"png", "jpeg", "webp", "bmp"}.contains(format) ||
+    if (format == "tif")
+        format = "tiff";
+    if (!QList<QByteArray>{"png", "jpeg", "webp", "bmp", "tiff"}.contains(format) ||
         !QImageWriter::supportedImageFormats().contains(format)) {
         if (error)
             *error = "Bu görüntü biçimi bu sistemde desteklenmiyor.";

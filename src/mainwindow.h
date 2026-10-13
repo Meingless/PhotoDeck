@@ -16,6 +16,7 @@
 #include <QTimer>
 #include <QToolBar>
 #include <QToolButton>
+class QCheckBox;
 class Histogram : public QWidget {
   public:
     explicit Histogram(QWidget *parent = nullptr) : QWidget(parent) { setFixedHeight(70); }
@@ -90,6 +91,9 @@ class MainWindow : public QMainWindow {
     QComboBox *blend;
     QSlider *opacity, *brightness, *contrast, *saturation;
     QSpinBox *sizeInput, *hardnessInput, *brushOpacityInput;
+    QComboBox *selectionModeInput;
+    QSpinBox *selectionToleranceInput;
+    QCheckBox *contiguousSelectionInput;
     QToolButton *colorButton, *maskButton;
     QLabel *info, *status, *zoomLabel, *layerDetails;
     Histogram *histogram;

@@ -30,7 +30,7 @@ jobs:
             cmake_args: '-DCMAKE_OSX_ARCHITECTURES=arm64 -DCMAKE_OSX_DEPLOYMENT_TARGET=12.0'
     runs-on: ${{ matrix.os }}
     env:
-      PHOTO_VERSION: 0.2.1-ea.1
+      PHOTO_VERSION: 0.3.0-ea.1
       QT_QPA_PLATFORM: offscreen
     steps:
       - uses: actions/checkout@v4
@@ -81,7 +81,7 @@ jobs:
           Copy-Item "$env:QT_ROOT_DIR/plugins/platforms/qoffscreen.dll" "$folder/platforms/"
           Copy-Item "$env:QT_ROOT_DIR/bin/Qt6Test.dll" "$folder/"
           $env:QT_QPA_PLATFORM = 'offscreen'
-          foreach ($test in 'photodeck-tests','photodeck-feature-audit') {
+          foreach ($test in 'photodeck-tests','photodeck-feature-audit','photodeck-tones-tests','photodeck-selections-tests','photodeck-blending-tests') {
             Copy-Item "build-release/Release/$test.exe" "$folder/$test.exe"
             & "$folder/$test.exe" -o "$PWD/$test-packaged.xml,junitxml" -o "$PWD/$test-packaged.txt,txt"
             if ($LASTEXITCODE -ne 0) { throw "Packaged runtime audit failed: $test" }
@@ -113,19 +113,36 @@ jobs:
           test -s linux-startup.png
           package="dist/PhotoDeck-$PHOTO_VERSION-linux-x86_64"
           cp "$QT_ROOT_DIR/lib/libQt6Test.so.6" "$package/lib/"
-          for test in photodeck-tests photodeck-feature-audit; do
+          for test in photodeck-tests photodeck-feature-audit photodeck-tones-tests photodeck-selections-tests photodeck-blending-tests; do
             cp "build-release/$test" "$package/bin/$test"
             LD_LIBRARY_PATH="$PWD/$package/lib" QT_PLUGIN_PATH="$PWD/$package/plugins" "$package/bin/$test" -o "$PWD/$test-packaged.xml,junitxml" -o "$PWD/$test-packaged.txt,txt"
             rm "$package/bin/$test"
           done
           rm "$package/lib/libQt6Test.so.6"
+      - name: Linux AppImage
+        if: runner.os == 'Linux'
+        run: |
+          mkdir -p appimage-tools
+          python3 - <<'PY'
+          import pathlib,hashlib,urllib.request
+          target=pathlib.Path('appimage-tools/appimagetool.AppImage')
+          url='https://github.com/AppImage/appimagetool/releases/download/1.9.1/appimagetool-x86_64.AppImage'
+          with urllib.request.urlopen(url,timeout=90) as response:
+              target.write_bytes(response.read())
+          assert hashlib.sha256(target.read_bytes()).hexdigest()=='ed4ce84f0d9caff66f50bcca6ff6f35aae54ce8135408b3fa33abfc3cb384eb0'
+          target.chmod(0o755)
+          PY
+          (cd appimage-tools && ./appimagetool.AppImage --appimage-extract > /dev/null)
+          python3 scripts/package-appimage.py --package "dist/PhotoDeck-$PHOTO_VERSION-linux-x86_64" --appimagetool appimage-tools/squashfs-root/AppRun --output "dist/PhotoDeck-$PHOTO_VERSION-x86_64.AppImage"
+          APPIMAGE_EXTRACT_AND_RUN=1 "dist/PhotoDeck-$PHOTO_VERSION-x86_64.AppImage" --no-settings --screenshot appimage-startup.png
+          test -s appimage-startup.png
       - name: Checksums
         shell: bash
         run: |
           python3 - <<'PY'
           import pathlib,hashlib
           p=pathlib.Path('dist')
-          lines=[hashlib.sha256(f.read_bytes()).hexdigest()+'  '+f.name for f in sorted(p.iterdir()) if f.is_file() and (f.name.endswith('.zip') or f.name.endswith('.tar.gz'))]
+          lines=[hashlib.sha256(f.read_bytes()).hexdigest()+'  '+f.name for f in sorted(p.iterdir()) if f.is_file() and f.name.endswith(('.zip','.tar.gz','.AppImage'))]
           (p/'SHA256SUMS.txt').write_text('\n'.join(lines)+'\n')
           PY
       - uses: actions/upload-artifact@v4
@@ -135,6 +152,7 @@ jobs:
           path: |
             dist/*.zip
             dist/*.tar.gz
+            dist/*.AppImage
             dist/SHA256SUMS.txt
             build-release/tests.xml
             *-startup.png

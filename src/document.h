@@ -1,4 +1,6 @@
 #pragma once
+#include "selection.h"
+#include "tones.h"
 #include <QColor>
 #include <QFont>
 #include <QImage>
@@ -16,12 +18,14 @@ struct Layer {
     qreal opacity = 1;
     int blend = 0;
     int brightness = 0, contrast = 0, saturation = 0, blur = 0;
+    ToneSettings tones;
     QString text;
     QFont font;
     QColor color = Qt::white;
     mutable QImage cache;
     mutable qint64 cacheKey = 0, maskKey = 0;
     mutable int cacheB = 999, cacheC = 999, cacheS = 999, cacheBlur = 999;
+    mutable ToneSettings cacheTones;
     QImage rendered() const;
 };
 struct State {
@@ -41,7 +45,7 @@ class Document : public QObject {
     State state;
     QString title = "Adsız", path;
     bool dirty = false;
-    QRect selection;
+    Selection selection;
     bool editingMask = false;
     QImage composite() const;
     static bool validSize(QSize size);
@@ -60,6 +64,7 @@ class Document : public QObject {
     bool rotate(bool clockwise, QString *error);
     bool flip(bool horizontal, QString *error = nullptr);
     void adjust(int b, int c, int s);
+    bool adjustTones(const ToneSettings &settings, QString *error = nullptr);
     bool addText(QString text, QFont font, QColor color, QPoint at, QString *error);
     bool editText(QString text, QFont font, QColor color, QString *error = nullptr);
     void beginEdit();

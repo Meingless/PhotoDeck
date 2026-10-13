@@ -16,6 +16,10 @@ else
     (cd "$photodeck_root/build-tests" && "$photodeck_qmake" "$photodeck_root/tests/tests.pro" && make -j4 && QT_QPA_PLATFORM=offscreen ./photodeck-tests)
     mkdir -p "$photodeck_root/build-audit"
     (cd "$photodeck_root/build-audit" && "$photodeck_qmake" "$photodeck_root/tests/features.pro" && make -j4 && QT_QPA_PLATFORM=offscreen ./photodeck-feature-audit)
+    for photodeck_suite in tones selections blending; do
+        mkdir -p "$photodeck_root/build-$photodeck_suite"
+        (cd "$photodeck_root/build-$photodeck_suite" && "$photodeck_qmake" "$photodeck_root/tests/$photodeck_suite.pro" && make -j4 && QT_QPA_PLATFORM=offscreen "./photodeck-$photodeck_suite-tests")
+    done
     mkdir -p "$photodeck_root/bin"
     cp "$photodeck_build/bin/photodeck" "$photodeck_root/bin/photodeck"
 fi

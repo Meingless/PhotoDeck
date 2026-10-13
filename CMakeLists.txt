@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.21)
-project(PhotoDeck VERSION 0.2.1 LANGUAGES CXX)
+project(PhotoDeck VERSION 0.3.0 LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_AUTOMOC ON)
@@ -12,6 +12,9 @@ if(MSVC)
 endif()
 find_package(Qt6 6.5 REQUIRED COMPONENTS Widgets)
 add_library(photodeck-core STATIC
+    src/tones.cpp src/tones.h src/tonedialog.cpp src/tonedialog.h
+    src/selection.cpp src/selection.h
+    src/blending.cpp src/blending.h
     src/document.cpp src/document.h
     src/canvas.cpp src/canvas.h
     src/mainwindow.cpp src/mainwindow.h
@@ -44,4 +47,16 @@ endif()
 
 if(BUILD_TESTING)
     file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/CTestCustom.cmake" "set(CTEST_CUSTOM_MAXIMUM_PASSED_TEST_OUTPUT_SIZE 100000)\n")
+    qt_add_executable(photodeck-tones-tests tests/test_tones.cpp resources.qrc)
+    target_link_libraries(photodeck-tones-tests PRIVATE photodeck-core Qt6::Test)
+    add_test(NAME photodeck-tones COMMAND photodeck-tones-tests)
+    set_tests_properties(photodeck-tones PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 60)
+    qt_add_executable(photodeck-selections-tests tests/test_selections.cpp resources.qrc)
+    target_link_libraries(photodeck-selections-tests PRIVATE photodeck-core Qt6::Test)
+    add_test(NAME photodeck-selections COMMAND photodeck-selections-tests)
+    set_tests_properties(photodeck-selections PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 60)
+    qt_add_executable(photodeck-blending-tests tests/test_blending.cpp resources.qrc)
+    target_link_libraries(photodeck-blending-tests PRIVATE photodeck-core Qt6::Test)
+    add_test(NAME photodeck-blending COMMAND photodeck-blending-tests)
+    set_tests_properties(photodeck-blending PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 60)
 endif()

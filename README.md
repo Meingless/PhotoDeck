@@ -1,10 +1,10 @@
-# PhotoDeck 0.2.1 Early Access
+# PhotoDeck 0.3.0 Early Access
 
 AI içermeyen, tamamen yerel, C++/Qt 6 ile geliştirilen fotoğraf ve katman düzenleyici. Linux, Windows ve macOS için ortak kaynak kullanır. Tarayıcı motoru, Python çalışma zamanı, bulut hesabı, abonelik veya ağ servisi gerekmez.
 
 ## Linux'ta kullan
 
-Hazır uygulama için `./launch.sh` çalıştırın. `./scripts/install-user.sh` uygulama menüsüne kısayol ekler. Bu oturumda derlenmiş `bin/photodeck`, x86_64 Linux ve Qt 6.11.2 sistem kütüphanelerini kullanır. Qt uygulamayla birlikte taşınmadığından küçük paketin boyutu sistem Qt bağımlılıklarını içermez. Eski Linux dağıtımlarında bu ikili uyumlu olmayabilir; kaynak kodu o sistemde derleyin.
+Hazır uygulama için `./launch.sh` çalıştırın. `./scripts/install-user.sh` uygulama menüsüne kısayol ekler. Yerel geliştirici derlemesi `bin/photodeck`, x86_64 Linux ve sistem Qt kütüphanelerini kullanır. Qt uygulamayla birlikte taşınmadığından küçük paketin boyutu sistem Qt bağımlılıklarını içermez. Dağıtım paketleri ve AppImage ise Qt'yi içerir.
 
 Sistem paketleri: CachyOS/Arch için `qt6-base qt6-imageformats`; Ubuntu/Debian'da kaynak derlemek için `build-essential cmake qt6-base-dev qt6-base-dev-tools qt6-image-formats-plugins`.
 
@@ -16,19 +16,25 @@ Varsayılan görünüm **Odak**. Çalışma alanı menüsünde Grafit, Kağıt, 
 
 - Aynı pencerede birden fazla belge, sürükleyerek dosya açma ve panodan görüntü katmanı ekleme.
 - Piksel ve düzenlenebilir metin katmanları; taşıma, adlandırma, çoğaltma, sıralama, görünürlük ve kilit.
-- Katman opaklığı; normal, çarp, ekran, kaplama, koyulaştır ve açıklaştır harmanlamaları.
+- Katman opaklığı ve 27 harmanlama modu: normal, çarp, ekran, kaplama, yakma/soldurma, ışık, fark, hue/saturation/color/luminosity dahil.
 - Beyazın gösterip siyahın gizlediği katman maskeleri. Seçimden maske oluşturma, maskeyi ters çevirme veya kaldırma.
 - Fırça, kalem, silgi, aynı katmandan klon damgası, bağlı alana boya kovası, iki renkli degrade, dikdörtgen, elips ve damlalık.
-- Dikdörtgen seçim, seçili piksel silme, kırpma, oranı koruyan yeniden boyutlandırma, 90° dönüş ve aynalama.
+- Dikdörtgen/eliptik seçim, serbest/çokgen kement ve toleranslı sihirli değnek. Yeni/ekle/çıkar/kesiştir; ters çevirme, kenar yumuşatma ve büyütme/küçültme. Seçim alfası çizim, silme, kopyalama ve maske oluşturma işlemlerinde korunur.
+- Seçili piksel silme, kırpma, oranı koruyan yeniden boyutlandırma, 90° dönüş ve aynalama.
 - Kaynak pikselleri koruyan parlaklık, kontrast, doygunluk, siyah beyaz ve kutu bulanıklığı.
+- Seviyeler (giriş/çıkış aralığı, gamma), pozlama, RGB ve ayrı kanal eğrileri; hue, vibrance, temel kanal renk dengesi, invert, threshold ve posterize. Ctrl+L ile canlı önizleme; iptal geri döner, kabul tek geri alma adımıdır.
 - Yerel fontlarla çok satırlı metin, boyut, kalınlık ve renk. Metin katmanına çift tıklayarak düzenleme.
-- PNG/JPEG/WebP/BMP içe ve dışa aktarma. WebP sistemin Qt görüntü eklentisine bağlıdır.
+- PNG/JPEG/WebP/BMP ve TIFF içe/dışa aktarma; GIF ilk kare içe aktarımı. WebP/TIFF sistemin Qt görüntü eklentisine bağlıdır. Çalışma belgesi RGB 8 bittir; yüksek bit derinlikli girdiler 8 bite dönüşür. Çok sayfalı TIFF/animasyonlu GIF yalnızca ilk görüntüyü açar.
 - Saydam PNG/WebP; JPEG saydam alanları beyaz arka plan üzerine birleştirir.
 - Orijinalleri değiştirmeyen toplu boyutlandırma, renk ayarı ve biçim dönüşümü. Çıktı adlarında `_photodeck` eki kullanılır; mevcut çıktılar için sayı eklenir.
 - Atomik `.pdeck` proje kaydı; katman, maske, metin, konum, harmanlama ve renk/filtre parametreleri korunur.
 - 45 saniyelik kurtarma kopyaları; sonraki açılışta kurtarma önerisi. Normal kapatmada kaydet/at/iptal seçimi.
 
 Kısayollar: V taşı, M seç, C kırp, B fırça, P kalem, E silgi, S klon, F kova, G degrade, T metin, U dikdörtgen, O elips, I damlalık, H el, X renk değiştir. Klon kaynağı Alt+tıklama. Kırpmayı Ctrl+Shift+X ile uygula. Ctrl/Cmd+Z geri alır; Ctrl/Cmd+0 sığdırır; Ctrl/Cmd+1 gerçek boyutu gösterir. Tekerlek yakınlaştırır, orta tuş tuvali kaydırır. Bazı özel kısayollar platformdan bağımsız Ctrl olarak tanımlanmıştır; macOS'ta standart Dosya/Düzenle kısayolları Cmd kullanır.
+
+Shift+M eliptik seçim, L kement, Shift+L çokgen kement, W sihirli değnek. Çokgen kement Enter/çift tıklamayla tamamlanır, Esc iptal eder. Seçim sırasında Shift ekler, Alt çıkarır, Shift+Alt kesiştirir; araç seçeneklerinden aynı modlar seçilebilir. Ctrl+Shift+I seçimi ters çevirir. Seçimler bu sürümde geçicidir; proje veya belge geçmişine kaydedilmez.
+
+0.3 projeleri `.pdeck` sürüm 2 olarak kaydedilir; eski sürüm 1 projeleri açılabilir. 0.2 uygulaması sürüm 2 dosyalarını açamaz; eski uygulamayla kullanacağınız orijinal projeleri ayrı saklayın.
 
 Açılıştaki Horizon kompozisyonu PhotoDeck için kodla çizilmiş özgün bir örnektir. `examples/Horizon.pdeck` dosyası dört ayrı düzenlenebilir katman içerir.
 
@@ -56,9 +62,20 @@ Windows'ta Qt MSVC veya MinGW kitiyle derleyin; `windeployqt` Qt DLL'lerini ve e
 
 Linux paketleme: `./scripts/package-linux.sh` sistem Qt kullanan küçük geliştirici paketini hazırlar. Erken erişim CI paketi `scripts/package-linux-portable.py` ile gerekli Qt kütüphanelerini, Wayland bileşenlerini ve uyumlu font yapılandırmasını içerir.
 
+Dağıtılmış Linux paketini tek dosyalık AppImage olarak hazırlamak için `scripts/package-appimage.py` kullanılır. Önce portable arşivi açın; ardından resmi `appimagetool` aracını (veya FUSE gerektirmeyen çıkarılmış `AppRun` dosyasını) belirtin:
+
+```sh
+python3 scripts/package-appimage.py \
+  --package dist/PhotoDeck-0.3.0-ea.1-linux-x86_64 \
+  --appimagetool /path/to/appimagetool \
+  --output dist/PhotoDeck-0.3.0-ea.1-x86_64.AppImage
+```
+
+AppImage'a çalıştırma izni verip açın: `chmod +x PhotoDeck-0.3.0-ea.1-x86_64.AppImage`. FUSE bulunmayan sistemlerde `APPIMAGE_EXTRACT_AND_RUN=1 ./PhotoDeck-0.3.0-ea.1-x86_64.AppImage` kullanılabilir. Windows taşınabilir paketindeki `PhotoDeck.exe`, yanındaki DLL ve eklenti klasörleriyle birlikte taşınmalıdır. macOS paketindeki `.app` tüm içeriğiyle korunmalıdır.
+
 ## Mevcut kapsam
 
-RGB 8 bit raster düzenleme. PSD/PSB katman uyumluluğu, RAW geliştirme, CMYK/ICC baskı yönetimi, eğriler/seviyeler, vektör pen/path/SVG export, gelişmiş seçimler, basınç duyarlı tablet fırçası, Photoshop action/brush/eklenti uyumluluğu ve video/3D henüz yoktur. Yeniden boyutlandırma, dönüş/aynalama ve piksel araçları metin katmanını rasterleştirir; undo ile geri dönülebilir. Bulanıklık katmanın tamamına uygulanır; yerel sonuç için maske kullanılır. Kırpma kaynak katmanların dışarı taşan piksellerini saklar, yalnızca tuval sınırını değiştirir. Katman kilidi doğrudan çizim/maske/metin/renk düzenlemesini engeller; tüm görüntü dönüşümleri bütün katmanları dönüştürür.
+RGB 8 bit raster düzenleme. PSD/PSB, RAW, CMYK/ICC, 16/32-bit, ayar katmanları, kanal mikseri/seçici renk, serbest dönüşüm, gruplar/akıllı nesneler, vektör yolları/SVG, edge-aware seçim düzeltme, tablet basıncı, Actions/ABR/eklenti uyumluluğu ve Timeline henüz yoktur. Eğriler parça parça doğrusal; renk dengesi tüm tonlara uygulanan kanal kaydırması; feather kutu yumuşatmasıdır. Photoshop'un gelişmiş seçenekleriyle eşdeğer oldukları iddia edilmez. Yeniden boyutlandırma, dönüş/aynalama ve piksel araçları metni rasterleştirir; undo ile geri dönülebilir. Bulanıklık katmanın tamamına uygulanır; yerel sonuç için maske kullanılır. Kırpma dışarı taşan kaynak pikselleri saklar. Katman kilidi doğrudan düzenlemeyi engeller; tüm görüntü dönüşümleri bütün katmanları dönüştürür.
 
 Bu ilk kullanılabilir sürüm Photoshop'un bütün profesyonel iş akışlarına eşdeğer değildir. Minimum donanım koşulları düşük özellikli gerçek cihazlarda ölçülmemiştir. Yerel ölçümler `artifacts/verification.md` dosyasında tutulur.
 
@@ -69,3 +86,5 @@ Bu ilk kullanılabilir sürüm Photoshop'un bütün profesyonel iş akışların
 Uygulama kodu ve örnek çizim MIT lisanslıdır. Qt ayrı LGPLv3/GPLv3 veya ticari lisanslı bağımlılıktır; Windows/macOS dağıtımlarında Qt lisans metinlerini ve kaynak erişimi bildirimini ekleyin.
 
 İşlev doğrulama kapsamı: [docs/FEATURE-AUDIT.md](docs/FEATURE-AUDIT.md).
+
+Tüm Photoshop alanlarının karşılaştırması ve açık farklar: [docs/PHOTOSHOP-COMPARISON.md](docs/PHOTOSHOP-COMPARISON.md). 0.3 bu farkların ilk kısmını kapatır; karşılaştırma çalışması devam eder.

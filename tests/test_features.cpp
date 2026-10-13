@@ -765,6 +765,7 @@ class FeatureAudit : public QObject {
                            }));
         QCOMPARE(d->state.size, QSize(160, 120));
         d->selection = {20, 20, 40, 30};
+        d->changed();
         command(w, "crop")->trigger();
         QCOMPARE(d->state.size, QSize(40, 30));
         command(w, "actual")->trigger();
@@ -857,7 +858,7 @@ class FeatureAudit : public QObject {
         QCOMPARE(w.currentDocument(), c);
         QMimeData mime;
         mime.setUrls({QUrl::fromLocalFile(path)});
-        QDragEnterEvent enter({30, 30}, Qt::CopyAction, &mime, Qt::LeftButton, Qt::NoModifier);
+        QDragEnterEvent enter(QPoint(30, 30), Qt::CopyAction, &mime, Qt::LeftButton, Qt::NoModifier);
         QApplication::sendEvent(&w, &enter);
         QVERIFY(enter.isAccepted());
         QDropEvent drop({30, 30}, Qt::CopyAction, &mime, Qt::LeftButton, Qt::NoModifier);

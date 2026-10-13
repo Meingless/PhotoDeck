@@ -245,7 +245,7 @@ QString UiSettings::styleSheet() const {
       QFrame#floatingTools,QFrame#floatingLayers {background:@panel;border:1px solid @line;border-radius:@radiuspx;}
       QLabel#sectionTitle {font-weight:600;color:@muted;} QLabel#layerDetails,QLabel#localLabel {color:@muted;} QLabel#brandLabel {font-size:18px;font-weight:600;}
       QListWidget {background:@panel;border:1px solid @line;border-radius:@radiuspx;padding:3px;outline:0;} QListWidget::item {padding:3px;border-radius:@radiuspx;} QListWidget::item:selected {background:@raised;color:@text;} QListWidget::item:hover {background:@raised;} QListWidget#history {color:@muted;}
-      QComboBox,QSpinBox,QLineEdit,QPlainTextEdit {background:@bg;border:1px solid @line;border-radius:@radiuspx;padding:5px;} QComboBox QAbstractItemView {background:@panel;selection-background-color:@raised;}
+      QComboBox,QSpinBox,QDoubleSpinBox,QLineEdit,QPlainTextEdit {background:@bg;border:1px solid @line;border-radius:@radiuspx;padding:5px;} QComboBox QAbstractItemView {background:@panel;selection-background-color:@raised;}
       QSlider::groove:horizontal {height:4px;background:@bg;border-radius:2px;} QSlider::sub-page:horizontal {background:@accent;border-radius:2px;} QSlider::handle:horizontal {background:@accent;width:12px;margin:-4px 0;border-radius:5px;}
       QPushButton {background:@raised;border:1px solid @line;border-radius:@radiuspx;padding:7px 10px;} QPushButton:hover {border-color:@accent;} QPushButton:default {border-color:@accent;} QPushButton:flat {border:0;background:transparent;}
       QScrollArea {background:@panel;border:0;} QStatusBar {background:@panel;border-top:1px solid @line;} QStatusBar::item {border:0;}

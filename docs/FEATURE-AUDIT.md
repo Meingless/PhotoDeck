@@ -1,6 +1,6 @@
 # PhotoDeck özellik doğrulama kapsamı
 
-Bu denetim, uygulamada sunulan özellikleri kapsar. PSD/RAW, CMYK/ICC, gelişmiş vektör yolları, tablet basıncı ve video/3D henüz uygulama özellikleri değildir.
+Bu denetim, uygulamada sunulan özellikleri kapsar. Henüz uygulanmayan Photoshop farkları [PHOTOSHOP-COMPARISON.md](PHOTOSHOP-COMPARISON.md) içinde açık hedefler olarak izlenir; testlerin geçmesi bunları kapatmaz.
 
 | Özellik | Davranış kanıtı |
 |---|---|
@@ -30,3 +30,5 @@ Bu denetim, uygulamada sunulan özellikleri kapsar. PSD/RAW, CMYK/ICC, gelişmi�
 Testler gerçek QWidget fare/klavye girdileri, modal pencereler, piksel karşılaştırmaları ve dosyaların yeniden okunmasıyla çalışır. Preset ve dosya varlığı tek başına davranış kanıtı kabul edilmez. CI, Linux/Windows/macOS Intel/macOS Apple Silicon hedeflerini ayrı derler; dağıtılan uygulamayı açar. Linux/Windows paketlerinde ek testler paketlenmiş Qt kütüphaneleriyle çalıştırılır. macOS'ta SDK işlev testleri ile dağıtılan `.app` açılışı ve imza doğrulaması ayrı kanıtlardır.
 
 Masaüstü bilgisayarların tüm sürümleri veya minimum donanım koşulları bu denetimle kanıtlanmaz. Gerçek cihaz uyumluluğu için ayrıca cihaz matrisi gerekir.
+
+0.3 ek denetimleri: `test_tones.cpp` (ton/renk, v1/v2 uyumu, hostile veri, cancel/undo, TIFF/GIF), `test_selections.cpp` (alfa seçimleri, tüm piksel araçları, kopya/maskeler, gerçek pointer/modifier/klavye girdileri), `test_blending.cpp` (27 mod, alfa/offset/opacity, deterministic dissolve, proje round-trip). Her suite CMake ve qmake ile derlenebilir. Linux/Windows CI paket testleri beş suite'i paketlenen Qt ile çalıştırır; AppImage ayrıca açılış PNG'si üretir.

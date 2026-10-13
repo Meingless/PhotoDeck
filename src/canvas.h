@@ -19,13 +19,22 @@ class Canvas : public QWidget {
         Rectangle,
         Ellipse,
         Picker,
-        Hand
+        Hand,
+        EllipseSelect,
+        Lasso,
+        PolygonLasso,
+        Wand,
+        ToolCount
     };
     explicit Canvas(Document *document, QWidget *parent = nullptr);
     Document *document;
     Tool tool = Move;
     QColor foreground = QColor("#59c9b4"), background = Qt::white;
     int brushSize = 32, hardness = 80, brushOpacity = 100;
+    Selection::Mode selectionMode = Selection::Replace;
+    int selectionTolerance = 24;
+    bool contiguousSelection = true;
+    bool isSelectionTool() const;
     qreal zoom = 1;
     bool showRulers = true;
     void setUiColors(QColor canvas, QColor panel, QColor text, QColor accent);
@@ -52,6 +61,7 @@ class Canvas : public QWidget {
     void wheelEvent(QWheelEvent *) override;
     void keyPressEvent(QKeyEvent *) override;
     void focusOutEvent(QFocusEvent *) override;
+    void mouseDoubleClickEvent(QMouseEvent *) override;
 
   private:
     QColor canvasColor = QColor("#171b20"), rulerColor = QColor("#22272e"),
@@ -59,6 +69,13 @@ class Canvas : public QWidget {
     QPointF pan, press, last, widgetLast, hover;
     QPoint initialOffset, cloneAnchor;
     bool dragging = false, panning = false, hasClone = false;
+    Selection selectionBefore;
+    Selection::Mode gestureSelectionMode = Selection::Replace;
+    QVector<QPointF> selectionPoints;
+    bool polygonActive = false;
+    void completePolygon();
+    void selectArea(const Selection &area);
+    Selection::Mode effectiveSelectionMode(Qt::KeyboardModifiers modifiers) const;
     QImage compositeCache, cloneSource;
     QRectF preview;
     bool cacheDirty = true, fitted = false;

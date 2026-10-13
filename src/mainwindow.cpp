@@ -1,4 +1,6 @@
 #include "mainwindow.h"
+#include "blending.h"
+#include "tonedialog.h"
 #include <QActionGroup>
 #include <QApplication>
 #include <QCheckBox>
@@ -64,6 +66,24 @@ QIcon toolIcon(int kind, QColor color = QColor("#d5dee5")) {
     case Canvas::Select:
         p.setPen(QPen(color, 1.65, Qt::DashLine));
         p.drawRect(5, 6, 18, 16);
+        break;
+    case Canvas::EllipseSelect:
+        p.setPen(QPen(color, 1.65, Qt::DashLine));
+        p.drawEllipse(5, 5, 18, 18);
+        break;
+    case Canvas::Lasso:
+        p.drawEllipse(4, 5, 18, 14);
+        p.drawPolyline(QPolygonF{{12, 17}, {9, 23}, {14, 24}});
+        break;
+    case Canvas::PolygonLasso:
+        p.setPen(QPen(color, 1.65, Qt::DashLine));
+        p.drawPolygon(QPolygonF{{5, 22}, {7, 7}, {21, 4}, {24, 20}});
+        break;
+    case Canvas::Wand:
+        p.drawLine(5, 23, 19, 9);
+        p.drawLine(20, 2, 20, 6);
+        p.drawLine(24, 6, 27, 6);
+        p.drawLine(15, 5, 12, 2);
         break;
     case Canvas::Crop:
         p.drawPolyline(QPolygonF{{8, 3}, {8, 20}, {25, 20}});
@@ -338,6 +358,42 @@ void MainWindow::buildMenus() {
             currentDocument()->changed();
         }
     }));
+    edit->addAction(action("invertSelection", "Seçimi ters çevir", QKeySequence("Ctrl+Shift+I"), [this] {
+        if (auto *d = currentDocument()) {
+            d->selection = d->selection.inverted(d->state.size);
+            d->changed();
+        }
+    }));
+    edit->addAction(action("featherSelection", "Seçim kenarlarını yumuşat…", {}, [this] {
+        if (auto *d = currentDocument()) {
+            if (d->selection.isEmpty())
+                return;
+            bool ok = false;
+            int radius =
+                QInputDialog::getInt(this, "Seçim yumuşatma", "Yarıçap (px)", 4, 1, 128, 1, &ok);
+            if (ok) {
+                d->selection = d->selection.feathered(radius, d->state.size);
+                d->changed();
+            }
+        }
+    }));
+    for (const bool grow : {true, false}) {
+        edit->addAction(action(
+            grow ? "growSelection" : "shrinkSelection", grow ? "Seçimi büyüt…" : "Seçimi küçült…", {},
+            [this, grow] {
+                if (auto *d = currentDocument()) {
+                    if (d->selection.isEmpty())
+                        return;
+                    bool ok = false;
+                    int radius = QInputDialog::getInt(this, grow ? "Seçimi büyüt" : "Seçimi küçült",
+                                                      "Piksel", 2, 1, 128, 1, &ok);
+                    if (ok) {
+                        d->selection = d->selection.grown(grow ? radius : -radius, d->state.size);
+                        d->changed();
+                    }
+                }
+            }));
+    }
     edit->addAction(
         action("deleteSelection", "Seçili pikselleri sil", QKeySequence(Qt::Key_Delete), [this] {
             if (currentCanvas())
@@ -345,9 +401,9 @@ void MainWindow::buildMenus() {
         }));
     edit->addAction(action("copy", "Birleşik görüntüyü kopyala", QKeySequence::Copy, [this] {
         if (auto *d = currentDocument()) {
-            QImage im = d->composite();
-            if (!d->selection.isEmpty())
-                im = im.copy(d->selection);
+            QImage im = d->selection.copyFrom(d->composite());
+            if (im.isNull())
+                return;
             QApplication::clipboard()->setImage(im);
         }
     }));
@@ -378,7 +434,7 @@ void MainWindow::buildMenus() {
     image->addAction(action("crop", "Seçime göre kırp", QKeySequence("Ctrl+Shift+X"), [this] {
         if (auto *d = currentDocument()) {
             QString err;
-            if (!d->crop(d->selection, &err))
+            if (!d->crop(d->selection.bounds(), &err))
                 error(err);
             else
                 currentCanvas()->fit();
@@ -418,6 +474,20 @@ void MainWindow::buildMenus() {
         }
     }));
     auto *filters = menuBar()->addMenu("&Filtre");
+    filters->addAction(action("tones", "Seviyeler, eğriler ve renk…", QKeySequence("Ctrl+L"), [this] {
+        auto *d = currentDocument();
+        if (!d || d->state.layers[d->state.active].locked)
+            return;
+        d->beginEdit();
+        ToneDialog dialog(d->state.layers[d->state.active].tones, this);
+        connect(&dialog, &ToneDialog::settingsChanged, d,
+                [d](const ToneSettings &value) { d->adjustTones(value); });
+        if (dialog.exec() == QDialog::Accepted) {
+            d->adjustTones(dialog.settings());
+            d->commit("Seviyeler, eğriler ve renk");
+        } else
+            d->cancelEdit();
+    }));
     filters->addAction(action("blur", "Bulanıklık…", {}, [this] {
         if (auto *d = currentDocument()) {
             auto &l = d->state.layers[d->state.active];
@@ -451,6 +521,13 @@ void MainWindow::buildMenus() {
             QString e;
             if (!currentDocument()->duplicate(&e))
                 error(e);
+        }
+    }));
+    layer->addAction(action("selectLayerPixels", "Katman alfasını seç", {}, [this] {
+        if (auto *d = currentDocument()) {
+            const auto &l = d->state.layers[d->state.active];
+            d->selection = Selection::fromAlpha(l.pixels, l.offset, d->state.size);
+            d->changed();
         }
     }));
     layer->addAction(action("rename", "Yeniden adlandır…", {}, [this] { renameLayer(); }));
@@ -532,7 +609,7 @@ void MainWindow::buildMenus() {
             "gerekmez.");
     }));
     help->addAction(action("about", "PhotoDeck hakkında", {}, [this] {
-        QMessageBox::about(this, "PhotoDeck 0.2.1 · Erken erişim",
+        QMessageBox::about(this, "PhotoDeck 0.3.0 · Erken erişim",
                            "<h2>PhotoDeck</h2><p>Hafif, yerel fotoğraf ve katman düzenleyici.</p><p>Qt "
                            "6 / C++ · Linux / Windows / macOS</p><p>AI, reklam, telemetri ve abonelik "
                            "içermez.</p><p>Bu sürüm RGB raster düzenlemeye odaklanır. PSD/RAW, CMYK/ICC "
@@ -592,6 +669,36 @@ void MainWindow::buildTools() {
     options->addWidget(brushOpacityInput);
     options->addSeparator();
     options->addAction(actions["crop"]);
+    auto *selectionMode = new QComboBox;
+    selectionModeInput = selectionMode;
+    selectionMode->setObjectName("selectionMode");
+    selectionMode->addItems({"Yeni seçim", "Seçime ekle", "Seçimden çıkar", "Seçimle kesiştir"});
+    options->addWidget(selectionMode);
+    auto *tolerance = new QSpinBox;
+    tolerance->setObjectName("selectionTolerance");
+    selectionToleranceInput = tolerance;
+    tolerance->setRange(0, 255);
+    tolerance->setValue(24);
+    tolerance->setPrefix("Tolerans: ");
+    options->addWidget(tolerance);
+    auto *contiguous = new QCheckBox("Bağlı alan");
+    contiguous->setObjectName("contiguousSelection");
+    contiguousSelectionInput = contiguous;
+    contiguous->setChecked(true);
+    options->addWidget(contiguous);
+    auto syncSelection = [this, selectionMode, tolerance, contiguous] {
+        if (refreshing)
+            return;
+        if (auto *c = currentCanvas()) {
+            c->selectionMode = Selection::Mode(selectionMode->currentIndex());
+            c->selectionTolerance = tolerance->value();
+            c->contiguousSelection = contiguous->isChecked();
+        }
+    };
+    connect(selectionMode, &QComboBox::currentIndexChanged, this,
+            [syncSelection](int) { syncSelection(); });
+    connect(tolerance, &QSpinBox::valueChanged, this, [syncSelection](int) { syncSelection(); });
+    connect(contiguous, &QCheckBox::toggled, this, [syncSelection](bool) { syncSelection(); });
     auto syncBrush = [this] {
         if (auto *c = currentCanvas()) {
             c->brushSize = sizeInput->value();
@@ -610,10 +717,17 @@ void MainWindow::buildTools() {
     tools->setOrientation(Qt::Vertical);
     auto *group = new QActionGroup(this);
     group->setExclusive(true);
-    QStringList names = {
-        "Taşı",        "Dikdörtgen seçim", "Kırp",  "Fırça",      "Kalem", "Silgi",    "Klon damgası",
-        "Boya kovası", "Degrade",          "Metin", "Dikdörtgen", "Elips", "Damlalık", "El"};
-    QStringList keys = {"V", "M", "C", "B", "P", "E", "S", "F", "G", "T", "U", "O", "I", "H"};
+    QStringList names = {"Taşı",          "Dikdörtgen seçim",
+                         "Kırp",          "Fırça",
+                         "Kalem",         "Silgi",
+                         "Klon damgası",  "Boya kovası",
+                         "Degrade",       "Metin",
+                         "Dikdörtgen",    "Elips",
+                         "Damlalık",      "El",
+                         "Eliptik seçim", "Serbest kement",
+                         "Çokgen kement", "Sihirli değnek"};
+    QStringList keys = {"V", "M", "C", "B", "P", "E",       "S", "F",       "G",
+                        "T", "U", "O", "I", "H", "Shift+M", "L", "Shift+L", "W"};
     for (int i = 0; i < names.size(); ++i) {
         auto *a = action("tool" + QString::number(i), names[i] + " (" + keys[i] + ")",
                          QKeySequence(keys[i]), [this, i, names] {
@@ -700,10 +814,15 @@ void MainWindow::buildInspector() {
         if (auto *d = currentDocument()) {
             d->beginEdit();
             d->adjust(0, 0, 0);
+            d->adjustTones(ToneSettings{});
             d->commit("Renk ayarları sıfırlandı");
         }
     });
     layout->addWidget(reset);
+    auto *advancedTones = new QPushButton("Seviyeler / eğriler / renk…");
+    advancedTones->setObjectName("advancedTones");
+    connect(advancedTones, &QPushButton::clicked, actions["tones"], &QAction::trigger);
+    layout->addWidget(advancedTones);
     colorDock = createDock("Renk & ton", "colorDock", panel);
     addDockWidget(Qt::RightDockWidgetArea, colorDock);
     panel = new QWidget;
@@ -715,7 +834,7 @@ void MainWindow::buildInspector() {
     heading2->setObjectName("sectionTitle");
     layout->addWidget(heading2);
     blend = new QComboBox;
-    blend->addItems({"Normal", "Çarp", "Ekran", "Kaplama", "Koyulaştır", "Açıklaştır"});
+    blend->addItems(Blending::names());
     blend->setObjectName("blendMode");
     layout->addWidget(blend);
     opacity = slider();
@@ -911,6 +1030,12 @@ void MainWindow::updateActionAvailability() {
             it.value()->setEnabled(present);
 
     actions["undo"]->setEnabled(present && d->canUndo());
+    actions["invertSelection"]->setEnabled(present && !d->selection.isEmpty());
+    actions["featherSelection"]->setEnabled(present && !d->selection.isEmpty());
+    actions["growSelection"]->setEnabled(present && !d->selection.isEmpty());
+    actions["shrinkSelection"]->setEnabled(present && !d->selection.isEmpty());
+    actions["crop"]->setEnabled(present && d->selection.hasPixels());
+    actions["tones"]->setEnabled(present && !d->state.layers[d->state.active].locked);
     actions["redo"]->setEnabled(present && d->canRedo());
     actions["deleteLayer"]->setEnabled(present && d->state.layers.size() > 1);
     actions["editText"]->setEnabled(present && !d->state.layers[d->state.active].text.isEmpty() &&
@@ -998,6 +1123,16 @@ void MainWindow::refresh() {
     sizeInput->setValue(c->brushSize);
     hardnessInput->setValue(c->hardness);
     brushOpacityInput->setValue(c->brushOpacity);
+    {
+        QSignalBlocker modeBlock(selectionModeInput), toleranceBlock(selectionToleranceInput),
+            contiguousBlock(contiguousSelectionInput);
+        selectionModeInput->setCurrentIndex(c->selectionMode);
+        selectionToleranceInput->setValue(c->selectionTolerance);
+        contiguousSelectionInput->setChecked(c->contiguousSelection);
+    }
+    selectionModeInput->setVisible(c->isSelectionTool());
+    selectionToleranceInput->setVisible(c->tool == Canvas::Wand);
+    contiguousSelectionInput->setVisible(c->tool == Canvas::Wand);
     actions["tool" + QString::number(c->tool)]->setChecked(true);
     if (filmDock && !filmDock->isHidden()) {
         QSignalBlocker block(filmstrip);
@@ -1065,17 +1200,19 @@ void MainWindow::newDocument() {
     addDocument(d);
 }
 void MainWindow::chooseOpen() {
-    QStringList files = QFileDialog::getOpenFileNames(
-        this, "Görüntü veya proje aç", {},
-        "Görüntü / PhotoDeck (*.pdeck *.png *.jpg *.jpeg *.webp *.bmp);;Tüm dosyalar (*)");
+    QStringList files =
+        QFileDialog::getOpenFileNames(this, "Görüntü veya proje aç", {},
+                                      "Görüntü / PhotoDeck (*.pdeck *.png *.jpg *.jpeg *.webp *.bmp "
+                                      "*.gif *.tif *.tiff);;Tüm dosyalar (*)");
     for (const auto &file : files)
         openFile(file);
 }
 void MainWindow::importLayer() {
     if (!currentDocument())
         return;
-    QString file = QFileDialog::getOpenFileName(this, "Katman olarak ekle", {},
-                                                "Görüntüler (*.png *.jpg *.jpeg *.webp *.bmp)");
+    QString file =
+        QFileDialog::getOpenFileName(this, "Katman olarak ekle", {},
+                                     "Görüntüler (*.png *.jpg *.jpeg *.webp *.bmp *.gif *.tif *.tiff)");
     if (file.isEmpty())
         return;
     QString e;
@@ -1121,6 +1258,8 @@ void MainWindow::exportDocument() {
     if (QImageWriter::supportedImageFormats().contains("webp"))
         filters += ";;WebP · saydam (*.webp)";
     filters += ";;BMP (*.bmp)";
+    if (QImageWriter::supportedImageFormats().contains("tiff"))
+        filters += ";;TIFF · RGB 8 bit (*.tiff)";
     QString selected;
     QString file = chooseSaveTarget(this, "Görüntüyü dışa aktar",
                                     QFileInfo(d->title).completeBaseName() + ".png", filters, &selected);
@@ -1365,8 +1504,9 @@ void MainWindow::recover() {
     }
 }
 void MainWindow::batch() {
-    QStringList files = QFileDialog::getOpenFileNames(this, "Toplu işlem için görüntüleri seç", {},
-                                                      "Görüntüler (*.png *.jpg *.jpeg *.webp *.bmp)");
+    QStringList files =
+        QFileDialog::getOpenFileNames(this, "Toplu işlem için görüntüleri seç", {},
+                                      "Görüntüler (*.png *.jpg *.jpeg *.webp *.bmp *.gif *.tif *.tiff)");
     if (files.isEmpty())
         return;
     QString dir = QFileDialog::getExistingDirectory(this, "Çıktı klasörünü seç");
@@ -1380,6 +1520,8 @@ void MainWindow::batch() {
     format->addItems({"png", "jpg"});
     if (QImageWriter::supportedImageFormats().contains("webp"))
         format->addItem("webp");
+    if (QImageWriter::supportedImageFormats().contains("tiff"))
+        format->addItem("tiff");
     auto *edge = new QSpinBox;
     edge->setRange(0, 16384);
     edge->setValue(1920);
@@ -1773,7 +1915,7 @@ void MainWindow::applyAppearanceColors() {
     auto p = appearance.resolved();
     histogram->setUiPalette(appearance.palette());
     brandLabel->setText("  <b>Photo<span style='color:" + p.accent.name() + "'>Deck</span></b>  ");
-    for (int i = 0; i < 14; ++i)
+    for (int i = 0; i < Canvas::ToolCount; ++i)
         actions["tool" + QString::number(i)]->setIcon(toolIcon(i, p.text));
     int layerIconIndex = 0;
     for (const auto &id :

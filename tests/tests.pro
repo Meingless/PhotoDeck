@@ -11,3 +11,9 @@ msvc:QMAKE_CXXFLAGS += /utf-8
 
 SOURCES += ../src/appearance.cpp
 HEADERS += ../src/appearance.h
+SOURCES += ../src/tones.cpp ../src/tonedialog.cpp
+HEADERS += ../src/tones.h ../src/tonedialog.h
+SOURCES += ../src/selection.cpp
+HEADERS += ../src/selection.h
+SOURCES += ../src/blending.cpp
+HEADERS += ../src/blending.h

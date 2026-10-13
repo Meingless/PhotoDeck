@@ -1,4 +1,5 @@
 #include "canvas.h"
+#include <QBitArray>
 #include <QFocusEvent>
 #include <QKeyEvent>
 #include <QMouseEvent>
@@ -29,6 +30,39 @@ void Canvas::setTool(Tool value) {
     tool = value;
     updateCursor();
     update();
+}
+bool Canvas::isSelectionTool() const {
+    return tool == Select || tool == EllipseSelect || tool == Lasso || tool == PolygonLasso ||
+           tool == Wand;
+}
+Selection::Mode Canvas::effectiveSelectionMode(Qt::KeyboardModifiers modifiers) const {
+    const bool shift = modifiers & Qt::ShiftModifier, alt = modifiers & Qt::AltModifier;
+    return shift && alt ? Selection::Intersect
+           : shift      ? Selection::Add
+           : alt        ? Selection::Subtract
+                        : selectionMode;
+}
+void Canvas::selectArea(const Selection &area) {
+    document->selection = selectionBefore.combined(area, gestureSelectionMode, document->state.size);
+    selectionBefore = {};
+    selectionPoints.clear();
+    document->changed();
+}
+void Canvas::completePolygon() {
+    if (!polygonActive)
+        return;
+    polygonActive = false;
+    if (selectionPoints.size() >= 3) {
+        QPainterPath path;
+        path.addPolygon(QPolygonF(selectionPoints));
+        path.closeSubpath();
+        selectArea(Selection::fromPath(path, document->state.size));
+    } else {
+        document->selection = selectionBefore;
+        selectionBefore = {};
+        selectionPoints.clear();
+        update();
+    }
 }
 void Canvas::updateCursor() {
     setCursor(tool == Hand ? Qt::OpenHandCursor : (tool == Move ? Qt::ArrowCursor : Qt::CrossCursor));
@@ -92,33 +126,42 @@ void Canvas::paintEvent(QPaintEvent *) {
     p.save();
     p.translate(pan);
     p.scale(zoom, zoom);
-    auto selection = document->selection;
-    if (dragging && (tool == Select || tool == Crop))
-        selection =
-            preview.normalized().toAlignedRect().intersected(QRect(QPoint(), document->state.size));
-    if (!selection.isEmpty()) {
+    const QRect selection = document->selection.bounds();
+    if (document->selection.hasPixels()) {
+        QImage outline = document->selection.boundaryImage();
+        if (!outline.isNull())
+            p.drawImage(selection.topLeft(), outline);
+        else {
+            p.setBrush(Qt::NoBrush);
+            p.setPen(QPen(Qt::black, 1 / zoom));
+            p.drawRect(selection);
+            p.setPen(QPen(Qt::white, 1 / zoom, Qt::DashLine));
+            p.drawRect(selection);
+        }
+    }
+    if (dragging && (tool == Select || tool == Crop || tool == EllipseSelect)) {
+        QRectF area = preview.normalized();
+        p.setBrush(Qt::NoBrush);
+        p.setPen(QPen(Qt::white, 1 / zoom, Qt::DashLine));
+        if (tool == EllipseSelect)
+            p.drawEllipse(area);
+        else
+            p.drawRect(area);
         if (tool == Crop) {
             QPainterPath shade;
             shade.setFillRule(Qt::OddEvenFill);
             shade.addRect(QRectF(QPoint(), document->state.size));
-            shade.addRect(selection);
+            shade.addRect(area);
             p.fillPath(shade, QColor(0, 0, 0, 145));
         }
-        p.setPen(QPen(Qt::black, 1 / zoom));
+    }
+    if ((dragging && tool == Lasso) || polygonActive) {
         p.setBrush(Qt::NoBrush);
-        p.drawRect(selection);
-        QPen pen(Qt::white, 1 / zoom, Qt::DashLine);
-        p.setPen(pen);
-        p.drawRect(selection);
-        if (tool == Crop) {
-            p.setPen(QPen(QColor(255, 255, 255, 90), 1 / zoom));
-            for (int i = 1; i < 3; ++i) {
-                p.drawLine(QPointF(selection.left() + selection.width() * i / 3.0, selection.top()),
-                           QPointF(selection.left() + selection.width() * i / 3.0, selection.bottom()));
-                p.drawLine(QPointF(selection.left(), selection.top() + selection.height() * i / 3.0),
-                           QPointF(selection.right(), selection.top() + selection.height() * i / 3.0));
-            }
-        }
+        p.setPen(QPen(Qt::white, 1 / zoom, Qt::DashLine));
+        if (selectionPoints.size() > 1)
+            p.drawPolyline(QPolygonF(selectionPoints));
+        if (!selectionPoints.isEmpty())
+            p.drawLine(selectionPoints.last(), hover);
     }
     if (dragging && (tool == Rectangle || tool == Ellipse)) {
         p.setBrush(foreground);
@@ -183,51 +226,57 @@ QImage &Canvas::target() {
 void Canvas::stroke(QPointF from, QPointF to) {
     auto &l = document->state.layers[document->state.active];
     QPointF a = from - l.offset, b = to - l.offset;
-    QPainter p(&target());
-    p.setRenderHint(QPainter::Antialiasing, tool != Pencil);
-    if (!document->selection.isEmpty())
-        p.setClipRect(document->selection.translated(-l.offset));
-    p.setOpacity(brushOpacity / 100.0);
-    QColor color = foreground;
-    if (document->editingMask) {
-        int gray = tool == Eraser ? 0 : qGray(color.rgb());
-        color = QColor(gray, gray, gray);
-    } else if (tool == Eraser) {
-        color = Qt::white;
-        p.setCompositionMode(QPainter::CompositionMode_DestinationOut);
-    }
-    qreal distance = QLineF(a, b).length();
-    int count = distance < .001 ? 0 : qMax(1, qCeil(distance / qMax(1.0, brushSize * .16)));
-    for (int i = count ? 1 : 0; i <= count; ++i) {
-        QPointF at = count ? a + (b - a) * (qreal(i) / count) : a;
-        qreal radius = brushSize / 2.0;
-        if (tool == Clone) {
-            QPointF source = QPointF(cloneAnchor - l.offset) + (at - (press - l.offset));
-            QPainterPath clip;
-            clip.addEllipse(at, radius, radius);
-            p.save();
-            p.setClipPath(clip, Qt::IntersectClip);
-            p.drawImage(at - QPointF(radius, radius), cloneSource,
-                        QRectF(source - QPointF(radius, radius), QSizeF(brushSize, brushSize)));
-            p.restore();
-        } else {
-            p.setPen(Qt::NoPen);
-            if (hardness >= 100 || tool == Pencil) {
-                p.setBrush(color);
-            } else {
-                QRadialGradient g(at, radius);
-                g.setColorAt(0, color);
-                g.setColorAt(hardness / 100.0, color);
-                QColor edge = color;
-                edge.setAlpha(0);
-                g.setColorAt(1, edge);
-                p.setBrush(g);
+    QRect affected = QRectF(a, b)
+                         .normalized()
+                         .adjusted(-brushSize / 2.0 - 2, -brushSize / 2.0 - 2, brushSize / 2.0 + 2,
+                                   brushSize / 2.0 + 2)
+                         .toAlignedRect();
+    bool edited = document->selection.paint(
+        target(), l.offset,
+        [&](QPainter &p) {
+            p.setRenderHint(QPainter::Antialiasing, tool != Pencil);
+            p.setOpacity(brushOpacity / 100.0);
+            QColor color = foreground;
+            if (document->editingMask) {
+                int gray = tool == Eraser ? 0 : qGray(color.rgb());
+                color = QColor(gray, gray, gray);
+            } else if (tool == Eraser) {
+                color = Qt::white;
+                p.setCompositionMode(QPainter::CompositionMode_DestinationOut);
             }
-            p.drawEllipse(at, radius, radius);
-        }
-    }
-    p.end();
-    if (!document->editingMask)
+            qreal distance = QLineF(a, b).length();
+            int count = distance < .001 ? 0 : qMax(1, qCeil(distance / qMax(1.0, brushSize * .16)));
+            for (int i = count ? 1 : 0; i <= count; ++i) {
+                QPointF at = count ? a + (b - a) * (qreal(i) / count) : a;
+                qreal radius = brushSize / 2.0;
+                if (tool == Clone) {
+                    QPointF source = QPointF(cloneAnchor - l.offset) + (at - (press - l.offset));
+                    QPainterPath clip;
+                    clip.addEllipse(at, radius, radius);
+                    p.save();
+                    p.setClipPath(clip, Qt::IntersectClip);
+                    p.drawImage(at - QPointF(radius, radius), cloneSource,
+                                QRectF(source - QPointF(radius, radius), QSizeF(brushSize, brushSize)));
+                    p.restore();
+                } else {
+                    p.setPen(Qt::NoPen);
+                    if (hardness >= 100 || tool == Pencil) {
+                        p.setBrush(color);
+                    } else {
+                        QRadialGradient g(at, radius);
+                        g.setColorAt(0, color);
+                        g.setColorAt(hardness / 100.0, color);
+                        QColor edge = color;
+                        edge.setAlpha(0);
+                        g.setColorAt(1, edge);
+                        p.setBrush(g);
+                    }
+                    p.drawEllipse(at, radius, radius);
+                }
+            }
+        },
+        affected);
+    if (edited && !document->editingMask)
         l.text.clear();
     document->changed();
 }
@@ -237,8 +286,8 @@ void Canvas::fillAt(QPoint docPoint) {
     QImage &im = target();
     QRect bounds = im.rect();
     if (!document->selection.isEmpty())
-        bounds = bounds.intersected(document->selection.translated(-l.offset));
-    if (!bounds.contains(seed))
+        bounds = bounds.intersected(document->selection.bounds().translated(-l.offset));
+    if (!bounds.contains(seed) || document->selection.valueAt(docPoint) == 0)
         return;
     QRgb old = im.pixel(seed);
     QColor color = foreground;
@@ -257,25 +306,34 @@ void Canvas::fillAt(QPoint docPoint) {
     if (old == replacement)
         return;
     document->beginEdit();
+    QBitArray visited(im.width() * im.height());
+    bool edited = false;
+    auto available = [&](int x, int y) {
+        return !visited.testBit(y * im.width() + x) && im.pixel(x, y) == old &&
+               document->selection.valueAt(QPoint(x, y) + l.offset) > 0;
+    };
     QVector<QPoint> pending{seed};
     while (!pending.isEmpty()) {
         QPoint at = pending.takeLast();
         auto *row = reinterpret_cast<QRgb *>(im.scanLine(at.y()));
-        if (row[at.x()] != old)
+        if (!available(at.x(), at.y()))
             continue;
         int left = at.x(), right = at.x();
-        while (left > bounds.left() && row[left - 1] == old)
+        while (left > bounds.left() && available(left - 1, at.y()))
             --left;
-        while (right < bounds.right() && row[right + 1] == old)
+        while (right < bounds.right() && available(right + 1, at.y()))
             ++right;
-        for (int x = left; x <= right; ++x)
-            row[x] = replacement;
+        for (int x = left; x <= right; ++x) {
+            visited.setBit(at.y() * im.width() + x);
+            QRgb mixed = document->selection.mixPixel(row[x], replacement, QPoint(x, at.y()) + l.offset);
+            edited |= mixed != row[x];
+            row[x] = mixed;
+        }
         for (int y : {at.y() - 1, at.y() + 1})
             if (y >= bounds.top() && y <= bounds.bottom()) {
-                const auto *next = reinterpret_cast<const QRgb *>(im.constScanLine(y));
                 bool span = false;
                 for (int x = left; x <= right; ++x) {
-                    if (next[x] == old) {
+                    if (available(x, y)) {
                         if (!span)
                             pending.append({x, y});
                         span = true;
@@ -284,7 +342,7 @@ void Canvas::fillAt(QPoint docPoint) {
                 }
             }
     }
-    if (!document->editingMask)
+    if (edited && !document->editingMask)
         l.text.clear();
     document->commit("Boya kovası");
 }
@@ -317,10 +375,40 @@ void Canvas::mousePressEvent(QMouseEvent *e) {
         update();
         return;
     }
-    if (tool == Select || tool == Crop) {
+    if (tool == PolygonLasso) {
+        if (!polygonActive) {
+            polygonActive = true;
+            selectionBefore = document->selection;
+            gestureSelectionMode = effectiveSelectionMode(e->modifiers());
+            selectionPoints.clear();
+        }
+        if (selectionPoints.size() < 16384 &&
+            (selectionPoints.isEmpty() || QLineF(selectionPoints.last(), hover).length() > .5))
+            selectionPoints.append(hover);
+        emit toolHint(
+            "Çokgen kement: köşelere tıklayın; Enter veya çift tıklama bitirir, Esc iptal eder.");
+        update();
+        return;
+    }
+    if (tool == Wand) {
+        selectionBefore = document->selection;
+        gestureSelectionMode = effectiveSelectionMode(e->modifiers());
+        const QImage image = document->composite();
+        QPoint seed(qFloor(hover.x()), qFloor(hover.y()));
+        if (!image.rect().contains(seed)) {
+            selectionBefore = {};
+            return;
+        }
+        selectArea(Selection::colorRange(image, seed, selectionTolerance, contiguousSelection));
+        return;
+    }
+    if (isSelectionTool() || tool == Crop) {
         dragging = true;
         preview = QRectF(press, QSizeF());
-        document->selection = {};
+        selectionBefore = document->selection;
+        gestureSelectionMode =
+            tool == Crop ? Selection::Replace : effectiveSelectionMode(e->modifiers());
+        selectionPoints = {press};
         update();
         return;
     }
@@ -372,6 +460,10 @@ void Canvas::advanceGesture(QPointF position, Qt::KeyboardModifiers modifiers) {
     } else if (tool == Brush || tool == Pencil || tool == Eraser || tool == Clone) {
         if (QLineF(last, hover).length() > .001)
             stroke(last, hover);
+    } else if (tool == Lasso) {
+        if (selectionPoints.size() < 16384 && QLineF(selectionPoints.last(), hover).length() > .5)
+            selectionPoints.append(hover);
+        update();
     } else {
         preview = QRectF(press, hover);
         if ((modifiers & Qt::ShiftModifier) && (tool == Rectangle || tool == Ellipse)) {
@@ -389,50 +481,50 @@ void Canvas::drawShape() {
     if (r.width() < 1 || r.height() < 1)
         return;
     auto &l = document->state.layers[document->state.active];
-    QPainter p(&target());
-    p.setRenderHint(QPainter::Antialiasing);
-    if (!document->selection.isEmpty())
-        p.setClipRect(document->selection.translated(-l.offset));
-    QColor c = foreground;
-    if (document->editingMask) {
-        int g = qGray(c.rgb());
-        c = {g, g, g};
-    }
-    p.setOpacity(brushOpacity / 100.0);
-    p.setBrush(c);
-    p.setPen(Qt::NoPen);
-    r.translate(-l.offset);
-    if (tool == Rectangle)
-        p.drawRect(r);
-    else
-        p.drawEllipse(r);
-    p.end();
-    if (!document->editingMask)
+    bool edited = document->selection.paint(target(), l.offset, [&](QPainter &p) {
+        p.setRenderHint(QPainter::Antialiasing);
+        QColor c = foreground;
+        if (document->editingMask) {
+            int g = qGray(c.rgb());
+            c = {g, g, g};
+        }
+        p.setOpacity(brushOpacity / 100.0);
+        p.setBrush(c);
+        p.setPen(Qt::NoPen);
+        r.translate(-l.offset);
+        if (tool == Rectangle)
+            p.drawRect(r);
+        else
+            p.drawEllipse(r);
+    });
+    if (edited && !document->editingMask)
         l.text.clear();
 }
 void Canvas::applyGradient() {
     if (QLineF(press, last).length() < 1)
         return;
     auto &l = document->state.layers[document->state.active];
-    QPainter p(&target());
-    if (!document->selection.isEmpty())
-        p.setClipRect(document->selection.translated(-l.offset));
-    QLinearGradient g(press - l.offset, last - l.offset);
-    g.setColorAt(0, foreground);
-    g.setColorAt(1, background);
-    if (document->editingMask) {
-        g.setColorAt(0,
-                     QColor(qGray(foreground.rgb()), qGray(foreground.rgb()), qGray(foreground.rgb())));
-        g.setColorAt(1,
-                     QColor(qGray(background.rgb()), qGray(background.rgb()), qGray(background.rgb())));
-    }
-    p.setOpacity(brushOpacity / 100.0);
-    p.fillRect(target().rect(), g);
-    p.end();
-    if (!document->editingMask)
+    bool edited = document->selection.paint(target(), l.offset, [&](QPainter &p) {
+        QLinearGradient g(press - l.offset, last - l.offset);
+        g.setColorAt(0, foreground);
+        g.setColorAt(1, background);
+        if (document->editingMask) {
+            g.setColorAt(
+                0, QColor(qGray(foreground.rgb()), qGray(foreground.rgb()), qGray(foreground.rgb())));
+            g.setColorAt(
+                1, QColor(qGray(background.rgb()), qGray(background.rgb()), qGray(background.rgb())));
+        }
+        p.setOpacity(brushOpacity / 100.0);
+        p.fillRect(target().rect(), g);
+    });
+    if (edited && !document->editingMask)
         l.text.clear();
 }
 bool Canvas::finishPendingGesture() {
+    if (polygonActive) {
+        completePolygon();
+        return true;
+    }
     if (panning) {
         panning = false;
         updateCursor();
@@ -440,10 +532,27 @@ bool Canvas::finishPendingGesture() {
     if (!dragging)
         return false;
     dragging = false;
-    if (tool == Select || tool == Crop) {
-        document->selection =
-            preview.normalized().toAlignedRect().intersected(QRect(QPoint(), document->state.size));
-        document->changed();
+    if (isSelectionTool() || tool == Crop) {
+        if (tool == Lasso) {
+            if (selectionPoints.size() >= 3) {
+                QPainterPath path;
+                path.addPolygon(QPolygonF(selectionPoints));
+                path.closeSubpath();
+                selectArea(Selection::fromPath(path, document->state.size));
+            } else {
+                document->selection = selectionBefore;
+                selectionBefore = {};
+                selectionPoints.clear();
+                document->changed();
+            }
+        } else if (tool == EllipseSelect) {
+            QPainterPath path;
+            path.addEllipse(preview.normalized());
+            selectArea(Selection::fromPath(path, document->state.size));
+        } else {
+            selectArea(Selection(preview.normalized().toAlignedRect().intersected(
+                QRect(QPoint(), document->state.size))));
+        }
         return true;
     }
     if (tool == Rectangle || tool == Ellipse)
@@ -471,6 +580,8 @@ void Canvas::mouseReleaseEvent(QMouseEvent *e) {
         return;
     }
     if (e->button() == Qt::LeftButton) {
+        if (tool == PolygonLasso && polygonActive)
+            return;
         advanceGesture(toImage(e->position()), e->modifiers());
         finishPendingGesture();
     }
@@ -480,7 +591,21 @@ void Canvas::wheelEvent(QWheelEvent *e) {
     e->accept();
 }
 void Canvas::keyPressEvent(QKeyEvent *e) {
+    if (polygonActive && (e->key() == Qt::Key_Return || e->key() == Qt::Key_Enter)) {
+        completePolygon();
+        e->accept();
+        return;
+    }
     if (e->key() == Qt::Key_Escape) {
+        if (polygonActive || (dragging && isSelectionTool())) {
+            polygonActive = dragging = false;
+            document->selection = selectionBefore;
+            selectionBefore = {};
+            selectionPoints.clear();
+            document->changed();
+            e->accept();
+            return;
+        }
         if (dragging) {
             dragging = false;
             document->cancelEdit();
@@ -491,6 +616,18 @@ void Canvas::keyPressEvent(QKeyEvent *e) {
     }
     QWidget::keyPressEvent(e);
 }
+void Canvas::mouseDoubleClickEvent(QMouseEvent *e) {
+    if (tool == PolygonLasso && e->button() == Qt::LeftButton) {
+        hover = toImage(e->position());
+        if (polygonActive && selectionPoints.size() < 16384 &&
+            QLineF(selectionPoints.last(), hover).length() > .5)
+            selectionPoints.append(hover);
+        completePolygon();
+        e->accept();
+        return;
+    }
+    QWidget::mouseDoubleClickEvent(e);
+}
 void Canvas::focusOutEvent(QFocusEvent *event) {
     finishPendingGesture();
     QWidget::focusOutEvent(event);
@@ -500,18 +637,18 @@ void Canvas::deleteSelection() {
     if (l.locked)
         return;
     document->beginEdit();
-    QPainter p(&target());
-    QRect region =
-        document->selection.isEmpty() ? QRect(QPoint(), document->state.size) : document->selection;
-    region.translate(-l.offset);
-    if (document->editingMask)
-        p.fillRect(region, Qt::black);
-    else {
-        p.setCompositionMode(QPainter::CompositionMode_Clear);
-        p.fillRect(region, Qt::transparent);
-    }
-    p.end();
-    if (!document->editingMask)
+    bool edited = document->selection.paint(target(), l.offset, [&](QPainter &p) {
+        QRect region = document->selection.isEmpty() ? QRect(QPoint(), document->state.size)
+                                                     : document->selection.bounds();
+        region.translate(-l.offset);
+        if (document->editingMask)
+            p.fillRect(region, Qt::black);
+        else {
+            p.setCompositionMode(QPainter::CompositionMode_Clear);
+            p.fillRect(region, Qt::transparent);
+        }
+    });
+    if (edited && !document->editingMask)
         l.text.clear();
     document->commit("Seçim silindi");
 }
