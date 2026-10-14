@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.21)
-project(PhotoDeck VERSION 0.6.0 LANGUAGES CXX)
+project(PhotoDeck VERSION 0.7.0 LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_AUTOMOC ON)
@@ -10,7 +10,7 @@ if(MSVC)
     include(InstallRequiredSystemLibraries)
     file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/compiler-runtime.txt" "${CMAKE_INSTALL_SYSTEM_RUNTIME_LIBS}")
 endif()
-find_package(Qt6 6.5 REQUIRED COMPONENTS Widgets)
+find_package(Qt6 6.5 REQUIRED COMPONENTS Widgets PrintSupport)
 add_library(photodeck-core STATIC
     src/tones.cpp src/tones.h src/tonedialog.cpp src/tonedialog.h
     src/selection.cpp src/selection.h
@@ -18,12 +18,14 @@ add_library(photodeck-core STATIC
     src/transformdialog.cpp src/transformdialog.h
     src/filters.cpp src/filters.h
     src/effectdialog.cpp src/effectdialog.h
+    src/output.cpp src/output.h
+    src/outputdialog.cpp src/outputdialog.h
     src/document.cpp src/document.h
     src/canvas.cpp src/canvas.h
     src/mainwindow.cpp src/mainwindow.h
     src/appearance.cpp src/appearance.h)
 target_include_directories(photodeck-core PUBLIC src)
-target_link_libraries(photodeck-core PUBLIC Qt6::Widgets)
+target_link_libraries(photodeck-core PUBLIC Qt6::Widgets Qt6::PrintSupport)
 qt_add_executable(photodeck WIN32 MACOSX_BUNDLE src/main.cpp resources.qrc)
 target_link_libraries(photodeck PRIVATE photodeck-core)
 set_target_properties(photodeck PROPERTIES
@@ -74,4 +76,8 @@ if(BUILD_TESTING)
     target_link_libraries(photodeck-effects-tests PRIVATE photodeck-core Qt6::Test)
     add_test(NAME photodeck-effects COMMAND photodeck-effects-tests)
     set_tests_properties(photodeck-effects PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 60)
+    qt_add_executable(photodeck-output-tests tests/test_output.cpp resources.qrc)
+    target_link_libraries(photodeck-output-tests PRIVATE photodeck-core Qt6::Test)
+    add_test(NAME photodeck-output COMMAND photodeck-output-tests)
+    set_tests_properties(photodeck-output PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 60)
 endif()

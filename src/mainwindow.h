@@ -114,6 +114,9 @@ class MainWindow : public QMainWindow {
     void importLayer();
     bool saveDocument(Document *d, bool saveAs = false);
     void exportDocument();
+    void exportAdvancedRaster();
+    void exportPdfDocument();
+    void printDocument();
     bool confirmClose(int index);
     void closeTab(int index);
     void resizeDocument();

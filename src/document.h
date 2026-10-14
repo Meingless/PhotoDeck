@@ -1,5 +1,6 @@
 #pragma once
 #include "filters.h"
+#include "output.h"
 #include "selection.h"
 #include "tones.h"
 #include <QColor>
@@ -106,6 +107,8 @@ class Document : public QObject {
     bool save(const QString &file, QString *error, bool markClean = true);
     bool load(const QString &file, QString *error);
     bool exportImage(const QString &file, int quality, QString *error);
+    bool exportRaster(const QString &file, const RasterExportOptions &options, QString *error);
+    bool exportPdf(const QString &file, const PdfExportOptions &options, QString *error);
     void markSaved();
     bool isEditing() const { return inEdit; }
     quint64 revision() const { return cursor >= 0 ? history[cursor].id : 0; }

@@ -457,7 +457,7 @@ QImage Document::readImage(const QString &file, QString *error) {
             *error = "Görüntü boyutu sınırı aşıldı.";
         return {};
     }
-    return out.convertToFormat(QImage::Format_ARGB32_Premultiplied);
+    return Output::workingRgb(out);
 }
 bool Document::insertLayer(Layer layer, const QString &label, QString *error) {
     if (state.layers.isEmpty() || !validSize(layer.pixels.size()) ||
@@ -466,7 +466,7 @@ bool Document::insertLayer(Layer layer, const QString &label, QString *error) {
             *error = "Belge veya katman görüntüsü geçersiz.";
         return false;
     }
-    layer.pixels = layer.pixels.convertToFormat(QImage::Format_ARGB32_Premultiplied);
+    layer.pixels = Output::workingRgb(layer.pixels);
     if (!layer.mask.isNull())
         layer.mask = layer.mask.convertToFormat(QImage::Format_ARGB32_Premultiplied);
     layer.cache = {};
@@ -1314,6 +1314,7 @@ bool Document::load(const QString &file, QString *error) {
             !readImageRecord(in, l.mask, remaining) ||
             (!l.mask.isNull() && l.mask.size() != l.pixels.size()))
             return fail();
+        l.pixels = Output::workingRgb(l.pixels);
         pending.layers.append(l);
     }
     if (in.status() != QDataStream::Ok || !f.atEnd() || !validState(pending, error))
@@ -1325,7 +1326,34 @@ bool Document::load(const QString &file, QString *error) {
     return true;
 }
 bool Document::exportImage(const QString &file, int quality, QString *error) {
+    RasterExportOptions options;
+    options.quality = quality;
+    return exportRaster(file, options, error);
+}
+bool Document::exportPdf(const QString &file, const PdfExportOptions &options, QString *error) {
+    return Output::writePdf(composite(), file, title, options, error);
+}
+bool Document::exportRaster(const QString &file, const RasterExportOptions &options, QString *error) {
+    if (!options.valid()) {
+        if (error)
+            *error = "Çıktı boyutu, DPI, kalite veya ICC seçimi geçersiz.";
+        return false;
+    }
     QImage image = composite();
+    if (image.isNull()) {
+        if (error)
+            *error = "Belge görüntüsü oluşturulamadı.";
+        return false;
+    }
+    if (options.size.isValid() && options.size != image.size())
+        image = image.scaled(options.size, Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
+    if (options.embedProfile) {
+        image.setColorSpace(QColorSpace(QColorSpace::SRgb));
+        if (options.profile)
+            image = image.convertedToColorSpace(Output::profile(options.profile));
+    }
+    image.setDotsPerMeterX(qRound(options.dpi / 0.0254));
+    image.setDotsPerMeterY(qRound(options.dpi / 0.0254));
     QByteArray format = QFileInfo(file).suffix().toLower().toLatin1();
     if (format == "jpg")
         format = "jpeg";
@@ -1337,9 +1365,18 @@ bool Document::exportImage(const QString &file, int quality, QString *error) {
             *error = "Bu görüntü biçimi bu sistemde desteklenmiyor.";
         return false;
     }
+    if (options.embedProfile && format == "bmp") {
+        if (error)
+            *error = "BMP çıktısında ICC kaydı desteklenmiyor. PNG/JPEG/TIFF kullanın veya profil "
+                     "eklemeyi kapatın.";
+        return false;
+    }
     if (format == "jpeg") {
         QImage flattened(image.size(), QImage::Format_RGB32);
         flattened.fill(Qt::white);
+        flattened.setColorSpace(image.colorSpace());
+        flattened.setDotsPerMeterX(image.dotsPerMeterX());
+        flattened.setDotsPerMeterY(image.dotsPerMeterY());
         QPainter p(&flattened);
         p.drawImage(0, 0, image);
         p.end();
@@ -1352,7 +1389,7 @@ bool Document::exportImage(const QString &file, int quality, QString *error) {
         return false;
     }
     QImageWriter writer(&f, format);
-    writer.setQuality(quality);
+    writer.setQuality(options.quality);
     if (!writer.write(image)) {
         if (error)
             *error = writer.errorString();

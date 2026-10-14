@@ -16,3 +16,10 @@ HEADERS += ../src/filters.h
 
 SOURCES += ../src/effectdialog.cpp
 HEADERS += ../src/effectdialog.h
+
+QT += printsupport
+SOURCES += ../src/output.cpp
+HEADERS += ../src/output.h
+
+SOURCES += ../src/outputdialog.cpp
+HEADERS += ../src/outputdialog.h

@@ -1,6 +1,7 @@
 #include "mainwindow.h"
 #include "blending.h"
 #include "effectdialog.h"
+#include "outputdialog.h"
 #include "tonedialog.h"
 #include "transformdialog.h"
 #include <QActionGroup>
@@ -32,6 +33,8 @@
 #include <QMimeData>
 #include <QMouseEvent>
 #include <QPlainTextEdit>
+#include <QPrintDialog>
+#include <QPrinter>
 #include <QProgressDialog>
 #include <QPushButton>
 #include <QRegularExpression>
@@ -332,6 +335,10 @@ void MainWindow::buildMenus() {
                            [this] { saveDocument(currentDocument(), true); }));
     file->addAction(
         action("export", "Dışa aktar…", QKeySequence("Ctrl+Shift+E"), [this] { exportDocument(); }));
+    file->addAction(action("advancedRaster", "Boyut / DPI / ICC ile raster çıktı…", {},
+                           [this] { exportAdvancedRaster(); }));
+    file->addAction(action("exportPdf", "PDF dışa aktar…", {}, [this] { exportPdfDocument(); }));
+    file->addAction(action("print", "Yazdır…", QKeySequence::Print, [this] { printDocument(); }));
     file->addSeparator();
     file->addAction(action("batch", "Toplu dönüştür…", {}, [this] { batch(); }));
     file->addAction(action("close", "Belgeyi kapat", QKeySequence::Close,
@@ -1365,6 +1372,59 @@ bool MainWindow::saveDocument(Document *d, bool saveAs) {
     }
     status->setText("Proje kaydedildi · " + QFileInfo(file).fileName());
     return true;
+}
+void MainWindow::exportAdvancedRaster() {
+    auto *d = currentDocument();
+    if (!d)
+        return;
+    RasterOutputDialog dialog(d->state.size, this);
+    if (dialog.exec() != QDialog::Accepted)
+        return;
+    QString filters = "PNG (*.png);;JPEG (*.jpg)";
+    if (QImageWriter::supportedImageFormats().contains("webp"))
+        filters += ";;WebP (*.webp)";
+    if (QImageWriter::supportedImageFormats().contains("tiff"))
+        filters += ";;TIFF (*.tiff)";
+    QString file = chooseSaveTarget(this, "Raster görüntüyü dışa aktar",
+                                    QFileInfo(d->title).completeBaseName() + ".png", filters);
+    if (file.isEmpty())
+        return;
+    QString e;
+    if (!d->exportRaster(file, dialog.options(), &e))
+        error(e);
+}
+void MainWindow::exportPdfDocument() {
+    auto *d = currentDocument();
+    if (!d)
+        return;
+    PdfOutputDialog dialog(d->state.size, this);
+    if (dialog.exec() != QDialog::Accepted)
+        return;
+    QString file = chooseSaveTarget(this, "PDF dışa aktar",
+                                    QFileInfo(d->title).completeBaseName() + ".pdf", "PDF (*.pdf)");
+    if (file.isEmpty())
+        return;
+    QString e;
+    if (!d->exportPdf(file, dialog.options(), &e))
+        error(e);
+}
+void MainWindow::printDocument() {
+    auto *d = currentDocument();
+    if (!d)
+        return;
+    QPrinter printer(QPrinter::HighResolution);
+    printer.setDocName(d->title);
+    printer.setFullPage(true);
+    QPrintDialog dialog(&printer, this);
+    dialog.setMinMax(1, 1);
+    if (dialog.exec() != QDialog::Accepted)
+        return;
+    printer.setFullPage(true);
+    QPainter painter(&printer);
+    if (!Output::paintPage(painter, d->composite(),
+                           printer.pageLayout().paintRectPixels(printer.resolution())) ||
+        !painter.end())
+        error("Yazdırma tamamlanamadı. Yazıcı bağlantısını ve sürücüyü kontrol edin.");
 }
 void MainWindow::exportDocument() {
     auto *d = currentDocument();

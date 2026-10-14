@@ -1,4 +1,4 @@
-# PhotoDeck 0.6.0 Early Access
+# PhotoDeck 0.7.0 Early Access
 
 AI içermeyen, tamamen yerel, C++/Qt 6 ile geliştirilen fotoğraf ve katman düzenleyici. Linux, Windows ve macOS için ortak kaynak kullanır. Tarayıcı motoru, Python çalışma zamanı, bulut hesabı, abonelik veya ağ servisi gerekmez.
 
@@ -33,6 +33,8 @@ Varsayılan görünüm **Odak**. Çalışma alanı menüsünde Grafit, Kağıt, 
 - Yerel fontlarla çok satırlı metin, boyut, kalınlık ve renk. Metin katmanına çift tıklayarak düzenleme.
 - PNG/JPEG/WebP/BMP ve TIFF içe/dışa aktarma; GIF ilk kare içe aktarımı. WebP/TIFF sistemin Qt görüntü eklentisine bağlıdır. Çalışma belgesi RGB 8 bittir; yüksek bit derinlikli girdiler 8 bite dönüşür. Çok sayfalı TIFF/animasyonlu GIF yalnızca ilk görüntüyü açar.
 - Saydam PNG/WebP; JPEG saydam alanları beyaz arka plan üzerine birleştirir.
+- Çıktı boyutu, oran kilidi, DPI ve kalite seçimi; sRGB, Display P3 veya Adobe RGB ICC profilli PNG/JPEG/TIFF/WebP çıktı. Profilli RGB girdiler sRGB çalışma alanına dönüştürülür; etiketsiz girdiler sRGB kabul edilir.
+- A4, Letter veya görüntünün fiziksel boyutunda tek sayfalı PDF; yatay/dikey sayfa ve kenar boşlukları. Dosya → Yazdır native yazıcı penceresini açar; şeffaflık beyaz kağıda uygulanır.
 - Orijinalleri değiştirmeyen toplu boyutlandırma, renk ayarı ve biçim dönüşümü. Çıktı adlarında `_photodeck` eki kullanılır; mevcut çıktılar için sayı eklenir.
 - Atomik `.pdeck` proje kaydı; katman, maske, metin, konum, harmanlama ve renk/filtre parametreleri korunur.
 - 45 saniyelik kurtarma kopyaları; sonraki açılışta kurtarma önerisi. Normal kapatmada kaydet/at/iptal seçimi.
@@ -77,12 +79,12 @@ Dağıtılmış Linux paketini tek dosyalık AppImage olarak hazırlamak için `
 
 ```sh
 python3 scripts/package-appimage.py \
-  --package dist/PhotoDeck-0.6.0-ea.1-linux-x86_64 \
+  --package dist/PhotoDeck-0.7.0-ea.1-linux-x86_64 \
   --appimagetool /path/to/appimagetool \
-  --output dist/PhotoDeck-0.6.0-ea.1-x86_64.AppImage
+  --output dist/PhotoDeck-0.7.0-ea.1-x86_64.AppImage
 ```
 
-AppImage'a çalıştırma izni verip açın: `chmod +x PhotoDeck-0.6.0-ea.1-x86_64.AppImage`. FUSE bulunmayan sistemlerde `APPIMAGE_EXTRACT_AND_RUN=1 ./PhotoDeck-0.6.0-ea.1-x86_64.AppImage` kullanılabilir. Windows taşınabilir paketindeki `PhotoDeck.exe`, yanındaki DLL ve eklenti klasörleriyle birlikte taşınmalıdır. macOS paketindeki `.app` tüm içeriğiyle korunmalıdır.
+AppImage'a çalıştırma izni verip açın: `chmod +x PhotoDeck-0.7.0-ea.1-x86_64.AppImage`. FUSE bulunmayan sistemlerde `APPIMAGE_EXTRACT_AND_RUN=1 ./PhotoDeck-0.7.0-ea.1-x86_64.AppImage` kullanılabilir. Windows taşınabilir paketindeki `PhotoDeck.exe`, yanındaki DLL ve eklenti klasörleriyle birlikte taşınmalıdır. macOS paketindeki `.app` tüm içeriğiyle korunmalıdır.
 
 ## Mevcut kapsam
 
@@ -100,4 +102,6 @@ Uygulama kodu ve örnek çizim MIT lisanslıdır. Qt ayrı LGPLv3/GPLv3 veya tic
 
 Filtre sırası pikselleştirme → gren → Gaussian → high-pass → unsharp; eski kutu bulanıklığı ve ton ayarları bunlardan önce, maske ve katman dönüşümü sonra uygulanır. Gaussian ayrılabilir, normalize edilmiş gerçek çekirdek kullanır; yarıçap 0–16 px, sigma `max(0.5, yarıçap/2)` ve sınır piksel tekrarları vardır. Maske feather aynı Gaussian yöntemidir. Filtreler RGB 8 bit ve katman ölçeğindedir; reorderable Smart Filter stack, filter mask, lens/motion blur, adaptive/smart sharpen veya Photoshop preset uyumluluğu değildir. Büyük görüntü ve yarıçap CPU/bellek maliyetini artırır; canlı önizleme kapatılabilir.
 
-Tüm Photoshop alanlarının karşılaştırması ve açık farklar: [docs/PHOTOSHOP-COMPARISON.md](docs/PHOTOSHOP-COMPARISON.md). 0.3–0.6 farkların bir kısmını kapatır; karşılaştırma çalışması devam eder.
+Tüm Photoshop alanlarının karşılaştırması ve açık farklar: [docs/PHOTOSHOP-COMPARISON.md](docs/PHOTOSHOP-COMPARISON.md). 0.3–0.7 farkların bir kısmını kapatır; karşılaştırma çalışması devam eder.
+
+0.7 çıktı kapsamı: Çalışma alanı RGB/sRGB 8 bittir. ICC çıktı pikselleri seçilen RGB profiline dönüştürülür; BMP profil eklemeyi desteklemez. DPI metadata desteği biçime bağlıdır; mevcut piksel ayrıntısını artırmaz. PDF görünür kompozisyonun düzleştirilmiş raster çıktısıdır; katmanlı/vektör/PDF-X değildir. Fiziksel yazıcı testi yapılmadı. CMYK/Lab, yüksek bit derinliği, monitör profiliyle görüntüleme, soft proof ve gamut uyarısı açık hedeflerdir.
