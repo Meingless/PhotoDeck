@@ -1,14 +1,16 @@
 # Çalışma durumu — 14 Ekim 2026
 
-## Güncel durum: 0.8 yayımlandı
+## Güncel durum: 0.9 yayımlandı
 
-Fırça geometrisi ve tablet girdisi aşaması [0.8.0-ea.1](https://github.com/Meingless/PhotoDeck/releases/tag/v0.8.0-ea.1) olarak yayımlandı. Kaynak commit `e6767ab65ea8b1e83da7ef24f1220340256987be`; [CI](https://github.com/Meingless/PhotoDeck/actions/runs/38601577984) dört platformda başarılı. Her hedefte 327 başarılı kontrol (başlangıç/bitiş dahil), on test grubu; Linux/Windows paket testleri ayrıca başarılı. Yerel ASan/UBSan ve qmake fırça grubu başarılı; leak detection kapalı.
+Modern arayüz, kalıcı fırça presetleri ve görsel uçlar [0.9.0-ea.1](https://github.com/Meingless/PhotoDeck/releases/tag/v0.9.0-ea.1) olarak yayımlandı. Kaynak commit `6e480ea7dd3308cc3e9c20c21b7f90fc7cca5dbb`; [CI](https://github.com/Meingless/PhotoDeck/actions/runs/38614460629) dört platformda başarılı. Hedef başına 342 başarılı kontrol (başlangıç/bitiş dahil), on bir grup; Linux/Windows paket testleri ayrıca başarılı. Yerel ASan/UBSan ve qmake kütüphane grubu başarılı; leak detection kapalı.
 
-Ctrl+Alt+B ile uç açısı/yuvarlaklığı, sürekli darbe aralığı ve basınç/eğim ayarları vardır. Kalemin silgi ucu piksel ve maskede çalışır. Boyama dışı araçlarda Qt'nin mevcut fare benzetimi korunur. Fiziksel tablet testi yapılmadı; Qt aygıt/olay fixture'ları kullanıldı. Fırça ayarları sekme oturumuna aittir; .pdeck v5 değişmedi.
+Menü, sekme, toolbar, panel/listeler, girişler, checkbox/slider/butonlar ve diyaloglar ortak modern tasarımla yenilendi. Varsayılan 3 · Odak, on preset ve .pdui v1 kişiselleştirmeleri korunur. On gerçek başlangıç PNG'si ile menü/kütüphane/ayar diyalogu görüntüleri kontrol edildi; `artifacts/modern-ui/` içindedir.
 
-Yerel `bin/photodeck` 0.8'dir; hazır paketler `dist/applications/0.8.0-ea.1/` içindedir. Önceki paketler ve yerel 0.6/0.7 başlatıcı kopyaları korunur. Sekiz yüklenen asset'in boyutu ve GitHub SHA-256 değeri yerel dosyalarla eşleşti. Native ve FUSE-free AppImage açılışı başarılı; 206 portable payload dosyası aynı. Kanıtlar `artifacts/brush-release/`, `artifacts/brush-ui/`, `artifacts/brush-results.txt`, `brush-sanitizer-results.txt`, `brush-qmake-results.txt` ve teslimdeki `DOGRULAMA.md` içindedir.
+Düzenle → Fırça kütüphanesi / Ctrl+Alt+Shift+B tüm uç/tablet değerlerini ve aracı isimli presetlerle saklar; .pdbrush v1 aktarımı, restart kalıcılığı ve görselden/seçimden uç vardır. 128 preset/8 MiB maskeler/16 MiB dosya sınırı; katı doğrulama, atomik yazma, dosya kilidi/oturum çatışması ve bozuk dosya yedeği uygulanır. Koyu alanlar boyar, beyaz/saydam gizlenir; uzun kenar 512 px. Klon örneği dönmez; sadece kapsam döner. Fiziksel tablet/yazıcı testi yapılmadı. .pdeck v5 değişmedi.
 
-0.7'nin RGB ICC/PDF/yazdırma kapsamı korunur. Genel Photoshop karşılaştırması tamamlanmış değildir; hedef aktiftir. Özel görüntü/ABR uçları, kalıcı fırça kütüphanesi, scatter/jitter/texture, smoothing/simetri ve diğer kalan gereksinimler `docs/PHOTOSHOP-COMPARISON.md` içinde açık kalır.
+Yerel `bin/photodeck` 0.9'dur; paketler `dist/applications/0.9.0-ea.1/` içindedir. Önceki paketler/başlatıcı kopyaları korunur. Sekiz yayımlanan dosyanın boyutu ve GitHub SHA-256 değeri eşleşti. Native/FUSE-free AppImage açılışı ve 206 portable payload dosya eşleşmesi başarılı. Kanıtlar `artifacts/presets-release/`, `presets-results.txt`, `presets-sanitizer-results.txt`, `presets-qmake-results.txt` ve teslimdeki `DOGRULAMA.md` içindedir.
+
+Genel hedef Photoshop karşılaştırması **ve bütün arayüzün modernleşmesini** içerir; hedef aktiftir. Uygulanan arayüz modernleşti, fakat tam Photoshop eşdeğerliği tamamlanmadı. ABR, gelişmiş fırça dinamikleri/smoothing/simetri ve diğer açık alanlar `docs/PHOTOSHOP-COMPARISON.md` içinde devam eder.
 
 ## Tarihsel durdurma kaydı
 
