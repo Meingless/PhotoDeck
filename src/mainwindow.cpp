@@ -13,6 +13,7 @@
 #include <QDialogButtonBox>
 #include <QDir>
 #include <QDockWidget>
+#include <QDoubleSpinBox>
 #include <QDragEnterEvent>
 #include <QDropEvent>
 #include <QEvent>
@@ -778,6 +779,8 @@ void MainWindow::buildTools() {
     brushOpacityInput->setSuffix(" %");
     brushOpacityInput->setFixedWidth(83);
     options->addWidget(brushOpacityInput);
+    options->addAction(action("brushSettings", "Fırça / tablet ayarları…", QKeySequence("Ctrl+Alt+B"),
+                              [this] { customizeBrush(); }));
     options->addSeparator();
     options->addAction(actions["crop"]);
     auto *selectionMode = new QComboBox;
@@ -1372,6 +1375,70 @@ bool MainWindow::saveDocument(Document *d, bool saveAs) {
     }
     status->setText("Proje kaydedildi · " + QFileInfo(file).fileName());
     return true;
+}
+void MainWindow::customizeBrush() {
+    auto *c = currentCanvas();
+    if (!c)
+        return;
+    c->finishPendingGesture();
+    QDialog dialog(this);
+    dialog.setObjectName("brushSettingsDialog");
+    dialog.setWindowTitle("Fırça ucu ve tablet");
+    auto *layout = new QVBoxLayout(&dialog);
+    auto *form = new QFormLayout;
+    layout->addLayout(form);
+    auto spin = [&](QString name, QString label, int minimum, int maximum, int value, QString suffix) {
+        auto *box = new QSpinBox;
+        box->setObjectName(name);
+        box->setRange(minimum, maximum);
+        box->setValue(value);
+        box->setSuffix(suffix);
+        form->addRow(label, box);
+        return box;
+    };
+    auto *spacing = spin("brushSpacing", "Darbe aralığı (çap yüzdesi)", 1, 200, c->brushSpacing, " %");
+    auto *angle = spin("brushAngle", "Uç açısı", -180, 180, c->brushAngle, "°");
+    auto *roundness = spin("brushRoundness", "Yuvarlaklık", 5, 100, c->brushRoundness, " %");
+    auto *minimum = spin("pressureMinimum", "En düşük basınç boyutu", 1, 100, c->pressureMinimum, " %");
+    auto *curve = new QDoubleSpinBox;
+    curve->setObjectName("pressureCurve");
+    curve->setRange(.25, 4);
+    curve->setSingleStep(.25);
+    curve->setValue(c->pressureCurve);
+    form->addRow("Basınç tepkisi (1: doğrusal)", curve);
+    auto check = [&](QString name, QString label, bool value) {
+        auto *box = new QCheckBox(label);
+        box->setObjectName(name);
+        box->setChecked(value);
+        form->addRow(box);
+        return box;
+    };
+    auto *size = check("pressureSize", "Basınç boyutu değiştirir", c->pressureSize);
+    auto *flow = check("pressureFlow", "Basınç akışı değiştirir", c->pressureFlow);
+    auto *tiltAngle = check("tiltAngle", "Kalem eğimi uç açısını değiştirir", c->tiltAngle);
+    auto *tiltRoundness =
+        check("tiltRoundness", "Kalem eğimi yuvarlaklığı değiştirir", c->tiltRoundness);
+    auto *note = new QLabel("Ayarlar bu belgenin fırça, kalem, silgi ve klon araçları içindir. "
+                            "Tablet basıncı/eğimi aygıtın ve sürücünün sağladığı veriye bağlıdır. "
+                            "Fare tam basınçla çalışır.");
+    note->setWordWrap(true);
+    layout->addWidget(note);
+    auto *buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
+    layout->addWidget(buttons);
+    connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
+    connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+    if (dialog.exec() != QDialog::Accepted)
+        return;
+    c->brushSpacing = spacing->value();
+    c->brushAngle = angle->value();
+    c->brushRoundness = roundness->value();
+    c->pressureMinimum = minimum->value();
+    c->pressureCurve = curve->value();
+    c->pressureSize = size->isChecked();
+    c->pressureFlow = flow->isChecked();
+    c->tiltAngle = tiltAngle->isChecked();
+    c->tiltRoundness = tiltRoundness->isChecked();
+    c->update();
 }
 void MainWindow::exportAdvancedRaster() {
     auto *d = currentDocument();

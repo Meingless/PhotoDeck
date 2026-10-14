@@ -31,6 +31,9 @@ class Canvas : public QWidget {
     Tool tool = Move;
     QColor foreground = QColor("#59c9b4"), background = Qt::white;
     int brushSize = 32, hardness = 80, brushOpacity = 100;
+    int brushSpacing = 16, brushAngle = 0, brushRoundness = 100, pressureMinimum = 10;
+    qreal pressureCurve = 1;
+    bool pressureSize = true, pressureFlow = false, tiltAngle = false, tiltRoundness = false;
     Selection::Mode selectionMode = Selection::Replace;
     int selectionTolerance = 24;
     bool contiguousSelection = true;
@@ -62,6 +65,7 @@ class Canvas : public QWidget {
     void keyPressEvent(QKeyEvent *) override;
     void focusOutEvent(QFocusEvent *) override;
     void mouseDoubleClickEvent(QMouseEvent *) override;
+    void tabletEvent(QTabletEvent *) override;
 
   private:
     QColor canvasColor = QColor("#171b20"), rulerColor = QColor("#22272e"),
@@ -81,7 +85,14 @@ class Canvas : public QWidget {
     bool cacheDirty = true, fitted = false;
     QImage &target();
     void advanceGesture(QPointF position, Qt::KeyboardModifiers modifiers);
-    void stroke(QPointF from, QPointF to);
+    void stroke(QPointF from, QPointF to, bool final = false);
+    void stamp(QPointF at, qreal pressure);
+    qreal stampDiameter(qreal pressure) const;
+    QTransform tipTransform(QPointF position) const;
+    bool tabletActive = false, tabletEraser = false, hasStrokeStamp = false;
+    qreal inputPressure = 1, lastInputPressure = 1, tabletTiltX = 0, tabletTiltY = 0;
+    qreal remainingStampDistance = 0;
+    QPointF lastStamp;
     void fillAt(QPoint point);
     void drawShape();
     void applyGradient();

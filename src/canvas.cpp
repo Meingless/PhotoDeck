@@ -5,8 +5,10 @@
 #include <QMouseEvent>
 #include <QPainterPath>
 #include <QRadialGradient>
+#include <QTabletEvent>
 #include <QWheelEvent>
 #include <QtMath>
+#include <cmath>
 
 Canvas::Canvas(Document *d, QWidget *parent) : QWidget(parent), document(d) {
     setFocusPolicy(Qt::StrongFocus);
@@ -177,11 +179,15 @@ void Canvas::paintEvent(QPaintEvent *) {
         p.drawLine(press, last);
     }
     if (tool == Brush || tool == Pencil || tool == Eraser || tool == Clone) {
+        p.save();
+        p.setTransform(tipTransform(hover), true);
+        const qreal radius = stampDiameter(inputPressure) / 2;
         p.setBrush(Qt::NoBrush);
         p.setPen(QPen(QColor(0, 0, 0, 180), 2 / zoom));
-        p.drawEllipse(hover, brushSize / 2.0, brushSize / 2.0);
+        p.drawEllipse(QPointF(), radius, radius);
         p.setPen(QPen(Qt::white, 1 / zoom));
-        p.drawEllipse(hover, brushSize / 2.0, brushSize / 2.0);
+        p.drawEllipse(QPointF(), radius, radius);
+        p.restore();
     }
     if (tool == Clone && hasClone) {
         p.setPen(QPen(accentColor, 1 / zoom));
@@ -223,61 +229,107 @@ QImage &Canvas::target() {
     auto &l = document->state.layers[document->state.active];
     return document->editingMask ? l.mask : l.pixels;
 }
-void Canvas::stroke(QPointF from, QPointF to) {
+qreal Canvas::stampDiameter(qreal pressure) const {
+    qreal scale = 1;
+    if (tabletActive && pressureSize) {
+        const qreal minimum = qBound(1, pressureMinimum, 100) / 100.0;
+        const qreal curve = std::isfinite(pressureCurve) ? qBound(.25, pressureCurve, 4.0) : 1;
+        scale = minimum + (1 - minimum) * std::pow(qBound(0.0, pressure, 1.0), curve);
+    }
+    return qMax(1.0, qBound(1, brushSize, 512) * scale);
+}
+QTransform Canvas::tipTransform(QPointF position) const {
+    qreal angle = qBound(-180, brushAngle, 180);
+    qreal roundness = qBound(5, brushRoundness, 100) / 100.0;
+    if (tabletActive) {
+        if (tiltAngle && std::hypot(tabletTiltX, tabletTiltY) > .01)
+            angle += qRadiansToDegrees(std::atan2(tabletTiltY, tabletTiltX));
+        if (tiltRoundness)
+            roundness *= qBound(
+                .05, std::cos(qDegreesToRadians(qMin(85.0, std::hypot(tabletTiltX, tabletTiltY)))), 1.0);
+    }
+    QTransform tip;
+    tip.translate(position.x(), position.y());
+    tip.rotate(angle);
+    tip.scale(1, roundness);
+    return tip;
+}
+void Canvas::stamp(QPointF position, qreal pressure) {
+    if (tabletActive && pressure <= 0)
+        return;
     auto &l = document->state.layers[document->state.active];
-    QPointF a = from - l.offset, b = to - l.offset;
-    QRect affected = QRectF(a, b)
-                         .normalized()
-                         .adjusted(-brushSize / 2.0 - 2, -brushSize / 2.0 - 2, brushSize / 2.0 + 2,
-                                   brushSize / 2.0 + 2)
-                         .toAlignedRect();
-    bool edited = document->selection.paint(
+    const QPointF at = position - l.offset;
+    const qreal radius = stampDiameter(pressure) / 2;
+    const QTransform tip = tipTransform(at);
+    const bool erase = tool == Eraser || tabletEraser;
+    qreal flow = qBound(1, brushOpacity, 100) / 100.0;
+    if (tabletActive && pressureFlow) {
+        const qreal curve = std::isfinite(pressureCurve) ? qBound(.25, pressureCurve, 4.0) : 1;
+        flow *= std::pow(qBound(0.0, pressure, 1.0), curve);
+    }
+    const QRect affected =
+        QRectF(at - QPointF(radius + 2, radius + 2), QSizeF(2 * radius + 4, 2 * radius + 4))
+            .toAlignedRect();
+    const bool edited = document->selection.paint(
         target(), l.offset,
         [&](QPainter &p) {
             p.setRenderHint(QPainter::Antialiasing, tool != Pencil);
-            p.setOpacity(brushOpacity / 100.0);
+            p.setOpacity(flow);
             QColor color = foreground;
             if (document->editingMask) {
-                int gray = tool == Eraser ? 0 : qGray(color.rgb());
+                const int gray = erase ? 0 : qGray(color.rgb());
                 color = QColor(gray, gray, gray);
-            } else if (tool == Eraser) {
+            } else if (erase) {
                 color = Qt::white;
                 p.setCompositionMode(QPainter::CompositionMode_DestinationOut);
             }
-            qreal distance = QLineF(a, b).length();
-            int count = distance < .001 ? 0 : qMax(1, qCeil(distance / qMax(1.0, brushSize * .16)));
-            for (int i = count ? 1 : 0; i <= count; ++i) {
-                QPointF at = count ? a + (b - a) * (qreal(i) / count) : a;
-                qreal radius = brushSize / 2.0;
-                if (tool == Clone) {
-                    QPointF source = QPointF(cloneAnchor - l.offset) + (at - (press - l.offset));
-                    QPainterPath clip;
-                    clip.addEllipse(at, radius, radius);
-                    p.save();
-                    p.setClipPath(clip, Qt::IntersectClip);
-                    p.drawImage(at - QPointF(radius, radius), cloneSource,
-                                QRectF(source - QPointF(radius, radius), QSizeF(brushSize, brushSize)));
-                    p.restore();
-                } else {
-                    p.setPen(Qt::NoPen);
-                    if (hardness >= 100 || tool == Pencil) {
-                        p.setBrush(color);
-                    } else {
-                        QRadialGradient g(at, radius);
-                        g.setColorAt(0, color);
-                        g.setColorAt(hardness / 100.0, color);
-                        QColor edge = color;
-                        edge.setAlpha(0);
-                        g.setColorAt(1, edge);
-                        p.setBrush(g);
-                    }
-                    p.drawEllipse(at, radius, radius);
+            if (tool == Clone && !erase) {
+                QPainterPath clip;
+                clip.addEllipse(QPointF(), radius, radius);
+                p.setClipPath(tip.map(clip), Qt::IntersectClip);
+                const QPointF source = QPointF(cloneAnchor - l.offset) + (position - press);
+                p.drawImage(at - QPointF(radius, radius), cloneSource,
+                            QRectF(source - QPointF(radius, radius), QSizeF(2 * radius, 2 * radius)));
+            } else {
+                p.setTransform(tip, true);
+                p.setPen(Qt::NoPen);
+                if (hardness >= 100 || tool == Pencil)
+                    p.setBrush(color);
+                else {
+                    QRadialGradient gradient(QPointF(), radius);
+                    gradient.setColorAt(0, color);
+                    gradient.setColorAt(qBound(0, hardness, 99) / 100.0, color);
+                    color.setAlpha(0);
+                    gradient.setColorAt(1, color);
+                    p.setBrush(gradient);
                 }
+                p.drawEllipse(QPointF(), radius, radius);
             }
         },
         affected);
     if (edited && !document->editingMask)
         l.text.clear();
+}
+void Canvas::stroke(QPointF from, QPointF to, bool final) {
+    const qreal distance = QLineF(from, to).length();
+    const auto place = [&](QPointF at, qreal pressure) {
+        stamp(at, pressure);
+        lastStamp = at;
+        hasStrokeStamp = true;
+        remainingStampDistance =
+            qMax(1.0, stampDiameter(pressure) * qBound(1, brushSpacing, 200) / 100.0);
+    };
+    if (!hasStrokeStamp)
+        place(from, lastInputPressure);
+    qreal travelled = 0;
+    while (distance - travelled + .000001 >= remainingStampDistance) {
+        travelled += remainingStampDistance;
+        const qreal t = qMin(1.0, travelled / distance);
+        place(from + (to - from) * t, lastInputPressure + (inputPressure - lastInputPressure) * t);
+    }
+    remainingStampDistance -= qMax(0.0, distance - travelled);
+    if (final && QLineF(lastStamp, to).length() > .001)
+        place(to, inputPressure);
     document->changed();
 }
 void Canvas::fillAt(QPoint docPoint) {
@@ -422,7 +474,7 @@ void Canvas::mousePressEvent(QMouseEvent *e) {
             "Bu katmanın dönüşümü kaynak korur. Boyamak için Katman → Görünümü rasterleştir kullanın.");
         return;
     }
-    if (tool == Clone && (document->editingMask || !hasClone)) {
+    if (tool == Clone && !tabletEraser && (document->editingMask || !hasClone)) {
         emit toolHint("Klonlama: önce Alt + tıklama ile piksel katmanından kaynak seçin.");
         return;
     }
@@ -431,6 +483,8 @@ void Canvas::mousePressEvent(QMouseEvent *e) {
         return;
     }
     document->beginEdit();
+    hasStrokeStamp = false;
+    lastInputPressure = inputPressure;
     dragging = true;
     initialOffset = l.offset;
     preview = QRectF(press, QSizeF());
@@ -472,6 +526,14 @@ void Canvas::advanceGesture(QPointF position, Qt::KeyboardModifiers modifiers) {
     } else if (tool == Brush || tool == Pencil || tool == Eraser || tool == Clone) {
         if (QLineF(last, hover).length() > .001)
             stroke(last, hover);
+        else if (tabletActive && (pressureSize || pressureFlow) &&
+                 qAbs(inputPressure - lastInputPressure) > .001) {
+            stamp(hover, inputPressure);
+            lastStamp = hover;
+            remainingStampDistance =
+                qMax(1.0, stampDiameter(inputPressure) * qBound(1, brushSpacing, 200) / 100.0);
+            document->changed();
+        }
     } else if (tool == Lasso) {
         if (selectionPoints.size() < 16384 && QLineF(selectionPoints.last(), hover).length() > .5)
             selectionPoints.append(hover);
@@ -486,6 +548,7 @@ void Canvas::advanceGesture(QPointF position, Qt::KeyboardModifiers modifiers) {
         update();
     }
     last = hover;
+    lastInputPressure = inputPressure;
 }
 
 void Canvas::drawShape() {
@@ -535,14 +598,25 @@ void Canvas::applyGradient() {
 bool Canvas::finishPendingGesture() {
     if (polygonActive) {
         completePolygon();
+        tabletActive = tabletEraser = false;
+        inputPressure = lastInputPressure = 1;
         return true;
     }
     if (panning) {
         panning = false;
         updateCursor();
     }
-    if (!dragging)
+    if (!dragging) {
+        tabletActive = tabletEraser = false;
+        inputPressure = lastInputPressure = 1;
         return false;
+    }
+    const bool erasing = (tool == Brush || tool == Pencil || tool == Eraser || tool == Clone) &&
+                         (tool == Eraser || tabletEraser);
+    if (tool == Brush || tool == Pencil || tool == Eraser || tool == Clone)
+        stroke(last, last, true);
+    tabletActive = tabletEraser = false;
+    inputPressure = lastInputPressure = 1;
     dragging = false;
     if (isSelectionTool() || tool == Crop) {
         if (tool == Lasso) {
@@ -572,13 +646,15 @@ bool Canvas::finishPendingGesture() {
     if (tool == Gradient)
         applyGradient();
     QString label = tool == Move                           ? "Katman taşındı"
-                    : tool == Eraser                       ? "Silgi"
+                    : erasing                              ? "Silgi"
                     : tool == Clone                        ? "Klon damgası"
                     : tool == Gradient                     ? "Degrade"
                     : tool == Rectangle || tool == Ellipse ? "Şekil çizildi"
                                                            : "Fırça";
     document->commit(label);
     cloneSource = {};
+    tabletActive = tabletEraser = false;
+    inputPressure = lastInputPressure = 1;
     return true;
 }
 void Canvas::mouseReleaseEvent(QMouseEvent *e) {
@@ -597,6 +673,44 @@ void Canvas::mouseReleaseEvent(QMouseEvent *e) {
         advanceGesture(toImage(e->position()), e->modifiers());
         finishPendingGesture();
     }
+}
+void Canvas::tabletEvent(QTabletEvent *e) {
+    const QPointF position = e->position();
+    if (!std::isfinite(position.x()) || !std::isfinite(position.y()) || !std::isfinite(e->pressure()) ||
+        !std::isfinite(e->xTilt()) || !std::isfinite(e->yTilt()) ||
+        qAbs(toImage(position).x()) > Document::MaxCoordinate ||
+        qAbs(toImage(position).y()) > Document::MaxCoordinate) {
+        e->accept();
+        return;
+    }
+    if (e->type() == QEvent::TabletPress) {
+        finishPendingGesture();
+        tabletActive = true;
+        tabletEraser = e->pointerType() == QPointingDevice::PointerType::Eraser;
+    } else if (dragging && !tabletActive) {
+        e->accept();
+        return;
+    }
+    inputPressure = e->type() == QEvent::TabletRelease && e->pressure() <= 0
+                        ? lastInputPressure
+                        : qBound(0.0, e->pressure(), 1.0);
+    tabletTiltX = qBound(-60.0, double(e->xTilt()), 60.0);
+    tabletTiltY = qBound(-60.0, double(e->yTilt()), 60.0);
+    const QEvent::Type type = e->type() == QEvent::TabletPress     ? QEvent::MouseButtonPress
+                              : e->type() == QEvent::TabletRelease ? QEvent::MouseButtonRelease
+                                                                   : QEvent::MouseMove;
+    QMouseEvent pointer(type, position, e->globalPosition(), e->button(), e->buttons(), e->modifiers(),
+                        e->pointingDevice());
+    if (type == QEvent::MouseButtonPress)
+        mousePressEvent(&pointer);
+    else if (type == QEvent::MouseButtonRelease) {
+        mouseReleaseEvent(&pointer);
+        tabletActive = tabletEraser = false;
+        inputPressure = lastInputPressure = 1;
+    } else
+        mouseMoveEvent(&pointer);
+    // Accept native tablet events so Qt does not synthesize a second mouse stroke.
+    e->accept();
 }
 void Canvas::wheelEvent(QWheelEvent *e) {
     setZoom(zoom * std::pow(1.0015, e->angleDelta().y()), e->position());
@@ -621,6 +735,8 @@ void Canvas::keyPressEvent(QKeyEvent *e) {
         if (dragging) {
             dragging = false;
             document->cancelEdit();
+            tabletActive = tabletEraser = false;
+            inputPressure = lastInputPressure = 1;
         }
         document->selection = {};
         update();

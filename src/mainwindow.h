@@ -79,6 +79,7 @@ class MainWindow : public QMainWindow {
     void arrangePreset();
     void positionOverlays();
     void customizeUi();
+    void customizeBrush();
     void saveUiSettings();
     void loadUiSettings();
     void rebuildUserPresets();
