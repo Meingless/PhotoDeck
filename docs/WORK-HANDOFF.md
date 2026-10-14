@@ -1,8 +1,16 @@
-# Çalışma devir notu — 14 Ekim 2026
+# Çalışma durumu — 14 Ekim 2026
 
-Kullanıcının isteğiyle geliştirme durduruldu. Yeni bir sürüm hazırlanmadı veya yayımlanmadı.
+## Güncel durum: 0.7 yayımlandı
 
-**Güncelleme:** Kullanıcı 14 Ekim'de “Devam et” diyerek çalışmayı yeniden başlattı. Aşağıdaki durdurma kaydı tarihsel bir kontrol noktasıdır; güncel çıktı çalışması test lambdasını ve native PDF yön hatasını düzeltiyor, 0.7 sürümü için doğrulanıyor.
+Kullanıcının “Devam et” isteğiyle geliştirme yeniden başladı. PDF, native yazdırma ve RGB ICC çıktı aşaması tamamlanıp [0.7.0-ea.1](https://github.com/Meingless/PhotoDeck/releases/tag/v0.7.0-ea.1) olarak yayımlandı. Kaynak commit `e1241b31dc0f8e0099e5a49e65ee5ebe15cd36ed`; [CI](https://github.com/Meingless/PhotoDeck/actions/runs/38594999131) dört platformda başarılı. Her hedefte 310 başarılı kontrol (başlangıç/bitiş dahil); Linux/Windows paket testleri ayrıca geçti. ASan/UBSan başarılı, leak detection kapalı. Fiziksel yazıcı testi yapılmadı.
+
+Yerel `bin/photodeck` 0.7'dir; hazır paketler `dist/applications/0.7.0-ea.1/` içindedir. Önceki paketler korunur. Sekiz yüklenen asset'in boyutu ve GitHub SHA-256 değeri yerel dosyalarla eşleşti. Kanıtlar `artifacts/output-release/`, `artifacts/output-ui/` ve teslim klasöründeki `DOGRULAMA.md` içindedir.
+
+Genel Photoshop karşılaştırması tamamlanmış değildir; hedef aktiftir. Kalan gereksinimler `docs/PHOTOSHOP-COMPARISON.md` içinde izlenir.
+
+## Tarihsel durdurma kaydı
+
+Aşağıdaki 0.6 notları önceki durdurma anına aittir. Test lambdası derleme hatası, native PDF sayfa yönü, milimetre margin ve tam sayfa yazıcı margin sorunları 0.7'de düzeltildi. Çıktı değişiklikleri artık commit edilip yayımlanmıştır. Log dosyaları sonraki doğrulamalarla yenilenmiştir.
 
 ## Kararlı sürüm
 
