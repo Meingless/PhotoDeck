@@ -71,7 +71,7 @@ class MainWindow : public QMainWindow {
     QMenu *presetMenu, *userPresetMenu;
     QVector<QPair<QString, UiSettings>> userPresets;
     UiSettings appearance;
-    bool persistAppearance = true, applyingAppearance = false;
+    bool persistSettings = true, applyingAppearance = false;
     QTimer uiSaveTimer;
     QPoint panelDragStart, panelStart;
     UiSettings captureUiSettings() const;
@@ -80,6 +80,12 @@ class MainWindow : public QMainWindow {
     void positionOverlays();
     void customizeUi();
     void customizeBrush();
+    void showBrushLibrary();
+    void applyBrushPreset(const BrushPreset &preset);
+    void loadBrushPresets();
+    bool storeBrushPresets(const QVector<BrushPreset> &presets);
+    QVector<BrushPreset> brushPresets;
+    QString brushLibraryLoadError;
     void saveUiSettings();
     void loadUiSettings();
     void rebuildUserPresets();

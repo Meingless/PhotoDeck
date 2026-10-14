@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.21)
-project(PhotoDeck VERSION 0.8.0 LANGUAGES CXX)
+project(PhotoDeck VERSION 0.9.0 LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_AUTOMOC ON)
@@ -12,6 +12,7 @@ if(MSVC)
 endif()
 find_package(Qt6 6.5 REQUIRED COMPONENTS Widgets PrintSupport)
 add_library(photodeck-core STATIC
+    src/brushpreset.cpp src/brushpreset.h
     src/tones.cpp src/tones.h src/tonedialog.cpp src/tonedialog.h
     src/selection.cpp src/selection.h
     src/blending.cpp src/blending.h
@@ -84,4 +85,8 @@ if(BUILD_TESTING)
     target_link_libraries(photodeck-brushes-tests PRIVATE photodeck-core Qt6::Test)
     add_test(NAME photodeck-brushes COMMAND photodeck-brushes-tests)
     set_tests_properties(photodeck-brushes PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 60)
+    qt_add_executable(photodeck-presets-tests tests/test_presets.cpp resources.qrc)
+    target_link_libraries(photodeck-presets-tests PRIVATE photodeck-core Qt6::Test)
+    add_test(NAME photodeck-presets COMMAND photodeck-presets-tests)
+    set_tests_properties(photodeck-presets PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 60)
 endif()

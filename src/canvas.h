@@ -1,4 +1,5 @@
 #pragma once
+#include "brushpreset.h"
 #include "document.h"
 #include <QWidget>
 
@@ -30,10 +31,7 @@ class Canvas : public QWidget {
     Document *document;
     Tool tool = Move;
     QColor foreground = QColor("#59c9b4"), background = Qt::white;
-    int brushSize = 32, hardness = 80, brushOpacity = 100;
-    int brushSpacing = 16, brushAngle = 0, brushRoundness = 100, pressureMinimum = 10;
-    qreal pressureCurve = 1;
-    bool pressureSize = true, pressureFlow = false, tiltAngle = false, tiltRoundness = false;
+    BrushSettings brush;
     Selection::Mode selectionMode = Selection::Replace;
     int selectionTolerance = 24;
     bool contiguousSelection = true;
@@ -89,6 +87,10 @@ class Canvas : public QWidget {
     void stamp(QPointF at, qreal pressure);
     qreal stampDiameter(qreal pressure) const;
     QTransform tipTransform(QPointF position) const;
+    const QImage &coloredTip(QColor color);
+    QImage tipCache;
+    QColor tipCacheColor;
+    qint64 tipCacheKey = 0;
     bool tabletActive = false, tabletEraser = false, hasStrokeStamp = false;
     qreal inputPressure = 1, lastInputPressure = 1, tabletTiltX = 0, tabletTiltY = 0;
     qreal remainingStampDistance = 0;

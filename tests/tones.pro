@@ -27,3 +27,6 @@ HEADERS += ../src/output.h
 
 SOURCES += ../src/outputdialog.cpp
 HEADERS += ../src/outputdialog.h
+
+SOURCES += ../src/brushpreset.cpp
+HEADERS += ../src/brushpreset.h

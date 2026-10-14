@@ -1,4 +1,4 @@
-# PhotoDeck 0.8.0 Early Access
+# PhotoDeck 0.9.0 Early Access
 
 AI içermeyen, tamamen yerel, C++/Qt 6 ile geliştirilen fotoğraf ve katman düzenleyici. Linux, Windows ve macOS için ortak kaynak kullanır. Tarayıcı motoru, Python çalışma zamanı, bulut hesabı, abonelik veya ağ servisi gerekmez.
 
@@ -23,6 +23,7 @@ Varsayılan görünüm **Odak**. Çalışma alanı menüsünde Grafit, Kağıt, 
 - Beyazın gösterip siyahın gizlediği katman maskeleri. Seçimden maske oluşturma, maskeyi ters çevirme veya kaldırma.
 - Fırça, kalem, silgi, aynı katmandan klon damgası, bağlı alana boya kovası, iki renkli degrade, dikdörtgen, elips ve damlalık.
 - Ctrl+Alt+B fırça/tablet ayarları: uç açısı, yuvarlaklık, çap yüzdesiyle darbe aralığı; basınçla boyut/akış, minimum boyut ve tepki eğrisi; kalem eğimiyle açı/yuvarlaklık. Qt tablet girdisi ve kalemin silgi ucu aynı seçim/maske/geri alma akışını kullanır. Fare tam basınçta çalışır.
+- Düzenle → Fırça kütüphanesi veya Ctrl+Alt+Shift+B: bütün uç/tablet değerlerini isimli preset olarak kaydetme, yeniden seçme, silme, .pdbrush ile içe/dışa aktarma ve sonraki açılışta saklama. Görselden veya görünür kompozisyonun seçiminden özel uç oluşturma: koyu alanlar boyar, beyaz/saydam alanlar gizlenir; oran korunarak en uzun kenar 512 px'e sığdırılır.
 - Dikdörtgen/eliptik seçim, serbest/çokgen kement ve toleranslı sihirli değnek. Yeni/ekle/çıkar/kesiştir; ters çevirme, kenar yumuşatma ve büyütme/küçültme. Seçim alfası çizim, silme, kopyalama ve maske oluşturma işlemlerinde korunur.
 - Seçili piksel silme, kırpma, oranı koruyan yeniden boyutlandırma, 90° dönüş ve aynalama.
 - Ctrl+T ile kaynak koruyan katman dönüşümü: ölçek, keyfi açı, eğme, aynalama ve dört köşeli perspektif. Kaynak piksel, metin ve maske korunur; önizleme iptal edilebilir ve tek adımda geri alınır.
@@ -80,12 +81,12 @@ Dağıtılmış Linux paketini tek dosyalık AppImage olarak hazırlamak için `
 
 ```sh
 python3 scripts/package-appimage.py \
-  --package dist/PhotoDeck-0.8.0-ea.1-linux-x86_64 \
+  --package dist/PhotoDeck-0.9.0-ea.1-linux-x86_64 \
   --appimagetool /path/to/appimagetool \
-  --output dist/PhotoDeck-0.8.0-ea.1-x86_64.AppImage
+  --output dist/PhotoDeck-0.9.0-ea.1-x86_64.AppImage
 ```
 
-AppImage'a çalıştırma izni verip açın: `chmod +x PhotoDeck-0.8.0-ea.1-x86_64.AppImage`. FUSE bulunmayan sistemlerde `APPIMAGE_EXTRACT_AND_RUN=1 ./PhotoDeck-0.8.0-ea.1-x86_64.AppImage` kullanılabilir. Windows taşınabilir paketindeki `PhotoDeck.exe`, yanındaki DLL ve eklenti klasörleriyle birlikte taşınmalıdır. macOS paketindeki `.app` tüm içeriğiyle korunmalıdır.
+AppImage'a çalıştırma izni verip açın: `chmod +x PhotoDeck-0.9.0-ea.1-x86_64.AppImage`. FUSE bulunmayan sistemlerde `APPIMAGE_EXTRACT_AND_RUN=1 ./PhotoDeck-0.9.0-ea.1-x86_64.AppImage` kullanılabilir. Windows taşınabilir paketindeki `PhotoDeck.exe`, yanındaki DLL ve eklenti klasörleriyle birlikte taşınmalıdır. macOS paketindeki `.app` tüm içeriğiyle korunmalıdır.
 
 ## Mevcut kapsam
 
@@ -103,8 +104,14 @@ Uygulama kodu ve örnek çizim MIT lisanslıdır. Qt ayrı LGPLv3/GPLv3 veya tic
 
 Filtre sırası pikselleştirme → gren → Gaussian → high-pass → unsharp; eski kutu bulanıklığı ve ton ayarları bunlardan önce, maske ve katman dönüşümü sonra uygulanır. Gaussian ayrılabilir, normalize edilmiş gerçek çekirdek kullanır; yarıçap 0–16 px, sigma `max(0.5, yarıçap/2)` ve sınır piksel tekrarları vardır. Maske feather aynı Gaussian yöntemidir. Filtreler RGB 8 bit ve katman ölçeğindedir; reorderable Smart Filter stack, filter mask, lens/motion blur, adaptive/smart sharpen veya Photoshop preset uyumluluğu değildir. Büyük görüntü ve yarıçap CPU/bellek maliyetini artırır; canlı önizleme kapatılabilir.
 
-Tüm Photoshop alanlarının karşılaştırması ve açık farklar: [docs/PHOTOSHOP-COMPARISON.md](docs/PHOTOSHOP-COMPARISON.md). 0.3–0.8 farkların bir kısmını kapatır; karşılaştırma çalışması devam eder.
+Tüm Photoshop alanlarının karşılaştırması ve açık farklar: [docs/PHOTOSHOP-COMPARISON.md](docs/PHOTOSHOP-COMPARISON.md). 0.3–0.9 farkların bir kısmını kapatır; karşılaştırma çalışması devam eder.
 
 0.7 çıktı kapsamı: Çalışma alanı RGB/sRGB 8 bittir. ICC çıktı pikselleri seçilen RGB profiline dönüştürülür; BMP profil eklemeyi desteklemez. DPI metadata desteği biçime bağlıdır; mevcut piksel ayrıntısını artırmaz. PDF görünür kompozisyonun düzleştirilmiş raster çıktısıdır; katmanlı/vektör/PDF-X değildir. Fiziksel yazıcı testi yapılmadı. CMYK/Lab, yüksek bit derinliği, monitör profiliyle görüntüleme, soft proof ve gamut uyarısı açık hedeflerdir.
 
 0.8 fırça kapsamı: Darbe aralığı çizgi boyunca korunur; bırakma noktasına son darbe uygulanır. Alfa seçim kapsamı her darbeye ayrı uygulanır. Basınç örnekleri hareket boyunca doğrusal enterpole edilir; boyut minimum + (1−minimum) × basınç^tepki, akış basınç^tepki kullanır. Eğim, eliptik ucu yönlendirir ve sıkıştırır. Ayarlar belge sekmesinin oturumu içindir; proje kaydına eklenmez. Özel görüntü uçları, ABR, fırça kütüphanesi, scatter/jitter/texture, simetri ve fiziksel tablet cihaz matrisi açık hedeflerdir. Fiziksel tablet testi yapılmadı; testler gerçek Qt tablet olaylarını aygıt fixture'larıyla gönderir.
+
+0.9: Menüler, sekmeler, araçlar, paneller, listeler, girişler, odak/hover/seçim durumları ve diyaloglar ortak modern tasarımla yenilendi. Varsayılan **3 · Odak**, on yerleşim ve .pdui özelleştirmeleri korunur. Araç ikonları farklı çözünürlüklerde çizilir; özel panel renklerinde okunabilir metin rengi türetilir. Renk seçiminiz değiştirilmez.
+
+Fırça kütüphanesi uygulama yapılandırma klasöründeki `brushes.pdbrush` dosyasındadır. 128 kişisel preset, toplam 8 MiB gri uç maskesi ve 16 MiB dosya sınırı vardır. İçe aktarım mevcut isimleri değiştirmez, çakışan isimlere sayı ekler; geçersiz koleksiyon bütünüyle reddedilir. Kayıt atomiktir, ortak dosya kilidi ve oturum değişikliği kontrolü vardır. Okunamayan dosya ilk değişiklikten önce ayrı bir yedeğe kopyalanır. `--no-settings` kullanıcı kütüphanesini okumaz/yazmaz; açıkça istenen dosya dışa aktarımı çalışır.
+
+Görsel uçlar basınç/eğim, seçim, piksel/maske ve silgiyle çalışır. Klon kaynağı dönmez; yalnızca uç kapsamı dönüp ölçeklenir. Özel uçta sertlik yerine maskenin kendi kenarları kullanılır. Preset araç ve fırça değerlerini saklar; ön plan rengi, klon kaynak konumu ve belge verileri saklanmaz. .pdeck v5 değişmedi. ABR, scatter/jitter/texture, smoothing/simetri ve fiziksel tablet cihaz matrisi açık kalır.

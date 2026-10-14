@@ -29,6 +29,7 @@
 #include <QJsonDocument>
 #include <QKeyEvent>
 #include <QLineEdit>
+#include <QLockFile>
 #include <QMenuBar>
 #include <QMessageBox>
 #include <QMimeData>
@@ -55,117 +56,123 @@
 
 namespace {
 QIcon toolIcon(int kind, QColor color = QColor("#d5dee5")) {
-    QPixmap pm(28, 28);
-    pm.fill(Qt::transparent);
-    QPainter p(&pm);
-    p.setRenderHint(QPainter::Antialiasing);
-    p.setPen(QPen(color, 1.65, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
-    switch (kind) {
-    case Canvas::Move:
-        p.drawLine(14, 4, 14, 24);
-        p.drawLine(4, 14, 24, 14);
-        p.drawPolyline(QPolygonF{{10, 8}, {14, 4}, {18, 8}});
-        p.drawPolyline(QPolygonF{{10, 20}, {14, 24}, {18, 20}});
-        p.drawPolyline(QPolygonF{{8, 10}, {4, 14}, {8, 18}});
-        p.drawPolyline(QPolygonF{{20, 10}, {24, 14}, {20, 18}});
-        break;
-    case Canvas::Select:
-        p.setPen(QPen(color, 1.65, Qt::DashLine));
-        p.drawRect(5, 6, 18, 16);
-        break;
-    case Canvas::EllipseSelect:
-        p.setPen(QPen(color, 1.65, Qt::DashLine));
-        p.drawEllipse(5, 5, 18, 18);
-        break;
-    case Canvas::Lasso:
-        p.drawEllipse(4, 5, 18, 14);
-        p.drawPolyline(QPolygonF{{12, 17}, {9, 23}, {14, 24}});
-        break;
-    case Canvas::PolygonLasso:
-        p.setPen(QPen(color, 1.65, Qt::DashLine));
-        p.drawPolygon(QPolygonF{{5, 22}, {7, 7}, {21, 4}, {24, 20}});
-        break;
-    case Canvas::Wand:
-        p.drawLine(5, 23, 19, 9);
-        p.drawLine(20, 2, 20, 6);
-        p.drawLine(24, 6, 27, 6);
-        p.drawLine(15, 5, 12, 2);
-        break;
-    case Canvas::Crop:
-        p.drawPolyline(QPolygonF{{8, 3}, {8, 20}, {25, 20}});
-        p.drawPolyline(QPolygonF{{3, 8}, {20, 8}, {20, 25}});
-        break;
-    case Canvas::Brush:
-        p.drawPolyline(QPolygonF{{10, 17}, {18, 5}, {22, 8}, {13, 20}});
-        p.drawArc(4, 16, 10, 9, 0, 180 * 16);
-        p.drawLine(4, 24, 12, 24);
-        break;
-    case Canvas::Pencil:
-        p.drawPolygon(QPolygonF{{5, 23}, {7, 16}, {19, 4}, {24, 9}, {12, 21}});
-        p.drawLine(16, 7, 21, 12);
-        break;
-    case Canvas::Eraser:
-        p.drawPolygon(QPolygonF{{5, 17}, {16, 5}, {24, 12}, {14, 23}, {11, 23}});
-        p.drawLine(10, 12, 19, 19);
-        p.drawLine(14, 23, 24, 23);
-        break;
-    case Canvas::Clone:
-        p.drawRoundedRect(10, 4, 8, 12, 3, 3);
-        p.drawPolyline(QPolygonF{{10, 14}, {5, 20}, {5, 24}, {23, 24}, {23, 20}, {18, 14}});
-        p.drawLine(5, 20, 23, 20);
-        break;
-    case Canvas::Fill:
-        p.drawPolygon(QPolygonF{{4, 14}, {13, 5}, {23, 15}, {14, 24}});
-        p.drawLine(7, 12, 19, 12);
-        p.drawLine(10, 7, 10, 3);
-        p.drawLine(24, 18, 24, 23);
-        break;
-    case Canvas::Gradient: {
-        QLinearGradient g(4, 0, 24, 0);
-        g.setColorAt(0, color);
-        g.setColorAt(1, QColor("#384851"));
-        p.fillRect(5, 6, 18, 16, g);
-        p.drawRect(5, 6, 18, 16);
-        break;
+    QIcon icon;
+    for (int edge : {24, 32, 48, 64, 96}) {
+        QPixmap pm(edge, edge);
+        pm.fill(Qt::transparent);
+        QPainter p(&pm);
+        p.scale(edge / 28.0, edge / 28.0);
+        p.setRenderHint(QPainter::Antialiasing);
+        p.setPen(QPen(color, 1.65, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+        switch (kind) {
+        case Canvas::Move:
+            p.drawLine(14, 4, 14, 24);
+            p.drawLine(4, 14, 24, 14);
+            p.drawPolyline(QPolygonF{{10, 8}, {14, 4}, {18, 8}});
+            p.drawPolyline(QPolygonF{{10, 20}, {14, 24}, {18, 20}});
+            p.drawPolyline(QPolygonF{{8, 10}, {4, 14}, {8, 18}});
+            p.drawPolyline(QPolygonF{{20, 10}, {24, 14}, {20, 18}});
+            break;
+        case Canvas::Select:
+            p.setPen(QPen(color, 1.65, Qt::DashLine));
+            p.drawRect(5, 6, 18, 16);
+            break;
+        case Canvas::EllipseSelect:
+            p.setPen(QPen(color, 1.65, Qt::DashLine));
+            p.drawEllipse(5, 5, 18, 18);
+            break;
+        case Canvas::Lasso:
+            p.drawEllipse(4, 5, 18, 14);
+            p.drawPolyline(QPolygonF{{12, 17}, {9, 23}, {14, 24}});
+            break;
+        case Canvas::PolygonLasso:
+            p.setPen(QPen(color, 1.65, Qt::DashLine));
+            p.drawPolygon(QPolygonF{{5, 22}, {7, 7}, {21, 4}, {24, 20}});
+            break;
+        case Canvas::Wand:
+            p.drawLine(5, 23, 19, 9);
+            p.drawLine(20, 2, 20, 6);
+            p.drawLine(24, 6, 27, 6);
+            p.drawLine(15, 5, 12, 2);
+            break;
+        case Canvas::Crop:
+            p.drawPolyline(QPolygonF{{8, 3}, {8, 20}, {25, 20}});
+            p.drawPolyline(QPolygonF{{3, 8}, {20, 8}, {20, 25}});
+            break;
+        case Canvas::Brush:
+            p.drawPolyline(QPolygonF{{10, 17}, {18, 5}, {22, 8}, {13, 20}});
+            p.drawArc(4, 16, 10, 9, 0, 180 * 16);
+            p.drawLine(4, 24, 12, 24);
+            break;
+        case Canvas::Pencil:
+            p.drawPolygon(QPolygonF{{5, 23}, {7, 16}, {19, 4}, {24, 9}, {12, 21}});
+            p.drawLine(16, 7, 21, 12);
+            break;
+        case Canvas::Eraser:
+            p.drawPolygon(QPolygonF{{5, 17}, {16, 5}, {24, 12}, {14, 23}, {11, 23}});
+            p.drawLine(10, 12, 19, 19);
+            p.drawLine(14, 23, 24, 23);
+            break;
+        case Canvas::Clone:
+            p.drawRoundedRect(10, 4, 8, 12, 3, 3);
+            p.drawPolyline(QPolygonF{{10, 14}, {5, 20}, {5, 24}, {23, 24}, {23, 20}, {18, 14}});
+            p.drawLine(5, 20, 23, 20);
+            break;
+        case Canvas::Fill:
+            p.drawPolygon(QPolygonF{{4, 14}, {13, 5}, {23, 15}, {14, 24}});
+            p.drawLine(7, 12, 19, 12);
+            p.drawLine(10, 7, 10, 3);
+            p.drawLine(24, 18, 24, 23);
+            break;
+        case Canvas::Gradient: {
+            QLinearGradient g(4, 0, 24, 0);
+            g.setColorAt(0, color);
+            g.setColorAt(1, QColor("#384851"));
+            p.fillRect(5, 6, 18, 16, g);
+            p.drawRect(5, 6, 18, 16);
+            break;
+        }
+        case Canvas::Text:
+            p.drawLine(5, 6, 23, 6);
+            p.drawLine(14, 6, 14, 24);
+            p.drawLine(10, 24, 18, 24);
+            p.drawLine(5, 6, 5, 10);
+            p.drawLine(23, 6, 23, 10);
+            break;
+        case Canvas::Rectangle:
+            p.drawRoundedRect(5, 6, 18, 16, 2, 2);
+            break;
+        case Canvas::Ellipse:
+            p.drawEllipse(5, 6, 18, 16);
+            break;
+        case Canvas::Picker:
+            p.drawPolyline(QPolygonF{{6, 22}, {6, 18}, {19, 5}, {23, 9}, {10, 22}, {6, 22}});
+            p.drawLine(15, 7, 21, 13);
+            break;
+        case Canvas::Hand:
+            p.drawPolyline(QPolygonF{{8, 24},
+                                     {4, 15},
+                                     {6, 13},
+                                     {10, 17},
+                                     {10, 6},
+                                     {13, 6},
+                                     {13, 13},
+                                     {13, 4},
+                                     {16, 4},
+                                     {16, 13},
+                                     {16, 6},
+                                     {19, 6},
+                                     {19, 14},
+                                     {19, 9},
+                                     {22, 9},
+                                     {22, 20},
+                                     {18, 25}});
+            break;
+        }
+        p.end();
+        icon.addPixmap(pm);
     }
-    case Canvas::Text:
-        p.drawLine(5, 6, 23, 6);
-        p.drawLine(14, 6, 14, 24);
-        p.drawLine(10, 24, 18, 24);
-        p.drawLine(5, 6, 5, 10);
-        p.drawLine(23, 6, 23, 10);
-        break;
-    case Canvas::Rectangle:
-        p.drawRoundedRect(5, 6, 18, 16, 2, 2);
-        break;
-    case Canvas::Ellipse:
-        p.drawEllipse(5, 6, 18, 16);
-        break;
-    case Canvas::Picker:
-        p.drawPolyline(QPolygonF{{6, 22}, {6, 18}, {19, 5}, {23, 9}, {10, 22}, {6, 22}});
-        p.drawLine(15, 7, 21, 13);
-        break;
-    case Canvas::Hand:
-        p.drawPolyline(QPolygonF{{8, 24},
-                                 {4, 15},
-                                 {6, 13},
-                                 {10, 17},
-                                 {10, 6},
-                                 {13, 6},
-                                 {13, 13},
-                                 {13, 4},
-                                 {16, 4},
-                                 {16, 13},
-                                 {16, 6},
-                                 {19, 6},
-                                 {19, 14},
-                                 {19, 9},
-                                 {22, 9},
-                                 {22, 20},
-                                 {18, 25}});
-        break;
-    }
-    return QIcon(pm);
+    return icon;
 }
 QWidget *row(QWidget *a, QWidget *b = nullptr, QWidget *c = nullptr) {
     auto *w = new QWidget;
@@ -236,7 +243,7 @@ void Histogram::paintEvent(QPaintEvent *) {
     }
 }
 MainWindow::MainWindow(bool recovery, bool useSettings) {
-    persistAppearance = useSettings;
+    persistSettings = useSettings;
     setObjectName("PhotoDeck");
     setWindowTitle("PhotoDeck");
     resize(1380, 880);
@@ -297,6 +304,8 @@ MainWindow::MainWindow(bool recovery, bool useSettings) {
         loadUiSettings();
     else
         applyUiPreset("focus", false);
+    if (useSettings)
+        loadBrushPresets();
     if (recovery)
         QTimer::singleShot(0, this, &MainWindow::recover);
 }
@@ -347,6 +356,7 @@ void MainWindow::buildMenus() {
     file->addSeparator();
     file->addAction(action("quit", "Çıkış", QKeySequence::Quit, [this] { close(); }));
     auto *edit = menuBar()->addMenu("&Düzenle");
+    edit->setObjectName("editMenu");
     edit->addAction(action("undo", "Geri al", QKeySequence::Undo, [this] {
         if (currentDocument())
             currentDocument()->undo();
@@ -781,6 +791,13 @@ void MainWindow::buildTools() {
     options->addWidget(brushOpacityInput);
     options->addAction(action("brushSettings", "Fırça / tablet ayarları…", QKeySequence("Ctrl+Alt+B"),
                               [this] { customizeBrush(); }));
+    options->addAction(action("brushLibrary", "Fırça kütüphanesi…", QKeySequence("Ctrl+Alt+Shift+B"),
+                              [this] { showBrushLibrary(); }));
+    if (auto *editMenu = findChild<QMenu *>("editMenu")) {
+        editMenu->addSeparator();
+        editMenu->addAction(actions["brushSettings"]);
+        editMenu->addAction(actions["brushLibrary"]);
+    }
     options->addSeparator();
     options->addAction(actions["crop"]);
     auto *selectionMode = new QComboBox;
@@ -814,10 +831,12 @@ void MainWindow::buildTools() {
     connect(tolerance, &QSpinBox::valueChanged, this, [syncSelection](int) { syncSelection(); });
     connect(contiguous, &QCheckBox::toggled, this, [syncSelection](bool) { syncSelection(); });
     auto syncBrush = [this] {
+        if (refreshing)
+            return;
         if (auto *c = currentCanvas()) {
-            c->brushSize = sizeInput->value();
-            c->hardness = hardnessInput->value();
-            c->brushOpacity = brushOpacityInput->value();
+            c->brush.size = sizeInput->value();
+            c->brush.hardness = hardnessInput->value();
+            c->brush.flow = brushOpacityInput->value();
         }
     };
     connect(sizeInput, &QSpinBox::valueChanged, this, [syncBrush](int) { syncBrush(); });
@@ -882,9 +901,7 @@ void MainWindow::buildInspector() {
     auto *layout = new QVBoxLayout(panel);
     layout->setContentsMargins(12, 12, 12, 12);
     layout->setSpacing(9);
-    auto *heading = new QLabel("RENK & TON");
-    heading->setObjectName("sectionTitle");
-    layout->addWidget(heading);
+
     histogram = new Histogram;
     histogram->setFixedHeight(56);
     layout->addWidget(histogram);
@@ -944,9 +961,7 @@ void MainWindow::buildInspector() {
     layout = new QVBoxLayout(panel);
     layout->setContentsMargins(12, 10, 12, 10);
     layout->setSpacing(7);
-    auto *heading2 = new QLabel("KATMANLAR");
-    heading2->setObjectName("sectionTitle");
-    layout->addWidget(heading2);
+
     blend = new QComboBox;
     blend->addItems(Blending::names());
     blend->setObjectName("blendMode");
@@ -1140,7 +1155,7 @@ void MainWindow::updateActionAvailability() {
     for (auto it = actions.begin(); it != actions.end(); ++it)
         if (it.key() != "new" && it.key() != "open" && it.key() != "quit" && it.key() != "demo" &&
             it.key() != "help" && it.key() != "about" && it.key() != "batch" &&
-            !it.key().startsWith("ui."))
+            it.key() != "brushLibrary" && !it.key().startsWith("ui."))
             it.value()->setEnabled(present);
 
     actions["undo"]->setEnabled(present && d->canUndo());
@@ -1245,11 +1260,12 @@ void MainWindow::refresh() {
                       .arg(d->state.layers.size())
                       .arg(d->imageBytes() / 1048576.0, 0, 'f', 1));
     zoomLabel->setText(QString::number(qRound(c->zoom * 100)) + " %  ");
-    colorButton->setStyleSheet("QToolButton {background:" + c->foreground.name() +
-                               ";border:3px solid #d3ddd8;border-radius:7px;}");
-    sizeInput->setValue(c->brushSize);
-    hardnessInput->setValue(c->hardness);
-    brushOpacityInput->setValue(c->brushOpacity);
+    colorButton->setStyleSheet("QToolButton {background:" + c->foreground.name() + ";border:2px solid " +
+                               appearance.resolved().line.name() + ";border-radius:7px;}");
+    hardnessInput->setEnabled(c->brush.tipMask.isNull());
+    sizeInput->setValue(c->brush.size);
+    hardnessInput->setValue(c->brush.hardness);
+    brushOpacityInput->setValue(c->brush.flow);
     {
         QSignalBlocker modeBlock(selectionModeInput), toleranceBlock(selectionToleranceInput),
             contiguousBlock(contiguousSelectionInput);
@@ -1396,15 +1412,16 @@ void MainWindow::customizeBrush() {
         form->addRow(label, box);
         return box;
     };
-    auto *spacing = spin("brushSpacing", "Darbe aralığı (çap yüzdesi)", 1, 200, c->brushSpacing, " %");
-    auto *angle = spin("brushAngle", "Uç açısı", -180, 180, c->brushAngle, "°");
-    auto *roundness = spin("brushRoundness", "Yuvarlaklık", 5, 100, c->brushRoundness, " %");
-    auto *minimum = spin("pressureMinimum", "En düşük basınç boyutu", 1, 100, c->pressureMinimum, " %");
+    auto *spacing = spin("brushSpacing", "Darbe aralığı (çap yüzdesi)", 1, 200, c->brush.spacing, " %");
+    auto *angle = spin("brushAngle", "Uç açısı", -180, 180, c->brush.angle, "°");
+    auto *roundness = spin("brushRoundness", "Yuvarlaklık", 5, 100, c->brush.roundness, " %");
+    auto *minimum =
+        spin("pressureMinimum", "En düşük basınç boyutu", 1, 100, c->brush.pressureMinimum, " %");
     auto *curve = new QDoubleSpinBox;
     curve->setObjectName("pressureCurve");
     curve->setRange(.25, 4);
     curve->setSingleStep(.25);
-    curve->setValue(c->pressureCurve);
+    curve->setValue(c->brush.pressureCurve);
     form->addRow("Basınç tepkisi (1: doğrusal)", curve);
     auto check = [&](QString name, QString label, bool value) {
         auto *box = new QCheckBox(label);
@@ -1413,11 +1430,11 @@ void MainWindow::customizeBrush() {
         form->addRow(box);
         return box;
     };
-    auto *size = check("pressureSize", "Basınç boyutu değiştirir", c->pressureSize);
-    auto *flow = check("pressureFlow", "Basınç akışı değiştirir", c->pressureFlow);
-    auto *tiltAngle = check("tiltAngle", "Kalem eğimi uç açısını değiştirir", c->tiltAngle);
+    auto *size = check("pressureSize", "Basınç boyutu değiştirir", c->brush.pressureSize);
+    auto *flow = check("pressureFlow", "Basınç akışı değiştirir", c->brush.pressureFlow);
+    auto *tiltAngle = check("tiltAngle", "Kalem eğimi uç açısını değiştirir", c->brush.tiltAngle);
     auto *tiltRoundness =
-        check("tiltRoundness", "Kalem eğimi yuvarlaklığı değiştirir", c->tiltRoundness);
+        check("tiltRoundness", "Kalem eğimi yuvarlaklığı değiştirir", c->brush.tiltRoundness);
     auto *note = new QLabel("Ayarlar bu belgenin fırça, kalem, silgi ve klon araçları içindir. "
                             "Tablet basıncı/eğimi aygıtın ve sürücünün sağladığı veriye bağlıdır. "
                             "Fare tam basınçla çalışır.");
@@ -1431,15 +1448,15 @@ void MainWindow::customizeBrush() {
     connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
     if (dialog.exec() != QDialog::Accepted)
         return;
-    c->brushSpacing = spacing->value();
-    c->brushAngle = angle->value();
-    c->brushRoundness = roundness->value();
-    c->pressureMinimum = minimum->value();
-    c->pressureCurve = curve->value();
-    c->pressureSize = size->isChecked();
-    c->pressureFlow = flow->isChecked();
-    c->tiltAngle = tiltAngle->isChecked();
-    c->tiltRoundness = tiltRoundness->isChecked();
+    c->brush.spacing = spacing->value();
+    c->brush.angle = angle->value();
+    c->brush.roundness = roundness->value();
+    c->brush.pressureMinimum = minimum->value();
+    c->brush.pressureCurve = curve->value();
+    c->brush.pressureSize = size->isChecked();
+    c->brush.pressureFlow = flow->isChecked();
+    c->brush.tiltAngle = tiltAngle->isChecked();
+    c->brush.tiltRoundness = tiltRoundness->isChecked();
     c->update();
 }
 void MainWindow::exportAdvancedRaster() {
@@ -1909,6 +1926,287 @@ QString uiSettingsPath() {
     return dir + "/ui.ini";
 }
 } // namespace
+namespace {
+QString brushLibraryPath() {
+    return QFileInfo(uiSettingsPath()).absolutePath() + "/brushes.pdbrush";
+}
+} // namespace
+void MainWindow::loadBrushPresets() {
+    if (!persistSettings)
+        return;
+    const QString file = brushLibraryPath();
+    brushPresets.clear();
+    brushLibraryLoadError.clear();
+    if (QFileInfo::exists(file) && !BrushLibrary::read(file, &brushPresets, &brushLibraryLoadError))
+        status->setText("Fırça kütüphanesi okunamadı; mevcut dosya korundu.");
+}
+bool MainWindow::storeBrushPresets(const QVector<BrushPreset> &presets) {
+    QString e;
+    if (!BrushLibrary::valid(presets, &e)) {
+        error(e);
+        return false;
+    }
+    if (persistSettings) {
+        const QString file = brushLibraryPath();
+        QLockFile lock(file + ".lock");
+        if (!lock.tryLock(0)) {
+            error("Fırça kütüphanesi başka bir oturumda kullanılıyor. Tekrar deneyin.");
+            return false;
+        }
+        if (QFileInfo::exists(file)) {
+            QVector<BrushPreset> disk;
+            QString readError;
+            if (BrushLibrary::read(file, &disk, &readError)) {
+                if (!brushLibraryLoadError.isEmpty() || disk != brushPresets) {
+                    error("Fırça kütüphanesi başka bir oturumda değişti. Kütüphane penceresini yeniden "
+                          "açın.");
+                    return false;
+                }
+            } else {
+                if (brushLibraryLoadError.isEmpty()) {
+                    error("Fırça dosyası değişmiş veya okunamıyor. Kütüphane penceresini yeniden açın.");
+                    return false;
+                }
+                const QString backup = QFileInfo(file).absolutePath() + "/brushes-unreadable-" +
+                                       QUuid::createUuid().toString(QUuid::WithoutBraces) + ".pdbrush";
+                if (!QFile::copy(file, backup)) {
+                    error("Okunamayan kütüphane yedeklenemedi; dosya değiştirilmedi.");
+                    return false;
+                }
+            }
+        } else if (!brushPresets.isEmpty() || !brushLibraryLoadError.isEmpty()) {
+            error("Fırça dosyası kaldırılmış. Kütüphane penceresini yeniden açın.");
+            return false;
+        }
+        if (!BrushLibrary::write(file, presets, &e)) {
+            error(e);
+            return false;
+        }
+    }
+    brushPresets = presets;
+    brushLibraryLoadError.clear();
+    return true;
+}
+void MainWindow::applyBrushPreset(const BrushPreset &preset) {
+    auto *c = currentCanvas();
+    if (!c || !preset.valid())
+        return;
+    c->finishPendingGesture();
+    c->brush = preset.settings;
+    const Canvas::Tool tools[] = {Canvas::Brush, Canvas::Pencil, Canvas::Eraser, Canvas::Clone};
+    c->setTool(tools[preset.tool]);
+    refresh();
+    c->update();
+    status->setText("Fırça · " + preset.name);
+}
+void MainWindow::showBrushLibrary() {
+    loadBrushPresets();
+    QDialog dialog(this);
+    dialog.setObjectName("brushLibraryDialog");
+    dialog.setWindowTitle("Fırça kütüphanesi");
+    dialog.resize(620, 540);
+    auto *layout = new QVBoxLayout(&dialog);
+    layout->setContentsMargins(20, 20, 20, 20);
+    layout->setSpacing(12);
+    auto *title = new QLabel("Fırçalarınız, tek yerde");
+    title->setObjectName("dialogTitle");
+    layout->addWidget(title);
+    auto *note = new QLabel(
+        brushLibraryLoadError.isEmpty()
+            ? "Ayarları isimli presetlerle saklayın, taşıyın ve yeniden kullanın."
+            : "Kütüphane okunamadı. İlk değişiklikten önce mevcut dosya ayrı bir yedeğe kopyalanacak.");
+    note->setWordWrap(true);
+    note->setObjectName("mutedLabel");
+    layout->addWidget(note);
+    auto *list = new QListWidget;
+    list->setObjectName("brushPresetList");
+    list->setIconSize({40, 40});
+    layout->addWidget(list, 1);
+    auto *details = new QLabel;
+    details->setWordWrap(true);
+    details->setTextFormat(Qt::PlainText);
+    details->setObjectName("presetDetails");
+    layout->addWidget(details);
+    const auto builtins = BrushLibrary::builtins();
+    auto populate = [&] {
+        list->clear();
+        for (int i = 0; i < builtins.size() + brushPresets.size(); ++i) {
+            const auto &p = i < builtins.size() ? builtins[i] : brushPresets[i - builtins.size()];
+            auto *item =
+                new QListWidgetItem((i < builtins.size() ? "Yerleşik · " : "Kişisel · ") + p.name, list);
+            item->setData(Qt::UserRole, i);
+            item->setSizeHint({200, 48});
+            if (!p.settings.tipMask.isNull())
+                item->setIcon(QIcon(QPixmap::fromImage(p.settings.tipMask)));
+            else
+                item->setIcon(
+                    toolIcon(p.tool == 1 ? Canvas::Pencil : Canvas::Brush, appearance.resolved().text));
+        }
+        if (list->count())
+            list->setCurrentRow(0);
+    };
+    auto button = [&](QHBoxLayout *row, QString id, QString text) {
+        auto *b = new QPushButton(text);
+        b->setObjectName(id);
+        row->addWidget(b);
+        return b;
+    };
+    auto *editRow = new QHBoxLayout;
+    layout->addLayout(editRow);
+    auto *save = button(editRow, "saveBrushPreset", "Mevcut fırçayı kaydet…");
+    auto *remove = button(editRow, "deleteBrushPreset", "Sil");
+    auto *tipImage = button(editRow, "defineBrushImage", "Görselden uç…");
+    auto *tipSelection = button(editRow, "defineBrushSelection", "Seçimden uç");
+    save->setEnabled(currentCanvas());
+    tipImage->setEnabled(currentCanvas());
+    tipSelection->setEnabled(currentDocument());
+    auto *files = new QHBoxLayout;
+    layout->addLayout(files);
+    auto *import = button(files, "importBrushPresets", "İçe aktar…");
+    auto *exportAll = button(files, "exportBrushPresets", "Kütüphaneyi dışa aktar…");
+    auto *exportOne = button(files, "exportBrushPreset", "Seçileni dışa aktar…");
+    auto *footer = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Close);
+    footer->button(QDialogButtonBox::Ok)->setText("Seçileni kullan");
+    footer->button(QDialogButtonBox::Close)->setText("Kapat");
+    footer->button(QDialogButtonBox::Ok)->setProperty("primary", true);
+    layout->addWidget(footer);
+    auto selected = [&]() -> BrushPreset {
+        const int row = list->currentRow();
+        return row < 0                 ? BrushPreset{}
+               : row < builtins.size() ? builtins[row]
+                                       : brushPresets[row - builtins.size()];
+    };
+    connect(list, &QListWidget::currentRowChanged, &dialog, [&](int row) {
+        remove->setEnabled(row >= builtins.size());
+        footer->button(QDialogButtonBox::Ok)->setEnabled(row >= 0 && currentCanvas());
+        exportOne->setEnabled(row >= 0);
+        const auto p = selected();
+        details->setText(
+            row < 0 ? QString()
+                    : QString("%1 px · %2% akış · %3% aralık · %4° açı · %5% yuvarlaklık\n%6")
+                          .arg(p.settings.size)
+                          .arg(p.settings.flow)
+                          .arg(p.settings.spacing)
+                          .arg(p.settings.angle)
+                          .arg(p.settings.roundness)
+                          .arg(p.settings.tipMask.isNull()
+                                   ? "Eliptik uç"
+                                   : "Görsel uç · sertlik yerine maskenin kendi kenarları kullanılır"));
+    });
+    connect(save, &QPushButton::clicked, &dialog, [&] {
+        auto *c = currentCanvas();
+        if (!c)
+            return;
+        bool ok = false;
+        QString name = QInputDialog::getText(&dialog, "Fırçayı kaydet", "Preset adı (1–80 karakter)",
+                                             QLineEdit::Normal, "Fırçam", &ok)
+                           .trimmed()
+                           .normalized(QString::NormalizationForm_C);
+        if (!ok)
+            return;
+        int tool = c->tool == Canvas::Pencil   ? 1
+                   : c->tool == Canvas::Eraser ? 2
+                   : c->tool == Canvas::Clone  ? 3
+                                               : 0;
+        QVector<BrushPreset> next;
+        QString e;
+        if (!BrushLibrary::merge(brushPresets, {{name, tool, c->brush}}, &next, &e)) {
+            error(e);
+            return;
+        }
+        if (storeBrushPresets(next)) {
+            populate();
+            list->setCurrentRow(list->count() - 1);
+        }
+    });
+    connect(remove, &QPushButton::clicked, &dialog, [&] {
+        const int index = list->currentRow() - builtins.size();
+        if (index < 0 || index >= brushPresets.size())
+            return;
+        const auto reply = QMessageBox::question(
+            &dialog, "Preseti sil", "Seçilen kişisel fırça presetini silmek istiyor musunuz?");
+        if (reply != QMessageBox::Yes)
+            return;
+        auto next = brushPresets;
+        next.removeAt(index);
+        if (storeBrushPresets(next))
+            populate();
+    });
+    connect(import, &QPushButton::clicked, &dialog, [&] {
+        const QString file = QFileDialog::getOpenFileName(&dialog, "Fırça kütüphanesini içe aktar", {},
+                                                          "PhotoDeck fırçaları (*.pdbrush)");
+        if (file.isEmpty())
+            return;
+        QVector<BrushPreset> incoming, next;
+        QString e;
+        if (!BrushLibrary::read(file, &incoming, &e) ||
+            !BrushLibrary::merge(brushPresets, incoming, &next, &e)) {
+            error(e);
+            return;
+        }
+        if (storeBrushPresets(next))
+            populate();
+    });
+    const auto output = [&](bool all) {
+        QVector<BrushPreset> presets = all ? brushPresets : QVector<BrushPreset>{selected()};
+        const QString file =
+            chooseSaveTarget(&dialog, "Fırçaları dışa aktar", "PhotoDeck-fircalar.pdbrush",
+                             "PhotoDeck fırçaları (*.pdbrush)");
+        if (file.isEmpty())
+            return;
+        if (persistSettings &&
+            QFileInfo(file).canonicalFilePath() == QFileInfo(brushLibraryPath()).canonicalFilePath()) {
+            error("Uygulamanın etkin kütüphane dosyasına dışa aktarılamaz. Başka bir çıktı dosyası "
+                  "seçin.");
+            return;
+        }
+        QString e;
+        if (!BrushLibrary::write(file, presets, &e))
+            error(e);
+    };
+    connect(exportAll, &QPushButton::clicked, &dialog, [&] { output(true); });
+    connect(exportOne, &QPushButton::clicked, &dialog, [&] { output(false); });
+    const auto define = [&](QImage image) {
+        const QImage mask = BrushSettings::defineTip(image);
+        if (mask.isNull()) {
+            error("Uç oluşturulamadı. Siyah/koyu alanlar boyar, beyaz ve saydam alanlar gizlenir.");
+            return;
+        }
+        if (auto *c = currentCanvas()) {
+            c->finishPendingGesture();
+            c->brush.tipMask = mask;
+            c->setTool(Canvas::Brush);
+            refresh();
+            c->update();
+        }
+        note->setText("Görsel uç hazır. Kalıcı saklamak için Mevcut fırçayı kaydet düğmesini kullanın.");
+    };
+    connect(tipImage, &QPushButton::clicked, &dialog, [&] {
+        const QString file =
+            QFileDialog::getOpenFileName(&dialog, "Görselden fırça ucu", {},
+                                         "Görüntüler (*.png *.jpg *.jpeg *.webp *.bmp *.tif *.tiff)");
+        if (file.isEmpty())
+            return;
+        QString e;
+        QImage image = Document::readImage(file, &e);
+        if (image.isNull()) {
+            error(e);
+            return;
+        }
+        define(image);
+    });
+    connect(tipSelection, &QPushButton::clicked, &dialog, [&] {
+        if (auto *d = currentDocument())
+            define(d->selection.copyFrom(d->composite()));
+    });
+    connect(footer, &QDialogButtonBox::accepted, &dialog, [&] {
+        applyBrushPreset(selected());
+        dialog.accept();
+    });
+    connect(footer, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+    populate();
+    dialog.exec();
+}
 QDockWidget *MainWindow::createDock(const QString &title, const QString &name, QWidget *widget) {
     auto *dock = new QDockWidget(title, this);
     dock->setObjectName(name);
@@ -1981,13 +2279,15 @@ void MainWindow::buildAppearanceExtras() {
     presetLayout->setContentsMargins(0, 0, 0, 0);
     for (int i = 0; i < 3; ++i) {
         auto *button = new QPushButton(QStringList{"Yuvarlak", "Yumuşak", "Kalem"}[i]);
-        connect(button, &QPushButton::clicked, this, [this, i] {
-            hardnessInput->setValue(i == 1 ? 15 : 100);
-            actions[i == 2 ? "tool4" : "tool3"]->trigger();
-        });
+        connect(button, &QPushButton::clicked, this,
+                [this, i] { applyBrushPreset(BrushLibrary::builtins()[i]); });
         presetLayout->addWidget(button);
     }
     brushLayout->addWidget(presets);
+    auto *libraryButton = new QPushButton("Kütüphaneyi aç…");
+    libraryButton->setObjectName("openBrushLibrary");
+    connect(libraryButton, &QPushButton::clicked, actions["brushLibrary"], &QAction::trigger);
+    brushLayout->addWidget(libraryButton);
     auto *colors = new QWidget;
     auto *colorsLayout = new QHBoxLayout(colors);
     colorsLayout->setContentsMargins(0, 0, 0, 0);
@@ -2124,11 +2424,11 @@ UiSettings MainWindow::captureUiSettings() const {
     return s;
 }
 void MainWindow::queueUiSave() {
-    if (persistAppearance && !applyingAppearance)
+    if (persistSettings && !applyingAppearance)
         uiSaveTimer.start();
 }
 void MainWindow::saveUiSettings() {
-    if (!persistAppearance || applyingAppearance)
+    if (!persistSettings || applyingAppearance)
         return;
     QSettings settings(uiSettingsPath(), QSettings::IniFormat);
     settings.setValue("active",

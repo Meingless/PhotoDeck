@@ -260,7 +260,7 @@ class SelectionTests : public QObject {
         c.setTool(Canvas::Tool(tool));
         c.foreground = Qt::red;
         c.background = Qt::white;
-        c.hardness = 100;
+        c.brush.hardness = 100;
         if (tool == Canvas::Clone) {
             QPainter p(&d.state.layers[0].pixels);
             p.fillRect(0, 0, 20, 20, Qt::red);

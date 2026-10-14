@@ -167,7 +167,7 @@ void Canvas::paintEvent(QPaintEvent *) {
     }
     if (dragging && (tool == Rectangle || tool == Ellipse)) {
         p.setBrush(foreground);
-        p.setOpacity(brushOpacity / 100.0);
+        p.setOpacity(brush.flow / 100.0);
         p.setPen(Qt::NoPen);
         if (tool == Rectangle)
             p.drawRect(preview.normalized());
@@ -231,20 +231,21 @@ QImage &Canvas::target() {
 }
 qreal Canvas::stampDiameter(qreal pressure) const {
     qreal scale = 1;
-    if (tabletActive && pressureSize) {
-        const qreal minimum = qBound(1, pressureMinimum, 100) / 100.0;
-        const qreal curve = std::isfinite(pressureCurve) ? qBound(.25, pressureCurve, 4.0) : 1;
+    if (tabletActive && brush.pressureSize) {
+        const qreal minimum = qBound(1, brush.pressureMinimum, 100) / 100.0;
+        const qreal curve =
+            std::isfinite(brush.pressureCurve) ? qBound(.25, brush.pressureCurve, 4.0) : 1;
         scale = minimum + (1 - minimum) * std::pow(qBound(0.0, pressure, 1.0), curve);
     }
-    return qMax(1.0, qBound(1, brushSize, 512) * scale);
+    return qMax(1.0, qBound(1, brush.size, 512) * scale);
 }
 QTransform Canvas::tipTransform(QPointF position) const {
-    qreal angle = qBound(-180, brushAngle, 180);
-    qreal roundness = qBound(5, brushRoundness, 100) / 100.0;
+    qreal angle = qBound(-180, brush.angle, 180);
+    qreal roundness = qBound(5, brush.roundness, 100) / 100.0;
     if (tabletActive) {
-        if (tiltAngle && std::hypot(tabletTiltX, tabletTiltY) > .01)
+        if (brush.tiltAngle && std::hypot(tabletTiltX, tabletTiltY) > .01)
             angle += qRadiansToDegrees(std::atan2(tabletTiltY, tabletTiltX));
-        if (tiltRoundness)
+        if (brush.tiltRoundness)
             roundness *= qBound(
                 .05, std::cos(qDegreesToRadians(qMin(85.0, std::hypot(tabletTiltX, tabletTiltY)))), 1.0);
     }
@@ -254,6 +255,22 @@ QTransform Canvas::tipTransform(QPointF position) const {
     tip.scale(1, roundness);
     return tip;
 }
+const QImage &Canvas::coloredTip(QColor color) {
+    if (tipCacheKey == brush.tipMask.cacheKey() && tipCacheColor == color && !tipCache.isNull())
+        return tipCache;
+    tipCache = QImage(brush.tipMask.size(), QImage::Format_ARGB32_Premultiplied);
+    for (int y = 0; y < tipCache.height(); ++y) {
+        auto *row = reinterpret_cast<QRgb *>(tipCache.scanLine(y));
+        const auto *mask = brush.tipMask.constScanLine(y);
+        for (int x = 0; x < tipCache.width(); ++x) {
+            const int alpha = (mask[x] * color.alpha() + 127) / 255;
+            row[x] = qPremultiply(qRgba(color.red(), color.green(), color.blue(), alpha));
+        }
+    }
+    tipCacheKey = brush.tipMask.cacheKey();
+    tipCacheColor = color;
+    return tipCache;
+}
 void Canvas::stamp(QPointF position, qreal pressure) {
     if (tabletActive && pressure <= 0)
         return;
@@ -261,15 +278,31 @@ void Canvas::stamp(QPointF position, qreal pressure) {
     const QPointF at = position - l.offset;
     const qreal radius = stampDiameter(pressure) / 2;
     const QTransform tip = tipTransform(at);
+    const bool custom = !brush.tipMask.isNull();
+    if (custom && (brush.tipMask.format() != QImage::Format_Grayscale8 || brush.tipMask.width() > 512 ||
+                   brush.tipMask.height() > 512)) {
+        emit toolHint("Fırça uç maskesi geçersiz.");
+        return;
+    }
+    const qreal longest = custom ? qMax(brush.tipMask.width(), brush.tipMask.height()) : 1;
+    const QSizeF footprint = custom ? QSizeF(2 * radius * brush.tipMask.width() / longest,
+                                             2 * radius * brush.tipMask.height() / longest)
+                                    : QSizeF(2 * radius, 2 * radius);
+    const QRectF tipRect(QPointF(-footprint.width() / 2, -footprint.height() / 2), footprint);
     const bool erase = tool == Eraser || tabletEraser;
-    qreal flow = qBound(1, brushOpacity, 100) / 100.0;
-    if (tabletActive && pressureFlow) {
-        const qreal curve = std::isfinite(pressureCurve) ? qBound(.25, pressureCurve, 4.0) : 1;
+    qreal flow = qBound(1, brush.flow, 100) / 100.0;
+    if (tabletActive && brush.pressureFlow) {
+        const qreal curve =
+            std::isfinite(brush.pressureCurve) ? qBound(.25, brush.pressureCurve, 4.0) : 1;
         flow *= std::pow(qBound(0.0, pressure, 1.0), curve);
     }
     const QRect affected =
         QRectF(at - QPointF(radius + 2, radius + 2), QSizeF(2 * radius + 4, 2 * radius + 4))
             .toAlignedRect();
+    const QRect textRegion = affected.intersected(target().rect());
+    const bool protectText = !document->editingMask && !l.text.isEmpty();
+    const QImage beforeText =
+        protectText && !textRegion.isEmpty() ? target().copy(textRegion) : QImage{};
     const bool edited = document->selection.paint(
         target(), l.offset,
         [&](QPainter &p) {
@@ -283,7 +316,37 @@ void Canvas::stamp(QPointF position, qreal pressure) {
                 color = Qt::white;
                 p.setCompositionMode(QPainter::CompositionMode_DestinationOut);
             }
-            if (tool == Clone && !erase) {
+            if (custom) {
+                p.setRenderHint(QPainter::SmoothPixmapTransform, tool != Pencil);
+                if (tool == Clone && !erase) {
+                    // Sample source pixels in layer coordinates; only the coverage rotates/scales.
+                    QImage dab(affected.size(), QImage::Format_ARGB32_Premultiplied);
+                    dab.fill(Qt::transparent);
+                    const QPointF sourceOrigin = QPointF(cloneAnchor - l.offset) +
+                                                 (QPointF(affected.topLeft()) + l.offset - press);
+                    QPainter clone(&dab);
+                    clone.drawImage(QPointF(), cloneSource, QRectF(sourceOrigin, dab.size()));
+                    clone.end();
+                    QImage coverage(dab.size(), QImage::Format_ARGB32_Premultiplied);
+                    coverage.fill(Qt::transparent);
+                    QPainter maskPainter(&coverage);
+                    QTransform localTip = tip;
+                    localTip.setMatrix(tip.m11(), tip.m12(), tip.m13(), tip.m21(), tip.m22(), tip.m23(),
+                                       tip.dx() - affected.left(), tip.dy() - affected.top(), tip.m33());
+                    maskPainter.setTransform(localTip);
+                    maskPainter.setRenderHint(QPainter::SmoothPixmapTransform, tool != Pencil);
+                    maskPainter.drawImage(tipRect, coloredTip(Qt::white));
+                    maskPainter.end();
+                    QPainter clipped(&dab);
+                    clipped.setCompositionMode(QPainter::CompositionMode_DestinationIn);
+                    clipped.drawImage(0, 0, coverage);
+                    clipped.end();
+                    p.drawImage(affected.topLeft(), dab);
+                } else {
+                    p.setTransform(tip, true);
+                    p.drawImage(tipRect, coloredTip(color));
+                }
+            } else if (tool == Clone && !erase) {
                 QPainterPath clip;
                 clip.addEllipse(QPointF(), radius, radius);
                 p.setClipPath(tip.map(clip), Qt::IntersectClip);
@@ -293,12 +356,12 @@ void Canvas::stamp(QPointF position, qreal pressure) {
             } else {
                 p.setTransform(tip, true);
                 p.setPen(Qt::NoPen);
-                if (hardness >= 100 || tool == Pencil)
+                if (brush.hardness >= 100 || tool == Pencil)
                     p.setBrush(color);
                 else {
                     QRadialGradient gradient(QPointF(), radius);
                     gradient.setColorAt(0, color);
-                    gradient.setColorAt(qBound(0, hardness, 99) / 100.0, color);
+                    gradient.setColorAt(qBound(0, brush.hardness, 99) / 100.0, color);
                     color.setAlpha(0);
                     gradient.setColorAt(1, color);
                     p.setBrush(gradient);
@@ -307,7 +370,7 @@ void Canvas::stamp(QPointF position, qreal pressure) {
             }
         },
         affected);
-    if (edited && !document->editingMask)
+    if (edited && !document->editingMask && (!protectText || beforeText != target().copy(textRegion)))
         l.text.clear();
 }
 void Canvas::stroke(QPointF from, QPointF to, bool final) {
@@ -317,7 +380,7 @@ void Canvas::stroke(QPointF from, QPointF to, bool final) {
         lastStamp = at;
         hasStrokeStamp = true;
         remainingStampDistance =
-            qMax(1.0, stampDiameter(pressure) * qBound(1, brushSpacing, 200) / 100.0);
+            qMax(1.0, stampDiameter(pressure) * qBound(1, brush.spacing, 200) / 100.0);
     };
     if (!hasStrokeStamp)
         place(from, lastInputPressure);
@@ -351,7 +414,7 @@ void Canvas::fillAt(QPoint docPoint) {
     swatch.fill(old);
     {
         QPainter blend(&swatch);
-        blend.setOpacity(brushOpacity / 100.0);
+        blend.setOpacity(brush.flow / 100.0);
         blend.fillRect(swatch.rect(), color);
     }
     QRgb replacement = swatch.pixel(0, 0);
@@ -526,12 +589,12 @@ void Canvas::advanceGesture(QPointF position, Qt::KeyboardModifiers modifiers) {
     } else if (tool == Brush || tool == Pencil || tool == Eraser || tool == Clone) {
         if (QLineF(last, hover).length() > .001)
             stroke(last, hover);
-        else if (tabletActive && (pressureSize || pressureFlow) &&
+        else if (tabletActive && (brush.pressureSize || brush.pressureFlow) &&
                  qAbs(inputPressure - lastInputPressure) > .001) {
             stamp(hover, inputPressure);
             lastStamp = hover;
             remainingStampDistance =
-                qMax(1.0, stampDiameter(inputPressure) * qBound(1, brushSpacing, 200) / 100.0);
+                qMax(1.0, stampDiameter(inputPressure) * qBound(1, brush.spacing, 200) / 100.0);
             document->changed();
         }
     } else if (tool == Lasso) {
@@ -563,7 +626,7 @@ void Canvas::drawShape() {
             int g = qGray(c.rgb());
             c = {g, g, g};
         }
-        p.setOpacity(brushOpacity / 100.0);
+        p.setOpacity(brush.flow / 100.0);
         p.setBrush(c);
         p.setPen(Qt::NoPen);
         r.translate(-l.offset);
@@ -589,7 +652,7 @@ void Canvas::applyGradient() {
             g.setColorAt(
                 1, QColor(qGray(background.rgb()), qGray(background.rgb()), qGray(background.rgb())));
         }
-        p.setOpacity(brushOpacity / 100.0);
+        p.setOpacity(brush.flow / 100.0);
         p.fillRect(target().rect(), g);
     });
     if (edited && !document->editingMask)

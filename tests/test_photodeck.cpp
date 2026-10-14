@@ -263,8 +263,8 @@ class PhotoDeckTests : public QObject {
         c.fit();
         c.setTool(Canvas::Brush);
         c.foreground = Qt::red;
-        c.brushSize = 10;
-        c.hardness = 100;
+        c.brush.size = 10;
+        c.brush.hardness = 100;
         d.selection = QRect(20, 20, 30, 30);
         auto pos = [&](int x, int y) { return c.toWidget({qreal(x), qreal(y)}).toPoint(); };
         QTest::mousePress(&c, Qt::LeftButton, Qt::NoModifier, pos(10, 30));
@@ -303,7 +303,7 @@ class PhotoDeckTests : public QObject {
         p.fillRect(10, 10, 20, 20, Qt::red);
         p.end();
         c.setTool(Canvas::Clone);
-        c.brushSize = 8;
+        c.brush.size = 8;
         QTest::mouseClick(&c, Qt::LeftButton, Qt::AltModifier, pos(20, 20));
         QTest::mouseClick(&c, Qt::LeftButton, Qt::NoModifier, pos(70, 70));
         QCOMPARE(d.composite().pixelColor(70, 70), QColor(Qt::red));

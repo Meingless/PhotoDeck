@@ -8,7 +8,7 @@ int main(int argc, char **argv) {
     QApplication app(argc, argv);
     app.setApplicationName("PhotoDeck");
     app.setOrganizationName("PhotoDeck");
-    app.setApplicationVersion("0.8.0-ea.1");
+    app.setApplicationVersion("0.9.0-ea.1");
     QImageReader::setAllocationLimit(128);
     app.setStyle("Fusion");
     app.setWindowIcon(QIcon(":/photodeck.png"));
@@ -22,7 +22,7 @@ int main(int argc, char **argv) {
     parser.addOption({"screenshot", "Örnek pencereyi PNG olarak kaydet ve çık.", "path"});
     parser.addOption({"write-demo", "Örnek katmanlı projeyi kaydet ve çık.", "path"});
     parser.addOption({"preset", "Arayüz presetini uygula (ör. focus, compact).", "id"});
-    parser.addOption({"no-settings", "Kullanıcı arayüz ayarlarını okuma veya yazma."});
+    parser.addOption({"no-settings", "Kullanıcı arayüzü ve fırça ayarlarını okuma veya yazma."});
     parser.process(app);
     if (parser.isSet("write-demo")) {
         Document d;

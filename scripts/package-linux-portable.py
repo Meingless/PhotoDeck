@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Package a built Qt Widgets app with shared libraries; retain system glibc and graphics drivers."""
 import argparse, pathlib, subprocess, re, shutil, tarfile, os, json
-p=argparse.ArgumentParser();p.add_argument('--binary',required=True);p.add_argument('--qt',required=True);p.add_argument('--output',required=True);p.add_argument('--version',default='0.8.0-ea.1');a=p.parse_args()
+p=argparse.ArgumentParser();p.add_argument('--binary',required=True);p.add_argument('--qt',required=True);p.add_argument('--output',required=True);p.add_argument('--version',default='0.9.0-ea.1');a=p.parse_args()
 root=pathlib.Path(__file__).resolve().parents[1];out=pathlib.Path(a.output).resolve();out.mkdir(parents=True,exist_ok=True)
 package=out/f'PhotoDeck-{a.version}-linux-x86_64';package.mkdir(exist_ok=True)
 for folder in ['bin','lib','plugins/platforms','plugins/imageformats','plugins/wayland-shell-integration','plugins/wayland-decoration-client','plugins/platforminputcontexts','plugins/printsupport','licenses/system']:(package/folder).mkdir(parents=True,exist_ok=True)

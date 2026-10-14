@@ -23,8 +23,8 @@ void ready(Canvas &c) {
     c.actualSize();
     c.setTool(Canvas::Brush);
     c.foreground = Qt::red;
-    c.hardness = 100;
-    c.brushSize = 40;
+    c.brush.hardness = 100;
+    c.brush.size = 40;
 }
 bool tablet(Canvas &c, QEvent::Type type, QPointF at, qreal pressure, float x = 0, float y = 0,
             const QPointingDevice *device = &pen) {
@@ -80,9 +80,9 @@ class BrushTests : public QObject {
         d.create({120, 120});
         Canvas c(&d);
         ready(c);
-        c.pressureSize = false;
-        c.pressureFlow = true;
-        c.pressureCurve = 2;
+        c.brush.pressureSize = false;
+        c.brush.pressureFlow = true;
+        c.brush.pressureCurve = 2;
         tap(c, .5);
         int alpha = d.composite().pixelColor(60, 60).alpha();
         QVERIFY(alpha >= 63 && alpha <= 65);
@@ -142,10 +142,10 @@ class BrushTests : public QObject {
         d.create({120, 120});
         Canvas c(&d);
         ready(c);
-        c.pressureSize = false;
-        c.brushAngle = angle;
-        c.brushRoundness = roundness;
-        c.tiltAngle = c.tiltRoundness = tilt;
+        c.brush.pressureSize = false;
+        c.brush.angle = angle;
+        c.brush.roundness = roundness;
+        c.brush.tiltAngle = c.brush.tiltRoundness = tilt;
         tap(c, 1, x, y);
         QRect bounds = ink(d.composite());
         const int major = vertical ? bounds.height() : bounds.width();
@@ -160,10 +160,10 @@ class BrushTests : public QObject {
             d.selection = Selection(QRect(30, 40, 70, 40)).feathered(3, d.state.size);
             Canvas c(&d);
             ready(c);
-            c.brushSize = 10;
-            c.hardness = 60;
-            c.brushOpacity = 37;
-            c.brushSpacing = 50;
+            c.brush.size = 10;
+            c.brush.hardness = 60;
+            c.brush.flow = 37;
+            c.brush.spacing = 50;
             mouse(c, QEvent::MouseButtonPress, {20, 60});
             if (split)
                 for (int x = 25; x <= 100; x += 5)
@@ -181,8 +181,8 @@ class BrushTests : public QObject {
         d.create({120, 120});
         Canvas c(&d);
         ready(c);
-        c.brushSize = 10;
-        c.brushSpacing = 200;
+        c.brush.size = 10;
+        c.brush.spacing = 200;
         mouse(c, QEvent::MouseButtonPress, {20, 60});
         mouse(c, QEvent::MouseMove, {65, 60});
         mouse(c, QEvent::MouseButtonRelease, {65, 60});
@@ -197,8 +197,8 @@ class BrushTests : public QObject {
         d.create({120, 120}, true);
         Canvas c(&d);
         ready(c);
-        c.pressureSize = false;
-        c.pressureFlow = true;
+        c.brush.pressureSize = false;
+        c.brush.pressureFlow = true;
         c.foreground.setAlpha(0);
         tap(c, .5, 0, 0, &eraser);
         QVERIFY(qAbs(d.composite().pixelColor(60, 60).alpha() - 127) <= 1);
@@ -276,8 +276,8 @@ class BrushTests : public QObject {
         });
         action->trigger();
         QVERIFY(handled);
-        QCOMPARE(w.currentCanvas()->brushAngle, 90);
-        QVERIFY(w.currentCanvas()->pressureFlow);
+        QCOMPARE(w.currentCanvas()->brush.angle, 90);
+        QVERIFY(w.currentCanvas()->brush.pressureFlow);
         QTimer::singleShot(0, [&] {
             auto *dialog = qobject_cast<QDialog *>(QApplication::activeModalWidget());
             if (!dialog)
@@ -286,7 +286,7 @@ class BrushTests : public QObject {
             dialog->reject();
         });
         action->trigger();
-        QCOMPARE(w.currentCanvas()->brushAngle, 90);
+        QCOMPARE(w.currentCanvas()->brush.angle, 90);
         QCOMPARE(d->composite(), before);
         QVERIFY(!d->dirty);
         QVERIFY(!d->canUndo());

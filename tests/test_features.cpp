@@ -122,8 +122,8 @@ class FeatureAudit : public QObject {
         c.setTool(Canvas::Tool(tool));
         c.foreground = Qt::blue;
         c.background = Qt::red;
-        c.brushSize = 8;
-        c.hardness = 100;
+        c.brush.size = 8;
+        c.brush.hardness = 100;
         drag(c, at(c, 20, 20), at(c, 70, 70), Qt::NoModifier, false);
         if (tool == Canvas::Select || tool == Canvas::Crop)
             QVERIFY(d.selection.contains(50, 50));
@@ -163,9 +163,9 @@ class FeatureAudit : public QObject {
         c.show();
         c.fit();
         c.setTool(Canvas::Brush);
-        c.brushSize = 10;
+        c.brush.size = 10;
         c.foreground = Qt::black;
-        c.hardness = 100;
+        c.brush.hardness = 100;
         QImage source = d.state.layers[d.state.active].pixels;
         QTest::mouseClick(&c, Qt::LeftButton, Qt::NoModifier, at(c, 25, 25));
         QCOMPARE(d.state.layers[d.state.active].text, QString("Editable"));
@@ -217,8 +217,8 @@ class FeatureAudit : public QObject {
         c.fit();
         c.setTool(Canvas::Eraser);
         c.foreground = QColor(0, 0, 0, 0);
-        c.hardness = 100;
-        c.brushSize = 12;
+        c.brush.hardness = 100;
+        c.brush.size = 12;
         QTest::mouseClick(&c, Qt::LeftButton, Qt::NoModifier, at(c, 50, 50));
         QCOMPARE(d.composite().pixelColor(50, 50).alpha(), 0);
     }
@@ -281,8 +281,8 @@ class FeatureAudit : public QObject {
         c.show();
         c.fit();
         c.setTool(Canvas::Tool(tool));
-        c.hardness = 100;
-        c.brushSize = 15;
+        c.brush.hardness = 100;
+        c.brush.size = 15;
         c.foreground = Qt::blue;
         c.background = Qt::red;
         if (tool == Canvas::Fill)
@@ -415,8 +415,8 @@ class FeatureAudit : public QObject {
         c.setTool(Canvas::Tool(tool));
         c.foreground = Qt::black;
         c.background = Qt::white;
-        c.hardness = 100;
-        c.brushSize = 12;
+        c.brush.hardness = 100;
+        c.brush.size = 12;
         if (tool == Canvas::Fill)
             QTest::mouseClick(&c, Qt::LeftButton, Qt::NoModifier, at(c, 15, 15));
         else
@@ -872,14 +872,14 @@ class FeatureAudit : public QObject {
                 button->click();
                 break;
             }
-        QCOMPARE(w.currentCanvas()->hardness, 15);
+        QCOMPARE(w.currentCanvas()->brush.hardness, 15);
         QCOMPARE(w.currentCanvas()->tool, Canvas::Brush);
         for (auto *button : dock->findChildren<QPushButton *>())
             if (button->text() == "Kalem") {
                 button->click();
                 break;
             }
-        QCOMPARE(w.currentCanvas()->hardness, 100);
+        QCOMPARE(w.currentCanvas()->brush.hardness, 100);
         QCOMPARE(w.currentCanvas()->tool, Canvas::Pencil);
         auto palette = dock->findChildren<QToolButton *>();
         QVERIFY(!palette.isEmpty());
@@ -1026,7 +1026,7 @@ class FeatureAudit : public QObject {
         c.fit();
         c.setTool(Canvas::Fill);
         c.foreground = Qt::blue;
-        c.brushOpacity = 50;
+        c.brush.flow = 50;
         QTest::mouseClick(&c, Qt::LeftButton, Qt::NoModifier, at(c, 10, 10));
         QColor color = d.composite().pixelColor(10, 10);
         QCOMPARE(color.alpha(), 255);
@@ -1255,9 +1255,9 @@ class FeatureAudit : public QObject {
         c.fit();
         c.setTool(Canvas::Brush);
         c.foreground = Qt::red;
-        c.hardness = 100;
-        c.brushSize = 10;
-        c.brushOpacity = 50;
+        c.brush.hardness = 100;
+        c.brush.size = 10;
+        c.brush.flow = 50;
         QTest::mouseClick(&c, Qt::LeftButton, Qt::NoModifier, at(c, 50, 50));
         int a = d.composite().pixelColor(50, 50).alpha();
         QVERIFY2(a >= 126 && a <= 128, qPrintable(QString::number(a)));

@@ -7,3 +7,6 @@ HEADERS += ../src/document.h ../src/canvas.h ../src/mainwindow.h ../src/appearan
 INCLUDEPATH += ../src
 RESOURCES += ../resources.qrc
 msvc:QMAKE_CXXFLAGS += /utf-8
+
+SOURCES += ../src/brushpreset.cpp
+HEADERS += ../src/brushpreset.h

@@ -1,4 +1,4 @@
-# PhotoDeck 0.8.0 Early Access 1
+# PhotoDeck 0.9.0 Early Access 1
 
 AI içermeyen yerel fotoğraf ve katman düzenleyici. Erken erişim sürümüdür; önemli orijinalleri koruyun ve ayrı proje kopyalarıyla çalışın.
 
@@ -24,7 +24,7 @@ Ctrl+L ton penceresi; Shift+M eliptik seçim, L kement, Shift+L çokgen kement, 
 
 Yeni projeler .pdeck sürüm 5'tir. Sürüm 1/2/3/4 projeleri açılır; eski uygulamalar sürüm 5 projelerini açamaz. Orijinalleri ayrı koruyun.
 
-Linux AppImage tek dosyalık alternatifidir: çalıştırma izni verin; FUSE yoksa `APPIMAGE_EXTRACT_AND_RUN=1 ./PhotoDeck-0.8.0-ea.1-x86_64.AppImage`. Kütüphaneler AppImage içindedir.
+Linux AppImage tek dosyalık alternatifidir: çalıştırma izni verin; FUSE yoksa `APPIMAGE_EXTRACT_AND_RUN=1 ./PhotoDeck-0.9.0-ea.1-x86_64.AppImage`. Kütüphaneler AppImage içindedir.
 
 Photoshop karşılaştırması ve kapanmamış farklar docs/PHOTOSHOP-COMPARISON.md içindedir. Bu sürüm tam Photoshop eşdeğerliği değildir.
 
@@ -41,3 +41,5 @@ Kilitli veya kırpma zincirindeki katmandan kesme; gizli kırpılan çocuğu ola
 0.7: Dosya menüsünden boyut/DPI/kalite ve RGB ICC profiliyle raster çıktı, tek sayfalı PDF veya native yazdırma seçilebilir. RGB profilli görüntü girdileri sRGB'ye dönüştürülür; etiketsiz girdiler sRGB kabul edilir. PNG/JPEG/TIFF/WebP için sRGB/Display P3/Adobe RGB profili eklenebilir. Çıktı boyutu belgeyi değiştirmez. DPI dosya metadata desteğine bağlıdır; piksel ayrıntısını artırmaz. PDF A4/Letter/fiziksel görüntü boyutu, yön ve kenar boşluklarını destekler; görüntü oranını korur, şeffaflığı beyaz kağıda uygular. PDF katmanlı/vektör/PDF-X değildir. Fiziksel yazıcı, soft proof, monitör profili, CMYK/Lab ve yüksek bit derinliği henüz doğrulanmış/desteklenmiş değildir.
 
 0.8: Ctrl+Alt+B fırça/tablet ayarlarını açar. Uç açısı, yuvarlaklık ve darbe aralığı; basınç boyutu/akışı, minimum boyut ve tepki eğrisi; eğime bağlı açı/yuvarlaklık vardır. Kalemin silgi ucu piksel ve maske araçlarına uygulanır. Tek hareket tek undo; iptal kaynak pikselleri geri getirir. Alfa seçim her darbeye uygulanır. Fare tam basınçtır. Ayarlar sekme oturumuna aittir, .pdeck biçimi değişmedi. Fiziksel tablet testi yapılmadı; Qt olaylarıyla davranış doğrulandı. Özel görüntü uçları/ABR, fırça kütüphanesi, scatter/jitter/texture ve simetri açık kalır.
+
+0.9: Arayüz ortak modern yüzeyler, tipografi, menüler, sekmeler, panel/listeler, girişler ve görünür odak/seçim durumlarıyla yenilendi; 3 · Odak varsayılanı, on preset ve kişisel .pdui ayarları korunur. Düzenle menüsündeki Fırça kütüphanesi veya Ctrl+Alt+Shift+B isimli fırçaları kalıcı kaydeder, yeniden seçer, siler ve .pdbrush ile taşır. Görselden/seçimden uç oluşturulur; siyah/koyu boyar, beyaz/saydam gizler. Uzun kenar 512 px, koleksiyon 128 preset/8 MiB maskeyle sınırlıdır. Özel uçta sertlik maskeden gelir. Klon kaynağı çevrilmez; sadece uç kapsamı çevrilir. Değerler ve araç presetle saklanır; ön plan rengi ve klon kaynak konumu saklanmaz. .pdeck v5 değişmedi. ABR ve gelişmiş fırça dinamikleri açık hedeflerdir.
