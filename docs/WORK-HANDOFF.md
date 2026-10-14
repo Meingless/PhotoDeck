@@ -1,12 +1,14 @@
 # Çalışma durumu — 14 Ekim 2026
 
-## Güncel durum: 0.7 yayımlandı
+## Güncel durum: 0.8 yayımlandı
 
-Kullanıcının “Devam et” isteğiyle geliştirme yeniden başladı. PDF, native yazdırma ve RGB ICC çıktı aşaması tamamlanıp [0.7.0-ea.1](https://github.com/Meingless/PhotoDeck/releases/tag/v0.7.0-ea.1) olarak yayımlandı. Kaynak commit `e1241b31dc0f8e0099e5a49e65ee5ebe15cd36ed`; [CI](https://github.com/Meingless/PhotoDeck/actions/runs/38594999131) dört platformda başarılı. Her hedefte 310 başarılı kontrol (başlangıç/bitiş dahil); Linux/Windows paket testleri ayrıca geçti. ASan/UBSan başarılı, leak detection kapalı. Fiziksel yazıcı testi yapılmadı.
+Fırça geometrisi ve tablet girdisi aşaması [0.8.0-ea.1](https://github.com/Meingless/PhotoDeck/releases/tag/v0.8.0-ea.1) olarak yayımlandı. Kaynak commit `e6767ab65ea8b1e83da7ef24f1220340256987be`; [CI](https://github.com/Meingless/PhotoDeck/actions/runs/38601577984) dört platformda başarılı. Her hedefte 327 başarılı kontrol (başlangıç/bitiş dahil), on test grubu; Linux/Windows paket testleri ayrıca başarılı. Yerel ASan/UBSan ve qmake fırça grubu başarılı; leak detection kapalı.
 
-Yerel `bin/photodeck` 0.7'dir; hazır paketler `dist/applications/0.7.0-ea.1/` içindedir. Önceki paketler korunur. Sekiz yüklenen asset'in boyutu ve GitHub SHA-256 değeri yerel dosyalarla eşleşti. Kanıtlar `artifacts/output-release/`, `artifacts/output-ui/` ve teslim klasöründeki `DOGRULAMA.md` içindedir.
+Ctrl+Alt+B ile uç açısı/yuvarlaklığı, sürekli darbe aralığı ve basınç/eğim ayarları vardır. Kalemin silgi ucu piksel ve maskede çalışır. Boyama dışı araçlarda Qt'nin mevcut fare benzetimi korunur. Fiziksel tablet testi yapılmadı; Qt aygıt/olay fixture'ları kullanıldı. Fırça ayarları sekme oturumuna aittir; .pdeck v5 değişmedi.
 
-Genel Photoshop karşılaştırması tamamlanmış değildir; hedef aktiftir. Kalan gereksinimler `docs/PHOTOSHOP-COMPARISON.md` içinde izlenir.
+Yerel `bin/photodeck` 0.8'dir; hazır paketler `dist/applications/0.8.0-ea.1/` içindedir. Önceki paketler ve yerel 0.6/0.7 başlatıcı kopyaları korunur. Sekiz yüklenen asset'in boyutu ve GitHub SHA-256 değeri yerel dosyalarla eşleşti. Native ve FUSE-free AppImage açılışı başarılı; 206 portable payload dosyası aynı. Kanıtlar `artifacts/brush-release/`, `artifacts/brush-ui/`, `artifacts/brush-results.txt`, `brush-sanitizer-results.txt`, `brush-qmake-results.txt` ve teslimdeki `DOGRULAMA.md` içindedir.
+
+0.7'nin RGB ICC/PDF/yazdırma kapsamı korunur. Genel Photoshop karşılaştırması tamamlanmış değildir; hedef aktiftir. Özel görüntü/ABR uçları, kalıcı fırça kütüphanesi, scatter/jitter/texture, smoothing/simetri ve diğer kalan gereksinimler `docs/PHOTOSHOP-COMPARISON.md` içinde açık kalır.
 
 ## Tarihsel durdurma kaydı
 
