@@ -26,13 +26,14 @@ void ready(Canvas &c) {
     c.hardness = 100;
     c.brushSize = 40;
 }
-void tablet(Canvas &c, QEvent::Type type, QPointF at, qreal pressure, float x = 0, float y = 0,
+bool tablet(Canvas &c, QEvent::Type type, QPointF at, qreal pressure, float x = 0, float y = 0,
             const QPointingDevice *device = &pen) {
     QPointF local = c.toWidget(at);
     QTabletEvent event(type, device, local, c.mapToGlobal(local.toPoint()), pressure, x, y, 0, 0, 0,
                        Qt::NoModifier, type == QEvent::TabletMove ? Qt::NoButton : Qt::LeftButton,
                        type == QEvent::TabletRelease ? Qt::NoButton : Qt::LeftButton);
     QApplication::sendEvent(&c, &event);
+    return event.isAccepted();
 }
 void tap(Canvas &c, qreal pressure, float x = 0, float y = 0, const QPointingDevice *device = &pen) {
     tablet(c, QEvent::TabletPress, {60, 60}, pressure, x, y, device);
@@ -238,6 +239,21 @@ class BrushTests : public QObject {
         tablet(c, QEvent::TabletRelease, {60, 60}, 0);
         QVERIFY(!d.canUndo());
         QVERIFY(ink(d.composite()).isEmpty());
+    }
+    void nonPaintingTabletEventsUseQtMouseEmulation() {
+        Document d;
+        d.create({120, 120});
+        Canvas c(&d);
+        ready(c);
+        c.setTool(Canvas::PolygonLasso);
+        QVERIFY(!tablet(c, QEvent::TabletPress, {60, 60}, 1));
+        QVERIFY(!tablet(c, QEvent::TabletRelease, {60, 60}, 0));
+        QVERIFY(!d.canUndo());
+        QVERIFY(d.selection.isEmpty());
+        c.setTool(Canvas::Brush);
+        QVERIFY(tablet(c, QEvent::TabletPress, {60, 60}, 1));
+        QVERIFY(tablet(c, QEvent::TabletRelease, {60, 60}, 0));
+        QVERIFY(d.canUndo());
     }
     void brushSettingsAcceptCancelAndDocumentPreservation() {
         MainWindow w(false, false);

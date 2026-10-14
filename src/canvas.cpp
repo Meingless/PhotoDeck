@@ -675,6 +675,12 @@ void Canvas::mouseReleaseEvent(QMouseEvent *e) {
     }
 }
 void Canvas::tabletEvent(QTabletEvent *e) {
+    if (tool != Brush && tool != Pencil && tool != Eraser && tool != Clone) {
+        // Qt already emulates mouse gestures (including polygon double-clicks)
+        // for these tools. Keep that platform behavior instead of consuming it.
+        QWidget::tabletEvent(e);
+        return;
+    }
     const QPointF position = e->position();
     if (!std::isfinite(position.x()) || !std::isfinite(position.y()) || !std::isfinite(e->pressure()) ||
         !std::isfinite(e->xTilt()) || !std::isfinite(e->yTilt()) ||
