@@ -22,6 +22,7 @@ namespace Output {
 QColorSpace profile(int index);
 QImage workingRgb(const QImage &image);
 QRectF fittedRect(QSizeF image, QRectF page);
+QRect printableRect(QPageLayout layout, int resolution);
 bool paintPage(QPainter &painter, const QImage &image, QRectF page);
 QPageLayout pdfLayout(QSize image, const PdfExportOptions &options, QString *error);
 bool writePdf(const QImage &image, const QString &file, const QString &title,

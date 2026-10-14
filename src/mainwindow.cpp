@@ -1414,7 +1414,6 @@ void MainWindow::printDocument() {
         return;
     QPrinter printer(QPrinter::HighResolution);
     printer.setDocName(d->title);
-    printer.setFullPage(true);
     QPrintDialog dialog(&printer, this);
     dialog.setMinMax(1, 1);
     if (dialog.exec() != QDialog::Accepted)
@@ -1422,7 +1421,7 @@ void MainWindow::printDocument() {
     printer.setFullPage(true);
     QPainter painter(&printer);
     if (!Output::paintPage(painter, d->composite(),
-                           printer.pageLayout().paintRectPixels(printer.resolution())) ||
+                           Output::printableRect(printer.pageLayout(), printer.resolution())) ||
         !painter.end())
         error("Yazdırma tamamlanamadı. Yazıcı bağlantısını ve sürücüyü kontrol edin.");
 }

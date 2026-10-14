@@ -58,6 +58,12 @@ bool paintPage(QPainter &p, const QImage &image, QRectF page) {
     p.restore();
     return true;
 }
+QRect printableRect(QPageLayout layout, int resolution) {
+    // Full-page QPrinter coordinates start at the paper edge. Retain the
+    // layout margins when choosing the destination inside that coordinate space.
+    layout.setMode(QPageLayout::StandardMode);
+    return layout.paintRectPixels(resolution);
+}
 QPageLayout pdfLayout(QSize image, const PdfExportOptions &o, QString *error) {
     auto fail = [&](QString message) {
         if (error)

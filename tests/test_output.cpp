@@ -228,11 +228,15 @@ class OutputTests : public QObject {
         printer.setOutputFormat(QPrinter::PdfFormat);
         printer.setOutputFileName(file);
         printer.setPageSize(QPageSize(QPageSize::A4));
+        printer.setPageMargins(QMarginsF(10, 10, 10, 10), QPageLayout::Millimeter);
         printer.setFullPage(true);
+        const QRect printable = Output::printableRect(printer.pageLayout(), printer.resolution());
+        QVERIFY(qAbs(printable.left() - qRound(10 * printer.resolution() / 25.4)) <= 1);
+        QVERIFY(printable.width() < printer.pageLayout().fullRectPixels(printer.resolution()).width());
         QImage image(200, 100, QImage::Format_ARGB32_Premultiplied);
         image.fill(Qt::red);
         QPainter p(&printer);
-        QVERIFY(Output::paintPage(p, image, printer.pageLayout().paintRectPixels(printer.resolution())));
+        QVERIFY(Output::paintPage(p, image, printable));
         QVERIFY(p.end());
         QFile f(file);
         QVERIFY(f.open(QIODevice::ReadOnly));
