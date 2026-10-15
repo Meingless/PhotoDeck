@@ -1,6 +1,12 @@
 name: Early access packages
 on:
   workflow_dispatch:
+  workflow_call:
+    inputs:
+      checkout_ref:
+        description: Exact source commit SHA to package
+        required: true
+        type: string
   push:
     tags: ['v*']
 permissions:
@@ -29,11 +35,34 @@ jobs:
             label: macos-apple-silicon
             cmake_args: '-DCMAKE_OSX_ARCHITECTURES=arm64 -DCMAKE_OSX_DEPLOYMENT_TARGET=12.0'
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
     env:
-      PHOTO_VERSION: 0.9.0-ea.1
+      PHOTO_VERSION: 0.9.1-ea.1
       QT_QPA_PLATFORM: offscreen
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.checkout_ref || github.sha }}
+      - name: Verify release metadata and packaging inventory helper
+        shell: bash
+        run: |
+          python3 - <<'PYTHON'
+          import json, os, pathlib, plistlib, re, subprocess
+          root = pathlib.Path('.')
+          version = os.environ['PHOTO_VERSION']
+          numeric = version.split('-')[0]
+          header = (root/'src/version.h').read_text()
+          assert re.search(r'Version = "([^"]+)"', header).group(1) == version
+          assert f'project(PhotoDeck VERSION {numeric} LANGUAGES CXX)' in (root/'CMakeLists.txt').read_text()
+          info = plistlib.loads((root/'packaging/Info.plist').read_bytes())
+          assert info['CFBundleVersion'] == info['CFBundleShortVersionString'] == numeric
+          assert version in (root/'scripts/package-linux-portable.py').read_text()
+          source = subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip()
+          (root/'release-source.json').write_text(json.dumps({'version': version, 'source_commit': source, 'platform': os.environ['RUNNER_OS']}, indent=2)+'\n', encoding='utf-8')
+          if os.environ.get('GITHUB_REF_TYPE') == 'tag':
+              assert os.environ['GITHUB_REF_NAME'] == 'v' + version, 'Release tag/version mismatch'
+          PYTHON
+          python3 -m unittest discover -s tests -p 'test_packaged_test_list.py' -v
       - name: Linux runtime libraries
         if: runner.os == 'Linux'
         run: |
@@ -50,13 +79,18 @@ jobs:
         with:
           arch: x64
       - name: Configure
-        run: cmake -S . -B build-release -DCMAKE_BUILD_TYPE=Release ${{ matrix.cmake_args }}
+        run: cmake -S . -B build-release -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON ${{ matrix.cmake_args }}
       - name: Build
         run: cmake --build build-release --config Release --parallel 4
       - name: Functional tests
         env:
           CTEST_OUTPUT_ON_FAILURE: 1
-        run: ctest --test-dir build-release -C Release --output-on-failure --output-junit tests.xml
+        run: ctest --test-dir build-release -C Release --output-on-failure --output-junit tests.xml --timeout 120
+      - name: Record all packaged test suites
+        shell: bash
+        run: |
+          python3 scripts/packaged-test-list.py --build-dir build-release --config Release --expected-count 14 > packaged-test-list.txt
+          python3 -c "from pathlib import Path; names=Path('packaged-test-list.txt').read_text().splitlines(); assert len(names)==14; Path('packaged-test-count.txt').write_text(str(len(names))+'\n')"
       - name: Windows portable package
         env:
           QT_QPA_PLATFORM: windows
@@ -74,6 +108,7 @@ jobs:
             if (!(Test-Path "$folder/$required")) { throw "Missing app-local compiler runtime: $required" }
           }
           Copy-Item README.md,EARLY-ACCESS.md,LICENSE $folder/
+          Copy-Item -Recurse docs "$folder/docs"
           Copy-Item packaging/THIRD-PARTY.md $folder/
           Copy-Item -Recurse packaging/licenses,examples $folder/
           $process = Start-Process -FilePath (Resolve-Path "$folder/PhotoDeck.exe") -ArgumentList '--no-settings','--preset','focus','--screenshot',"$PWD/windows-startup.png" -Wait -PassThru -RedirectStandardOutput windows-startup.log -RedirectStandardError windows-startup-error.log
@@ -81,13 +116,18 @@ jobs:
           Copy-Item "$env:QT_ROOT_DIR/plugins/platforms/qoffscreen.dll" "$folder/platforms/"
           Copy-Item "$env:QT_ROOT_DIR/bin/Qt6Test.dll" "$folder/"
           $env:QT_QPA_PLATFORM = 'offscreen'
-          foreach ($test in 'photodeck-tests','photodeck-feature-audit','photodeck-tones-tests','photodeck-selections-tests','photodeck-blending-tests','photodeck-transforms-tests','photodeck-layer-ops-tests','photodeck-effects-tests','photodeck-output-tests','photodeck-brushes-tests','photodeck-presets-tests') {
+          Copy-Item -Recurse tests/fixtures "$folder/fixtures"
+          $tests = @(Get-Content packaged-test-list.txt)
+          if ($tests.Count -ne 14) { throw "Expected 14 packaged test suites" }
+          foreach ($test in $tests) {
             Copy-Item "build-release/Release/$test.exe" "$folder/$test.exe"
             & "$folder/$test.exe" -o "$PWD/$test-packaged.xml,junitxml" -o "$PWD/$test-packaged.txt,txt"
             if ($LASTEXITCODE -ne 0) { throw "Packaged runtime audit failed: $test" }
             Remove-Item "$folder/$test.exe"
           }
           Remove-Item "$folder/Qt6Test.dll"
+          Remove-Item -Recurse "$folder/fixtures"
+          if (Test-Path "$folder/fixtures") { throw "Packaged test fixtures were not removed" }
           Compress-Archive -Path $folder -DestinationPath "$folder.zip"
       - name: macOS application package
         env:
@@ -99,6 +139,7 @@ jobs:
           cp -R build-release/photodeck.app "$folder/PhotoDeck.app"
           macdeployqt "$folder/PhotoDeck.app"
           cp README.md EARLY-ACCESS.md LICENSE packaging/THIRD-PARTY.md "$folder/"
+          cp -R docs "$folder/docs"
           cp -R packaging/licenses examples "$folder/"
           codesign --force --deep --sign - "$folder/PhotoDeck.app"
           "$folder/PhotoDeck.app/Contents/MacOS/photodeck" --no-settings --preset focus --screenshot macos-startup.png
@@ -113,12 +154,15 @@ jobs:
           test -s linux-startup.png
           package="dist/PhotoDeck-$PHOTO_VERSION-linux-x86_64"
           cp "$QT_ROOT_DIR/lib/libQt6Test.so.6" "$package/lib/"
-          for test in photodeck-tests photodeck-feature-audit photodeck-tones-tests photodeck-selections-tests photodeck-blending-tests photodeck-transforms-tests photodeck-layer-ops-tests photodeck-effects-tests photodeck-output-tests photodeck-brushes-tests photodeck-presets-tests; do
+          cp -R tests/fixtures "$package/bin/fixtures"
+          while IFS= read -r test; do
             cp "build-release/$test" "$package/bin/$test"
             LD_LIBRARY_PATH="$PWD/$package/lib" QT_PLUGIN_PATH="$PWD/$package/plugins" "$package/bin/$test" -o "$PWD/$test-packaged.xml,junitxml" -o "$PWD/$test-packaged.txt,txt"
             rm "$package/bin/$test"
-          done
+          done < packaged-test-list.txt
           rm "$package/lib/libQt6Test.so.6"
+          rm -rf "$package/bin/fixtures"
+          test ! -e "$package/bin/fixtures"
       - name: Linux AppImage
         if: runner.os == 'Linux'
         run: |
@@ -136,6 +180,27 @@ jobs:
           python3 scripts/package-appimage.py --package "dist/PhotoDeck-$PHOTO_VERSION-linux-x86_64" --appimagetool appimage-tools/squashfs-root/AppRun --output "dist/PhotoDeck-$PHOTO_VERSION-x86_64.AppImage"
           APPIMAGE_EXTRACT_AND_RUN=1 "dist/PhotoDeck-$PHOTO_VERSION-x86_64.AppImage" --no-settings --screenshot appimage-startup.png
           test -s appimage-startup.png
+      - name: Verify packaged application version
+        shell: bash
+        run: |
+          python3 - <<'PYTHON'
+          import os, pathlib, subprocess
+          version = os.environ['PHOTO_VERSION']
+          platform = os.environ['RUNNER_OS']
+          if platform == 'Windows':
+              binary = pathlib.Path(f'dist/PhotoDeck-{version}-windows-x64/PhotoDeck.exe')
+          elif platform == 'macOS':
+              binary = pathlib.Path(f'dist/PhotoDeck-{version}-${{ matrix.label }}/PhotoDeck.app/Contents/MacOS/photodeck')
+          else:
+              binary = pathlib.Path(f'dist/PhotoDeck-{version}-linux-x86_64/launch.sh')
+          env = dict(os.environ, QT_COMMAND_LINE_PARSER_NO_GUI_MESSAGE_BOXES='1')
+          env['QT_QPA_PLATFORM'] = 'cocoa' if platform == 'macOS' else 'offscreen'
+          result = subprocess.run([str(binary.resolve()), '--version'], env=env,
+                                  capture_output=True, text=True, check=True, timeout=60)
+          actual = result.stdout.strip()
+          assert actual == f'PhotoDeck {version}', (actual, result.stderr)
+          pathlib.Path('package-version.txt').write_text(actual+'\n', encoding='utf-8')
+          PYTHON
       - name: Checksums
         shell: bash
         run: |
@@ -155,6 +220,12 @@ jobs:
             dist/*.AppImage
             dist/SHA256SUMS.txt
             build-release/tests.xml
+            build-release/Testing/Temporary/
+            packaged-test-list.txt
+            packaged-test-count.txt
+            package-version.txt
+            release-source.json
+            docs/releases/0.9.1-ea.1.md
             *-startup.png
             *-startup*.log
             *-packaged.xml

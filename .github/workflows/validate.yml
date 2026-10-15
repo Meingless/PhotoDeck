@@ -42,6 +42,11 @@ jobs:
       QT_QPA_PLATFORM: offscreen
     steps:
       - uses: actions/checkout@v4
+      - name: Release tooling regression tests
+        if: runner.os == 'Linux'
+        run: |
+          python3 -m unittest discover -s tests -p 'test_packaged_test_list.py' -v
+          python3 -m unittest discover -s scripts/tests -p 'test_*.py' -v
       - name: Linux runtime libraries
         if: runner.os == 'Linux'
         run: |

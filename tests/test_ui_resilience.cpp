@@ -325,14 +325,25 @@ class UiResilienceTests : public QObject {
     void aboutAndHelpMatchCurrentBehavior() {
         MainWindow w(false, false);
         bool about = false, help = false;
+        QString aboutTitle, aboutText;
         QVERIFY(driveDialogs(w.findChild<QAction *>("about"), [&](QDialog *dialog) {
             if (auto *box = qobject_cast<QMessageBox *>(dialog)) {
-                about = box->windowTitle().contains(PhotoDeck::Version) &&
-                        box->text().contains("RGB ICC");
+                about = true;
+                aboutTitle = box->windowTitle();
+                aboutText = box->text();
                 box->accept();
             } else dialog->reject();
         }));
         QVERIFY(about);
+        QVERIFY2(aboutText.contains(PhotoDeck::Version),
+                 qPrintable("About body is missing the version: " + aboutText));
+        QVERIFY2(aboutText.contains("RGB ICC"),
+                 qPrintable("About body is missing ICC support text: " + aboutText));
+        // QMessageBox deliberately ignores its window title on macOS.
+#ifndef Q_OS_MACOS
+        QVERIFY2(aboutTitle.contains(PhotoDeck::Version),
+                 qPrintable("About title is missing the version: " + aboutTitle));
+#endif
         QVERIFY(driveDialogs(w.findChild<QAction *>("help"), [&](QDialog *dialog) {
             if (auto *box = qobject_cast<QMessageBox *>(dialog)) {
                 help = box->text().contains("Ctrl+T katman dönüşümü") &&

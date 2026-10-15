@@ -843,12 +843,15 @@ void MainWindow::buildMenus() {
             "gerekmez.");
     }));
     help->addAction(action("about", "PhotoDeck hakkında", {}, [this] {
-        QMessageBox::about(this, QString("PhotoDeck %1 · Erken erişim").arg(PhotoDeck::Version),
-                           "<h2>PhotoDeck</h2><p>Hafif, yerel fotoğraf ve katman düzenleyici.</p><p>Qt "
-                           "6 / C++ · Linux / Windows / macOS</p><p>AI, reklam, telemetri ve abonelik "
-                           "içermez.</p><p>Bu sürüm RGB 8-bit raster düzenlemeye odaklanır; RGB ICC giriş "
-                           "ve çıktı profilleri desteklenir. PSD/RAW, CMYK, baskı provası, vektör "
-                           "yolları ve Photoshop eklentileri desteklenmez.</p>");
+        const QString title = QString("PhotoDeck %1 · Erken erişim").arg(PhotoDeck::Version);
+        // macOS message boxes omit window titles, so keep the version in the visible body too.
+        QMessageBox::about(this, title,
+                           QString("<h2>%1</h2><p>Hafif, yerel fotoğraf ve katman düzenleyici.</p><p>Qt "
+                                   "6 / C++ · Linux / Windows / macOS</p><p>AI, reklam, telemetri ve "
+                                   "abonelik içermez.</p><p>Bu sürüm RGB 8-bit raster düzenlemeye odaklanır; "
+                                   "RGB ICC giriş ve çıktı profilleri desteklenir. PSD/RAW, CMYK, baskı "
+                                   "provası, vektör yolları ve Photoshop eklentileri desteklenmez.</p>")
+                               .arg(title));
     }));
 }
 void MainWindow::buildTools() {

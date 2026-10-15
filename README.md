@@ -1,6 +1,10 @@
-# PhotoDeck 0.9.0 Early Access
+# PhotoDeck 0.9.1 Early Access
 
 AI içermeyen, tamamen yerel, C++/Qt 6 ile geliştirilen fotoğraf ve katman düzenleyici. Linux, Windows ve macOS için ortak kaynak kullanır. Tarayıcı motoru, Python çalışma zamanı, bulut hesabı, abonelik veya ağ servisi gerekmez.
+
+## 0.9.1 erken erişim güncellemesi
+
+Odak çalışma alanı, dosya çakışması/legacy kopya kaydı, daha erken kurtarma ve macOS Hakkında sürüm görünümü bu sürümde iyileştirildi. .pdeck v5 biçimi değişmedi. Ayrıntılar ve kalan sınırlar [sürüm notlarında](docs/releases/0.9.1-ea.1.md).
 
 ## Linux'ta kullan
 
@@ -73,7 +77,7 @@ Linux için `./scripts/build.sh` CMake varsa onu, yoksa qmake6 + make kullanır 
 
 Windows'ta Qt MSVC veya MinGW kitiyle derleyin; `windeployqt` Qt DLL'lerini ve eklentilerini uygulamanın yanına koyar. MSVC/CMake çıktısı `build-cmake/Release/photodeck.exe` olur. macOS'ta çıktı `build-cmake/photodeck.app`; `macdeployqt` bağımlılıkları `.app` içine yerleştirir. Dağıtım için Windows imzalama ve macOS imzalama/notarization ayrıca gerekir.
 
-`.github/workflows/validate.yml` her pull request ve `main` push'unda Qt 6.8.3 ile Linux x86_64, Windows x64, macOS Intel ve Apple Silicon hedeflerinde CMake derlemesi ve tüm CTest gruplarını çalıştıracak şekilde tanımlıdır. Test raporları ve CTest günlükleri iş artifacts bölümüne yüklenir. Bu dört hedefin CI kapsamı, tüm işletim sistemi sürümleri veya fiziksel cihazlar için uyumluluk garantisi değildir. Yeni akışın eklenmesi başarılı bir run kanıtı sayılmaz; ilk GitHub run sonucu ayrıca kontrol edilmelidir.
+`.github/workflows/validate.yml` her pull request ve `main` push'unda Qt 6.8.3 ile Linux x86_64, Windows x64, macOS Intel ve Apple Silicon hedeflerinde CMake derlemesi ve 14 CTest grubunu çalıştıracak şekilde tanımlıdır. Test raporları ve CTest günlükleri iş artifacts bölümüne yüklenir. Bu dört hedefin CI kapsamı, tüm işletim sistemi sürümleri veya fiziksel cihazlar için uyumluluk garantisi değildir. Yeni akışın eklenmesi başarılı bir run kanıtı sayılmaz; ilk GitHub run sonucu ayrıca kontrol edilmelidir.
 
 Ayrı Linux işi uygulama ve test kodunu Clang AddressSanitizer/UndefinedBehaviorSanitizer ile derler; hata ilk bulguda işi durdurur. Küçük, tekrarlanabilir `.pdeck`/`.pdbrush` kesme ve byte mutasyonu corpus'u da bu işte çalışır. Bu bir kapsam güdümlü fuzzing altyapısı veya güvenlik sertifikası değildir. Önceden derlenmiş Qt SDK'sı instrument edilmez; süreç sonu leak detection kapalıdır. Aynı kontrolü Linux'ta Qt yolu tanımlı ortamda çalıştırmak için:
 
@@ -88,7 +92,7 @@ QT_QPA_PLATFORM=offscreen ASAN_OPTIONS=detect_leaks=0:halt_on_error=1 \
   ctest --test-dir build-sanitizers -C Debug --output-on-failure --timeout 120
 ```
 
-`.github/workflows/build.yml` etiket (`v*`) veya manuel çalıştırmayla erken erişim paketlerini hazırlar; PR doğrulama akışından ayrıdır. Linux x86_64, Windows x64 ve macOS Intel/Apple Silicon için paketler, paket testleri ve açılış görüntüleri bu akıştadır. Bu değişiklik yeni paket yayımlamaz veya Windows/macOS dağıtım imzalama/notarization kanıtı oluşturmaz.
+`.github/workflows/build.yml` etiket (`v*`) veya manuel çalıştırmayla erken erişim paketlerini hazırlar; PR doğrulama akışından ayrıdır. Linux x86_64, Windows x64 ve macOS Intel/Apple Silicon için paketler ve açılış görüntüleri bu akıştadır. Linux/Windows paket denetimleri CTest envanterinden bulunan 14 grubun tümünü paketlenmiş Qt ile çalıştırır; legacy proje fixture'ları test için eklenir, ardından test araçlarıyla birlikte kaldırılır. Paketler önce Actions artifacts olarak hazırlanır; GitHub Release yayımlaması ayrı adımdır. Windows yayıncı sertifikası ve macOS Developer ID/noter onayı yoktur; macOS ad hoc imza denetimi yayıncı kimliğini doğrulamaz.
 
 Linux paketleme: `./scripts/package-linux.sh` sistem Qt kullanan küçük geliştirici paketini hazırlar. Erken erişim CI paketi `scripts/package-linux-portable.py` ile gerekli Qt kütüphanelerini, Wayland bileşenlerini ve uyumlu font yapılandırmasını içerir.
 
@@ -96,12 +100,12 @@ Dağıtılmış Linux paketini tek dosyalık AppImage olarak hazırlamak için `
 
 ```sh
 python3 scripts/package-appimage.py \
-  --package dist/PhotoDeck-0.9.0-ea.1-linux-x86_64 \
+  --package dist/PhotoDeck-0.9.1-ea.1-linux-x86_64 \
   --appimagetool /path/to/appimagetool \
-  --output dist/PhotoDeck-0.9.0-ea.1-x86_64.AppImage
+  --output dist/PhotoDeck-0.9.1-ea.1-x86_64.AppImage
 ```
 
-AppImage'a çalıştırma izni verip açın: `chmod +x PhotoDeck-0.9.0-ea.1-x86_64.AppImage`. FUSE bulunmayan sistemlerde `APPIMAGE_EXTRACT_AND_RUN=1 ./PhotoDeck-0.9.0-ea.1-x86_64.AppImage` kullanılabilir. Windows taşınabilir paketindeki `PhotoDeck.exe`, yanındaki DLL ve eklenti klasörleriyle birlikte taşınmalıdır. macOS paketindeki `.app` tüm içeriğiyle korunmalıdır.
+AppImage'a çalıştırma izni verip açın: `chmod +x PhotoDeck-0.9.1-ea.1-x86_64.AppImage`. FUSE bulunmayan sistemlerde `APPIMAGE_EXTRACT_AND_RUN=1 ./PhotoDeck-0.9.1-ea.1-x86_64.AppImage` kullanılabilir. Windows taşınabilir paketindeki `PhotoDeck.exe`, yanındaki DLL ve eklenti klasörleriyle birlikte taşınmalıdır. macOS paketindeki `.app` tüm içeriğiyle korunmalıdır.
 
 ## Mevcut kapsam
 

@@ -1,4 +1,4 @@
-# PhotoDeck 0.9.0 Early Access 1
+# PhotoDeck 0.9.1 Early Access 1
 
 AI içermeyen yerel fotoğraf ve katman düzenleyici. Erken erişim sürümüdür; önemli orijinalleri koruyun ve ayrı proje kopyalarıyla çalışın.
 
@@ -6,13 +6,19 @@ Varsayılan görünüm **3 · Odak**. Çalışma alanı menüsünden 10 preset a
 
 Görünüm ayarları bilgisayarın standart uygulama yapılandırma klasöründeki PhotoDeck/ui.ini dosyasında saklanır. .pdui yalnızca doğrulanan görünüm değerleri içerir; betik veya CSS çalıştırmaz. Belge pikselleri görünüm presetinden bağımsızdır.
 
+## Bu güncelleme
+
+0.9.1; tuvali panellerden ayıran Odak düzeni, araca bağlı seçenek çubuğu, Ctrl+Alt+1…0 çalışma alanı geçişi ve küçük resimlerin yeniden kullanımını getirir. Dışarıdan değiştirilen/silinen projeye kayıtta iptal, ayrı kopya veya açıkça üzerine yazma seçilebilir. v1–v4 orijinaline kaydetme girişimi uyarıdan sonra farklı adla v5 kopyaya yönlendirilir; .pdeck v5 değişmedi. Hakkında sürümü macOS'ta görünür içerikte de gösterilir. [Sürüm notları](docs/releases/0.9.1-ea.1.md) kayıt/kurtarma ve doğrulama sınırlarını açıklar.
+
+Dosya çakışması kontrolü iyimseldir; denetim ile atomik kayıt arasındaki dar yarış aralığı tamamen kapanmaz. PNG kodlama ve dosya yazma eşzamanlıdır; büyük belgelerde arayüz bekleyebilir. Kurtarma sıfır veri kaybı garantisi değildir.
+
 ## Paketler
 
 - Linux x86_64: arşivi açın ve launch.sh çalıştırın. Qt kütüphaneleri pakette bulunur; sistem glibc, grafik sürücüsü ve fontlar sistemden kullanılır. CI derlemesi Ubuntu 22.04/glibc 2.35 tabanını hedefler.
-- Windows x64: ZIP'i tamamen açın; PhotoDeck.exe çalıştırın. Qt DLL'leri ve görüntü eklentileri uygulamayla birlikte gelir. VC++ çalışma zamanı DLL'leri uygulamanın yanına eklenir. Windows 10/11 x64 hedeflenir.
+- Windows x64: ZIP'i tamamen açın; PhotoDeck.exe çalıştırın. Yayıncı sertifikasıyla imzalanmış değildir. Qt DLL'leri ve görüntü eklentileri uygulamayla birlikte gelir. VC++ çalışma zamanı DLL'leri uygulamanın yanına eklenir. Windows 10/11 x64 hedeflenir.
 - macOS Intel / Apple Silicon: ZIP'i açıp PhotoDeck.app uygulamasını Applications klasörüne taşıyın. Erken erişim paketleri Apple Developer kimliğiyle imzalanmış veya noter onaylı değildir; macOS ilk açılışta güvenlik onayı isteyebilir. Ad hoc imza yayıncı kimliğini doğrulamaz.
 
-PNG/JPEG/WebP/BMP, TIFF ve .pdeck desteklenir; GIF ilk kare olarak açılır. Belge RGB 8 bit olarak çalışır; yüksek bit derinlikli görüntüler 8 bite dönüşür. Çok sayfalı TIFF'in ilk görüntüsü açılır. PSD/PSB, RAW, CMYK/proofing, ileri vektör yolları ve fiziksel tablet cihaz matrisi hâlâ açık özellik hedefleridir. 16 MP, 64 katman, 256 MiB piksel/maske ve 30 durum/128 MiB ek geçmiş belleği sınırları vardır. Kurtarma kopyası 45 saniyede bir alınır; son değişiklikleri her zaman kapsamayabilir.
+PNG/JPEG/WebP/BMP, TIFF ve .pdeck desteklenir; GIF ilk kare olarak açılır. Belge RGB 8 bit olarak çalışır; yüksek bit derinlikli görüntüler 8 bite dönüşür. Çok sayfalı TIFF'in ilk görüntüsü açılır. PSD/PSB, RAW, CMYK/proofing, ileri vektör yolları ve fiziksel tablet cihaz matrisi hâlâ açık özellik hedefleridir. 16 MP, 64 katman, 256 MiB piksel/maske ve 30 durum/128 MiB ek geçmiş belleği sınırları vardır. Kurtarma tamamlanan düzenlemelerden yaklaşık 5 saniye sonra ve 45 saniyelik periyodik kontrolde denenir. Süren hareket bitene kadar ertelenir; son değişiklikleri her zaman kapsamayabilir.
 
 Derleme sonucu ile hedef donanım testi farklıdır: CI testleri ve paket açılış görüntüleri sağlanır; minimum donanım gereksinimi, bütün Linux dağıtımları, Windows sürümleri ve macOS cihazları test edilmiş değildir. SHA256SUMS.txt indirdiğiniz paketin bütünlüğünü kontrol eder.
 
@@ -24,7 +30,7 @@ Ctrl+L ton penceresi; Shift+M eliptik seçim, L kement, Shift+L çokgen kement, 
 
 Yeni projeler .pdeck sürüm 5'tir. Sürüm 1/2/3/4 projeleri açılır; eski uygulamalar sürüm 5 projelerini açamaz. Orijinalleri ayrı koruyun.
 
-Linux AppImage tek dosyalık alternatifidir: çalıştırma izni verin; FUSE yoksa `APPIMAGE_EXTRACT_AND_RUN=1 ./PhotoDeck-0.9.0-ea.1-x86_64.AppImage`. Kütüphaneler AppImage içindedir.
+Linux AppImage tek dosyalık alternatifidir: çalıştırma izni verin; FUSE yoksa `APPIMAGE_EXTRACT_AND_RUN=1 ./PhotoDeck-0.9.1-ea.1-x86_64.AppImage`. Kütüphaneler AppImage içindedir.
 
 Photoshop karşılaştırması ve kapanmamış farklar docs/PHOTOSHOP-COMPARISON.md içindedir. Bu sürüm tam Photoshop eşdeğerliği değildir.
 
