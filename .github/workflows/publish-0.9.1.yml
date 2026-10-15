@@ -1,6 +1,7 @@
 name: Publish reviewed 0.9.1 early access
 
-# This workflow is deliberately limited to PR #1 and this single release.
+# This workflow is deliberately limited to corrective PR #2, the previously
+# reviewed PR #1 merge ancestry, and this single release.
 on:
   workflow_run:
     workflows: ['Build and test']
@@ -15,7 +16,7 @@ on:
         options: ['v0.9.1-ea.1']
         default: 'v0.9.1-ea.1'
       expected_sha:
-        description: Full reviewed PR 1 merge SHA, already successful on main CI
+        description: Full reviewed PR 2 merge SHA, already successful on main CI
         required: true
         type: string
 
