@@ -6,8 +6,10 @@
 #include <QDialogButtonBox>
 #include <QFileDialog>
 #include <QImageReader>
+#include <QLineEdit>
 #include <QMessageBox>
 #include <QPushButton>
+#include <QSet>
 #include <QStandardPaths>
 #include <QTemporaryDir>
 #include <QtTest>
@@ -19,13 +21,31 @@ QByteArray contents(const QString &path) {
         return {};
     return f.readAll();
 }
-bool modal(QAction *action, const std::function<void(QDialog *)> &handler) {
+bool driveDialogs(QAction *action, const std::function<void(QDialog *)> &handler) {
     QTimer driver, timeout;
     driver.setInterval(10);
+    timeout.setSingleShot(true);
+    QSet<QDialog *> alreadyVisible;
+    for (auto *widget : QApplication::topLevelWidgets()) {
+        if (auto *dialog = qobject_cast<QDialog *>(widget); dialog && dialog->isVisible())
+            alreadyVisible.insert(dialog);
+    }
+    auto currentDialog = [&]() -> QDialog * {
+        auto *dialog = qobject_cast<QDialog *>(QApplication::activeModalWidget());
+        if (dialog && !alreadyVisible.contains(dialog))
+            return dialog;
+        // QMessageBox::about() is modeless on macOS, so it is never activeModalWidget().
+        for (auto *widget : QApplication::topLevelWidgets()) {
+            dialog = qobject_cast<QDialog *>(widget);
+            if (dialog && dialog->isVisible() && !alreadyVisible.contains(dialog))
+                return dialog;
+        }
+        return nullptr;
+    };
     QPointer<QDialog> last;
     bool seen = false, expired = false;
     QObject::connect(&driver, &QTimer::timeout, [&] {
-        auto *dialog = qobject_cast<QDialog *>(QApplication::activeModalWidget());
+        auto *dialog = currentDialog();
         if (!dialog || dialog == last)
             return;
         last = dialog;
@@ -34,12 +54,15 @@ bool modal(QAction *action, const std::function<void(QDialog *)> &handler) {
     });
     QObject::connect(&timeout, &QTimer::timeout, [&] {
         expired = true;
-        if (auto *dialog = qobject_cast<QDialog *>(QApplication::activeModalWidget()))
+        if (auto *dialog = currentDialog())
             dialog->reject();
     });
     driver.start();
     timeout.start(5000);
     action->trigger();
+    // A modeless action returns before the timer can inspect its dialog.
+    if (!seen && !expired && !QTest::qWaitFor([&] { return seen || expired; }, 5000))
+        return false;
     return seen && !expired;
 }
 QString recoveryDirectory() {
@@ -63,6 +86,32 @@ class UiResilienceTests : public QObject {
     }
     void cleanup() {
         QDir(recoveryDirectory()).removeRecursively();
+    }
+    void dialogDriverHandlesModelessWindows_data() {
+        QTest::addColumn<bool>("deferred");
+        QTest::newRow("immediate") << false;
+        QTest::newRow("queued") << true;
+    }
+    void dialogDriverHandlesModelessWindows() {
+        QFETCH(bool, deferred);
+        QDialog dialog;
+        QAction action;
+        connect(&action, &QAction::triggered, &dialog, [&] {
+            if (deferred)
+                QTimer::singleShot(0, &dialog, &QDialog::show);
+            else
+                dialog.show();
+        });
+        bool handled = false;
+        QVERIFY(driveDialogs(&action, [&](QDialog *shown) {
+            QCOMPARE(shown, &dialog);
+            QVERIFY(!shown->isModal());
+            QVERIFY(!QApplication::activeModalWidget());
+            handled = true;
+            shown->accept();
+        }));
+        QVERIFY(handled);
+        QVERIFY(!dialog.isVisible());
     }
     void toolOptionsFollowToolsAndDocumentTabs() {
         MainWindow w(false, false);
@@ -192,7 +241,7 @@ class UiResilienceTests : public QObject {
         paint(d, Qt::red);
         auto *save = w.findChild<QAction *>("save");
         bool canceled = false;
-        QVERIFY(modal(save, [&](QDialog *dialog) {
+        QVERIFY(driveDialogs(save, [&](QDialog *dialog) {
             auto *box = qobject_cast<QMessageBox *>(dialog);
             if (box && box->objectName() == "projectUpgradeWarning") {
                 canceled = true;
@@ -203,14 +252,25 @@ class UiResilienceTests : public QObject {
         QCOMPARE(contents(original), before);
         QVERIFY(d->dirty);
         bool warning = false, chooser = false;
-        QVERIFY(modal(save, [&](QDialog *dialog) {
+        QVERIFY(driveDialogs(save, [&](QDialog *dialog) {
             if (dialog->objectName() == "projectUpgradeWarning") {
                 warning = true;
                 dialog->findChild<QPushButton *>("saveProjectCopy")->click();
             } else if (auto *files = qobject_cast<QFileDialog *>(dialog)) {
                 chooser = true;
-                files->selectFile(copy);
-                QMetaObject::invokeMethod(files, "accept", Qt::DirectConnection);
+                auto *name = files->findChild<QLineEdit *>("fileNameEdit");
+                auto *buttons = files->findChild<QDialogButtonBox *>();
+                auto *saveCopy = buttons ? buttons->button(QDialogButtonBox::Save) : nullptr;
+                QVERIFY(name && saveCopy);
+                QCOMPARE(files->directory().absolutePath(), temp.path());
+                // selectFile() leaves a visible, focused filename edit unchanged in Qt.
+                // Replace the name as a user would, then exercise the real Save button.
+                QTest::mouseClick(name, Qt::LeftButton);
+                name->selectAll();
+                QTest::keyClicks(name, QFileInfo(copy).fileName());
+                QCOMPARE(files->selectedFiles(), QStringList{copy});
+                QTRY_VERIFY(saveCopy->isEnabled());
+                QTest::mouseClick(saveCopy, Qt::LeftButton);
             } else dialog->reject();
         }));
         QVERIFY(warning && chooser);
@@ -240,7 +300,7 @@ class UiResilienceTests : public QObject {
         const auto disk = contents(file);
         auto *save = w.findChild<QAction *>("save");
         bool canceled = false;
-        QVERIFY(modal(save, [&](QDialog *dialog) {
+        QVERIFY(driveDialogs(save, [&](QDialog *dialog) {
             if (auto *box = qobject_cast<QMessageBox *>(dialog)) {
                 canceled = box->objectName() == "projectConflictWarning";
                 box->button(QMessageBox::Cancel)->click();
@@ -250,7 +310,7 @@ class UiResilienceTests : public QObject {
         QCOMPARE(contents(file), disk);
         QVERIFY(d->dirty);
         bool approved = false;
-        QVERIFY(modal(save, [&](QDialog *dialog) {
+        QVERIFY(driveDialogs(save, [&](QDialog *dialog) {
             if (dialog->objectName() == "projectConflictWarning") {
                 approved = true;
                 dialog->findChild<QPushButton *>("overwriteProject")->click();
@@ -265,7 +325,7 @@ class UiResilienceTests : public QObject {
     void aboutAndHelpMatchCurrentBehavior() {
         MainWindow w(false, false);
         bool about = false, help = false;
-        QVERIFY(modal(w.findChild<QAction *>("about"), [&](QDialog *dialog) {
+        QVERIFY(driveDialogs(w.findChild<QAction *>("about"), [&](QDialog *dialog) {
             if (auto *box = qobject_cast<QMessageBox *>(dialog)) {
                 about = box->windowTitle().contains(PhotoDeck::Version) &&
                         box->text().contains("RGB ICC");
@@ -273,7 +333,7 @@ class UiResilienceTests : public QObject {
             } else dialog->reject();
         }));
         QVERIFY(about);
-        QVERIFY(modal(w.findChild<QAction *>("help"), [&](QDialog *dialog) {
+        QVERIFY(driveDialogs(w.findChild<QAction *>("help"), [&](QDialog *dialog) {
             if (auto *box = qobject_cast<QMessageBox *>(dialog)) {
                 help = box->text().contains("Ctrl+T katman dönüşümü") &&
                        box->text().contains("5 saniyede") &&

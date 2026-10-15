@@ -54,15 +54,15 @@ Testler gerçek QWidget fare/klavye girdileri, modal pencereler, piksel karşıl
 | Kontrol | Ortam / kapsam | Sonuç |
 |---|---|---|
 | Değişiklik öncesi temiz temel | `a2aa2ed`, Linux x86_64, Qt 6.8.3, offscreen | CTest 11/11 geçti; 7,30 sn. Bu sonuç yeni dalı doğrulamaz. |
-| Son Release kaynak ağacı | `fix/report-modern-workspace`, Linux x86_64, Qt 6.8.3, offscreen; araç-bağlamı/panel ekleri dahil | CMake derlemesi ve CTest 14/14 geçti; 12,01 sn. Toplam 377 Qt Test kontrolü (başlangıç/bitiş dahil), 349 test satırı. Yeni UI grubu 13, kayıt grubu 17, parser grubu 5 başarılı kontrol. |
+| Son Release kaynak ağacı | `fix/report-modern-workspace`, Linux x86_64, Qt 6.8.3, offscreen; araç-bağlamı/panel ekleri dahil | CMake derlemesi ve CTest 14/14 geçti; 12,24 sn. Toplam 379 Qt Test kontrolü (başlangıç/bitiş dahil), 351 test satırı. Yeni UI grubu 15, kayıt grubu 17, parser grubu 5 başarılı kontrol. |
 | İş tanımının statik kontrolü | YAML okuma; PR/main tetikleyicileri; dört hedef; salt okunur izinler; gömülü shell sözdizimi | Geçti; GitHub işi çalıştırılması değildir. |
-| Son yerel Linux ASan/UBSan | GCC 14.2, Debug, Qt 6.8.3; uygulama + testler instrument edildi; Qt SDK instrument edilmedi, leak detection kapalı | CTest 14/14 geçti; 25,30 sn. GitHub Clang işi için kanıt değildir. |
+| Son yerel Linux ASan/UBSan | GCC 14.2, Debug, Qt 6.8.3; uygulama + testler instrument edildi; Qt SDK instrument edilmedi, leak detection kapalı | CTest 14/14 geçti; 25,92 sn. GitHub Clang işi için kanıt değildir. |
 | qmake uygulama derlemesi / sürüm / açılış | Yalıtılmış Qt/OpenGL sysroot; OpenGL için açık LIBS arama yolu | Derleme, `--version` (`0.9.0-ea.1`) ve başlangıç PNG üretimi geçti. Bu ortamın bağlantı ayarı standart sistem Qt kurulumunu temsil etmez. |
 | Görsel ve etkileşim kontrolü | On preset; Odak 900×620 ve 1280×800; Fırça/Sihirli değnek/Kova; kaydırılmış özellikler | Kontroller geçti; uyarı görülmedi. Fiziksel cihaz matrisi değildir. |
-| Dört platform PR CI | GitHub-hosted Linux/Windows/macOS Intel/Apple Silicon | Yeni akış henüz çalıştırılmadı. |
+| İlk dört platform PR CI | [Run 38736782571](https://github.com/Meingless/PhotoDeck/actions/runs/38736782571), kaynak `5c4609b` | Dört hedef derlendi. Windows ve Clang ASan/UBSan 14/14 geçti. Linux Release ve iki macOS hedefinde yalnızca UI diyalog otomasyonu başarısız oldu. Dosya adının gerçek alana yazılması ve modeless About desteğiyle test sürücüsü düzeltildi; güncel commit sonucu [PR kontrollerinden](https://github.com/Meingless/PhotoDeck/pull/1/checks) okunmalıdır. |
 | Fiziksel cihaz / imzalı dağıtım | Tablet, yazıcı, gerçek düşük özellikli cihazlar; dağıtım sertifikası/notarization | Bu çalışmada doğrulanmadı. |
 
-Sonuçlar bu dalda doğrulanan kaynak ağacına aittir; yeni yayımlanmış paket veya GitHub run kanıtı değildir.
+Yerel sonuçlar bu dalda doğrulanan kaynak ağacına, GitHub sonuçları belirtilen run/commit’e aittir. Yeni yayımlanmış paket veya fiziksel cihaz kanıtı değildir.
 
 ## Yerel performans karşılaştırması
 
