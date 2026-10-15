@@ -36,15 +36,44 @@ def ci_run():
             'conclusion': 'success', 'head_repository': {'full_name': publisher.REPOSITORY}}
 
 
+def junit_xml(count):
+    return (f'<testsuite tests="{count}" failures="0" errors="0" skipped="0">' +
+            ''.join(f'<testcase name="test{index}"/>' for index in range(count)) + '</testsuite>')
+
+
+def save_safety_xml(skipped=True):
+    # Exact 17-case inventory and skip node observed in publisher run 38743440250.
+    names = ['initTestCase', 'nativeSaveAndLoadTrackVersionAndFreshBaseline',
+             'independentEditorCannotBeSilentlyOverwritten',
+             'hashDetectsSameSizeSameTimestampInPlaceEdit',
+             'deletionNeedsExplicitOverwriteAndRecoveryKeepsConflict',
+             'snapshotCannotOverwriteSourceEvenWithOptions',
+             'recoveredCopyCanReuseSnapshotWithoutAdoptingItAsProject',
+             'saveAsEscapesConflictAndTracksNewDestination',
+             'canonicalAliasesCannotBypassConflict',
+             'symbolicAliasesAndRetargetingAreProtected',
+             'legacyOriginalRequiresConsent(v1)', 'legacyOriginalRequiresConsent(v2)',
+             'legacyOriginalRequiresConsent(v3)', 'legacyOriginalRequiresConsent(v4)',
+             'externalLegacyEditRequiresBothIndependentPermissions',
+             'failuresKeepIdentityHistoryAndDirtyState', 'cleanupTestCase']
+    root = publisher.ET.Element('testsuite', name='SaveSafetyTests', tests='17',
+                                failures='0', errors='0', skipped=str(int(skipped)))
+    for name in names:
+        case = publisher.ET.SubElement(root, 'testcase', name=name, classname='SaveSafetyTests')
+        if name == 'symbolicAliasesAndRetargetingAreProtected' and skipped:
+            publisher.ET.SubElement(case, 'skipped', message='This test requires Unix symbolic links.')
+    return publisher.ET.tostring(root, encoding='unicode')
+
+
 class FakeAPI:
     def __init__(self):
         self.main = SHA
-        self.pull = {'number': 1, 'merged': True, 'merge_commit_sha': SHA,
+        self.pull = {'number': 2, 'merged': True, 'merge_commit_sha': SHA,
                      'base': {'ref': 'main', 'repo': {'full_name': publisher.REPOSITORY}},
                      'head': {'sha': HEAD, 'repo': {'full_name': publisher.REPOSITORY}}}
         self.runs = [ci_run()]
         self.pr_runs = [dict(ci_run(), id=41, event='pull_request', head_sha=HEAD,
-                             pull_requests=[{'number': 1, 'head': {'sha': HEAD}}])]
+                             pull_requests=[{'number': 2, 'head': {'sha': HEAD}}])]
         self.jobs = [{'name': name, 'status': 'completed', 'conclusion': 'success'}
                      for name in publisher.CI_JOBS]
         self.tag = None
@@ -58,7 +87,7 @@ class FakeAPI:
             self.writes.append((method, path, copy.deepcopy(data)))
         if path == '/git/ref/heads/main':
             return {'object': {'type': 'commit', 'sha': self.main}}
-        if path == '/pulls/1':
+        if path == '/pulls/2':
             return copy.deepcopy(self.pull)
         if path == '/git/ref/tags/' + publisher.TAG:
             return None if self.tag is None else {'object': {'type': 'commit', 'sha': self.tag}}
@@ -110,6 +139,17 @@ class GuardTests(unittest.TestCase):
 
     def test_valid_exact_merge(self):
         self.assertEqual(self.check(), '42')
+
+    def test_publisher_is_pinned_to_corrective_pr_and_original_reviewed_merge(self):
+        self.assertEqual(publisher.PR_NUMBER, 2)
+        self.assertEqual(publisher.BASE_SHA, 'd2d1b1335d9333d1ad9480e4ad7d955c78eac717')
+        calls = []
+        def recording_git(*args):
+            calls.append(args)
+            return fake_git(*args)
+        self.check(git_fn=recording_git)
+        for target in (HEAD, SHA):
+            self.assertIn(('merge-base', '--is-ancestor', publisher.BASE_SHA, target), calls)
 
     def test_full_sha_only(self):
         for value in ('a' * 7, 'A' * 40, 'main', None):
@@ -185,7 +225,7 @@ class GuardTests(unittest.TestCase):
             elif target == 'wrongsha':
                 api.pr_runs[0]['head_sha'] = SHA
             else:
-                api.pr_runs[0]['pull_requests'] = [{'number': 2}]
+                api.pr_runs[0]['pull_requests'] = [{'number': 1}]
             with self.subTest(target=target), self.assertRaises(publisher.GuardError):
                 self.check(api=api)
             self.assertFalse(api.writes)
@@ -244,10 +284,10 @@ class ArtifactTests(unittest.TestCase):
             (folder / 'packaged-test-list.txt').write_text('\n'.join(sorted(publisher.TEST_EXECUTABLES)) + '\n')
             (folder / 'packaged-test-count.txt').write_text('14\n')
             (folder / 'build-release').mkdir()
-            (folder / 'build-release/tests.xml').write_text('<testsuite tests="14" failures="0" errors="0"/>')
+            (folder / 'build-release/tests.xml').write_text(junit_xml(14))
             if label in {'linux-x86_64', 'windows-x64'}:
                 for name in publisher.TEST_EXECUTABLES:
-                    (folder / (name + '-packaged.xml')).write_text('<testsuite tests="3" failures="0"/>')
+                    (folder / (name + '-packaged.xml')).write_text(junit_xml(3))
             startup = 'linux' if label == 'linux-x86_64' else 'windows' if label == 'windows-x64' else 'macos'
             (folder / (startup + '-startup.png')).write_bytes(b'fake-startup-image')
             if label == 'linux-x86_64':
@@ -314,12 +354,132 @@ class ArtifactTests(unittest.TestCase):
             with self.subTest(value=value), self.assertRaises(publisher.GuardError):
                 self.verify()
 
+    def test_windows_notes_crlf_checkout_is_accepted(self):
+        notes = self.artifacts / 'PhotoDeck-windows-x64' / publisher.NOTES_PATH
+        source = publisher.NOTES_PATH.read_bytes()
+        self.assertNotIn(b'\r', source)
+        notes.write_bytes(source.replace(b'\n', b'\r\n'))
+        self.assertEqual(len(self.verify()), 6)
+
+    def test_notes_content_bom_bare_cr_and_whitespace_changes_are_rejected(self):
+        notes = self.artifacts / 'PhotoDeck-windows-x64' / publisher.NOTES_PATH
+        source = publisher.NOTES_PATH.read_bytes()
+        variants = {'content': source.replace(b'PhotoDeck', b'OtherApp', 1),
+                    'bom': b'\xef\xbb\xbf' + source,
+                    'barecr': source.replace(b'\n', b'\r', 1),
+                    'space': source + b' ', 'removednewline': source.rstrip(b'\n')}
+        for target, content in variants.items():
+            notes.write_bytes(content)
+            with self.subTest(target=target), self.assertRaisesRegex(publisher.GuardError, 'notes differ'):
+                self.verify()
+
+    def test_artifact_context_accepts_only_known_windows_bundled_skip(self):
+        proof = self.artifacts / 'PhotoDeck-windows-x64/photodeck-save-safety-tests-packaged.xml'
+        proof.write_text(save_safety_xml())
+        self.assertEqual(len(self.verify()), 6)
+        linux_proof = self.artifacts / 'PhotoDeck-linux-x86_64/photodeck-save-safety-tests-packaged.xml'
+        linux_proof.write_text(save_safety_xml())
+        with self.assertRaisesRegex(publisher.GuardError, 'Unexpected JUnit skip'):
+            self.verify()
+
     def test_checksum_parser_rejects_duplicates_paths_and_wrong_set(self):
         digest = 'a' * 64
         for value in (digest + '  ../file.zip', digest + '  file.zip\n' + digest + '  file.zip',
                       digest + '  other.zip', 'not a checksum'):
             with self.subTest(value=value), self.assertRaises(publisher.GuardError):
                 publisher.parse_checksums(value, {'file.zip'})
+
+
+class JUnitSkipTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.path = Path(self.temp.name) / 'photodeck-save-safety-tests-packaged.xml'
+
+    def tearDown(self):
+        self.temp.cleanup()
+
+    def verify(self, xml=None, platform='windows-x64', executable='photodeck-save-safety-tests'):
+        self.path.write_text(save_safety_xml() if xml is None else xml)
+        return publisher.verify_junit(self.path, platform=platform, executable=executable)
+
+    def test_exact_observed_windows_skip_is_accepted(self):
+        self.verify()
+
+    def test_linux_same_inventory_without_skip_is_accepted(self):
+        self.verify(save_safety_xml(skipped=False), platform='linux-x86_64')
+
+    def test_skip_is_rejected_on_other_platforms_executables_and_native_ctest(self):
+        for platform, executable in [('linux-x86_64', 'photodeck-save-safety-tests'),
+                                     ('macos-intel', 'photodeck-save-safety-tests'),
+                                     ('macos-apple-silicon', 'photodeck-save-safety-tests'),
+                                     ('windows-x64', 'photodeck-parser-safety-tests'), (None, None)]:
+            with self.subTest(platform=platform, executable=executable), self.assertRaises(publisher.GuardError):
+                self.verify(platform=platform, executable=executable)
+
+    def test_unexpected_skip_identity_reason_attributes_or_suite_is_rejected(self):
+        for target in ('test', 'class', 'suite', 'reason', 'type', 'text', 'nested'):
+            root = publisher.ET.fromstring(save_safety_xml())
+            case = root.find("testcase[@name='symbolicAliasesAndRetargetingAreProtected']")
+            skipped = case.find('skipped')
+            if target == 'test':
+                case.set('name', 'differentTest')
+            elif target == 'class':
+                case.set('classname', 'OtherTests')
+            elif target == 'suite':
+                root.set('name', 'OtherTests')
+            elif target == 'reason':
+                skipped.set('message', 'Different reason')
+            elif target == 'type':
+                skipped.set('type', 'skip')
+            elif target == 'text':
+                skipped.text = 'unexpected text'
+            else:
+                publisher.ET.SubElement(skipped, 'skipped')
+            with self.subTest(target=target), self.assertRaises(publisher.GuardError):
+                self.verify(publisher.ET.tostring(root, encoding='unicode'))
+
+    def test_unexpected_extra_or_duplicate_skip_is_rejected(self):
+        for target in ('extra', 'duplicate'):
+            root = publisher.ET.fromstring(save_safety_xml())
+            root.set('skipped', '2')
+            if target == 'extra':
+                publisher.ET.SubElement(root.find('testcase'), 'skipped', message='Unexpected')
+            else:
+                case = root.find("testcase[@name='symbolicAliasesAndRetargetingAreProtected']")
+                publisher.ET.SubElement(case, 'skipped', message='This test requires Unix symbolic links.')
+            with self.subTest(target=target), self.assertRaises(publisher.GuardError):
+                self.verify(publisher.ET.tostring(root, encoding='unicode'))
+
+    def test_failure_error_disabled_non_run_and_count_contradictions_are_rejected(self):
+        for target in ('failure', 'error', 'failures', 'errors', 'disabled', 'status',
+                       'skipped0', 'skipped2', 'tests16', 'missingcase', 'duplicatecase',
+                       'orphan', 'negative', 'aggregate'):
+            root = publisher.ET.fromstring(save_safety_xml())
+            if target in {'failure', 'error'}:
+                publisher.ET.SubElement(root.find('testcase'), target)
+            elif target in {'failures', 'errors', 'disabled'}:
+                root.set(target, '1')
+            elif target == 'status':
+                root.find('testcase').set('status', 'notrun')
+            elif target.startswith('skipped'):
+                root.set('skipped', target[-1])
+            elif target == 'tests16':
+                root.set('tests', '16')
+            elif target == 'missingcase':
+                root.remove(root.find('testcase'))
+            elif target == 'duplicatecase':
+                cases = root.findall('testcase')
+                cases[1].set('name', cases[0].get('name'))
+            elif target == 'orphan':
+                publisher.ET.SubElement(root, 'skipped', message='This test requires Unix symbolic links.')
+            elif target == 'negative':
+                root.set('tests', '-17')
+            else:
+                wrapper = publisher.ET.Element('testsuites', tests='18', skipped='1')
+                wrapper.append(root)
+                root = wrapper
+            with self.subTest(target=target), self.assertRaises(publisher.GuardError):
+                self.verify(publisher.ET.tostring(root, encoding='unicode'))
 
 
 class PublicationTests(unittest.TestCase):

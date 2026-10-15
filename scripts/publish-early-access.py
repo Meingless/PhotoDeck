@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Fail-closed publisher for reviewed PhotoDeck PR #1 and v0.9.1-ea.1 only.
+"""Fail-closed publisher for reviewed PhotoDeck corrective PR #2 and v0.9.1-ea.1 only.
 
 Uses only the job's ephemeral token and GitHub's official HTTPS API. There is no
 force, delete, asset replacement, arbitrary-version, or credential-storage path.
@@ -24,8 +24,9 @@ import xml.etree.ElementTree as ET
 REPOSITORY = 'Meingless/PhotoDeck'
 TAG = 'v0.9.1-ea.1'
 VERSION = TAG[1:]
-BASE_SHA = 'a2aa2edd7ef51ae7d12484791ac3d8ca64741f4b'
-PR_NUMBER = 1
+# The original reviewed release merge must remain an ancestor of PR #2.
+BASE_SHA = 'd2d1b1335d9333d1ad9480e4ad7d955c78eac717'
+PR_NUMBER = 2
 NOTES_PATH = Path('docs/releases/0.9.1-ea.1.md')
 PLATFORMS = {
     'linux-x86_64': (f'PhotoDeck-{VERSION}-linux-x86_64.tar.gz',
@@ -186,7 +187,7 @@ def verify_guard(api, expected_sha, env=None, event=None, git_fn=git, root=Path(
             pull.get('base', {}).get('ref') == 'main' and
             pull.get('base', {}).get('repo', {}).get('full_name') == REPOSITORY and
             pull.get('head', {}).get('repo', {}).get('full_name') == REPOSITORY,
-            'Only the exact merged own-repository PR #1 may publish')
+            f'Only the exact merged own-repository corrective PR #{PR_NUMBER} may publish')
     head_sha = full_sha(pull.get('head', {}).get('sha'))
     require(git_fn('rev-parse', 'HEAD') == expected_sha, 'Checkout is not the reviewed merge')
     git_fn('merge-base', '--is-ancestor', BASE_SHA, head_sha)
@@ -208,7 +209,7 @@ def verify_guard(api, expected_sha, env=None, event=None, git_fn=git, root=Path(
                       any(item.get('number') == PR_NUMBER and
                           item.get('head', {}).get('sha', head_sha) == head_sha
                           for item in run['pull_requests']))]
-    require(bool(valid_pr_runs), 'No successful final PR #1 head validation run')
+    require(bool(valid_pr_runs), f'No successful final PR #{PR_NUMBER} head validation run')
     pr_run = max(valid_pr_runs, key=lambda item: item['id'])
     verify_ci_jobs(api, pr_run['id'])
     print(f'Final PR #{PR_NUMBER} head CI verified: run {pr_run["id"]}')
@@ -267,20 +268,65 @@ def parse_checksums(text, expected_names):
     return result
 
 
-def verify_junit(path, expected_count=None):
+def junit_count(node, key, default=None):
+    value = node.get(key, default)
+    require(isinstance(value, str) and re.fullmatch(r'[0-9]+', value),
+            f'Malformed JUnit {key} count')
+    return int(value)
+
+
+def verify_junit(path, expected_count=None, *, platform=None, executable=None):
     require(path.is_file() and not path.is_symlink(), f'Missing test proof: {path.name}')
     tree = ET.parse(path)
-    suites = [node for node in tree.iter() if node.tag == 'testsuite']
-    require(bool(suites), f'Missing JUnit suite: {path.name}')
-    require(not any(node.tag in {'failure', 'error', 'skipped'} for node in tree.iter()),
+    root = tree.getroot()
+    suites = [root] if root.tag == 'testsuite' else root.findall('testsuite') if root.tag == 'testsuites' else []
+    require(bool(suites) and len(list(tree.iter('testsuite'))) == len(suites),
+            f'Missing or nested JUnit suite: {path.name}')
+    require(not any(node.tag in {'failure', 'error'} for node in tree.iter()),
             f'Failing JUnit proof: {path.name}')
     require(all(node.get('status') in {None, 'run'} for node in tree.iter('testcase')),
             f'Non-run JUnit testcase: {path.name}')
     count = 0
+    skipped_count = 0
     for suite in suites:
-        require(all(int(suite.get(key, '0')) == 0 for key in ('failures', 'errors', 'skipped', 'disabled')),
+        require(all(junit_count(suite, key, '0') == 0 for key in ('failures', 'errors', 'disabled')),
                 f'Failing JUnit summary: {path.name}')
-        count += int(suite.get('tests', '0'))
+        cases = suite.findall('testcase')
+        tests = junit_count(suite, 'tests')
+        require(tests > 0 and tests == len(cases),
+                f'JUnit testcase count differs from summary: {path.name}')
+        identities = [(case.get('classname'), case.get('name')) for case in cases]
+        require(all(name for _, name in identities) and len(identities) == len(set(identities)),
+                f'Missing or duplicate JUnit testcase identity: {path.name}')
+        suite_skips = 0
+        for case in cases:
+            skips = case.findall('skipped')
+            if not skips:
+                continue
+            # Confirmed in Qt 6.8.3 Windows output and explicitly declared by
+            # test_save_safety.cpp. This Unix-only symlink case is still run on
+            # Linux; no other platform, executable, suite, reason or skip is allowed.
+            require(platform == 'windows-x64' and executable == 'photodeck-save-safety-tests' and
+                    len(suites) == 1 and suite.get('name') == 'SaveSafetyTests' and tests == 17 and
+                    case.get('classname') == 'SaveSafetyTests' and
+                    case.get('name') == 'symbolicAliasesAndRetargetingAreProtected' and
+                    len(skips) == 1 and
+                    skips[0].attrib == {'message': 'This test requires Unix symbolic links.'} and
+                    not list(skips[0]) and not (skips[0].text or '').strip(),
+                    f'Unexpected JUnit skip: {path.name}')
+            suite_skips += 1
+        require(suite_skips <= 1 and junit_count(suite, 'skipped', '0') == suite_skips,
+                f'JUnit skipped count differs from allowed testcase proof: {path.name}')
+        count += tests
+        skipped_count += suite_skips
+    require(len(list(tree.iter('testcase'))) == count and
+            len(list(tree.iter('skipped'))) == skipped_count,
+            f'Orphan or nested JUnit testcase/skip: {path.name}')
+    if root.tag == 'testsuites':
+        for key, expected in (('tests', count), ('skipped', skipped_count),
+                              ('failures', 0), ('errors', 0), ('disabled', 0)):
+            require(root.get(key) is None or junit_count(root, key) == expected,
+                    f'JUnit aggregate {key} count differs from suite proofs: {path.name}')
     require(count > 0 and (expected_count is None or count == expected_count),
             f'Unexpected JUnit test count: {path.name}')
 
@@ -321,13 +367,16 @@ def verify_artifacts(artifacts, output, expected_sha):
             require(proofs == {name + '-packaged.xml' for name in TEST_EXECUTABLES},
                     f'Incomplete packaged-runtime test proofs: {label}')
             for name in TEST_EXECUTABLES:
-                verify_junit(folder / (name + '-packaged.xml'))
+                verify_junit(folder / (name + '-packaged.xml'), platform=label, executable=name)
         startup = 'linux' if label == 'linux-x86_64' else 'windows' if label == 'windows-x64' else 'macos'
         require(inspect_asset(folder / (startup + '-startup.png')).size > 8,
                 f'Missing deployed-app startup proof: {label}')
         if label == 'linux-x86_64':
             inspect_asset(folder / 'appimage-startup.png')
-        require((folder / NOTES_PATH).read_bytes() == NOTES_PATH.read_bytes(),
+        # Git's Windows checkout may use CRLF. Only that byte-level newline
+        # conversion is allowed; BOMs, bare CRs and all content stay significant.
+        require((folder / NOTES_PATH).read_bytes().replace(b'\r\n', b'\n') ==
+                NOTES_PATH.read_bytes().replace(b'\r\n', b'\n'),
                 f'Package notes differ from the tested source: {label}')
     output.mkdir(parents=True, exist_ok=True)
     combined = output / 'SHA256SUMS.txt'
