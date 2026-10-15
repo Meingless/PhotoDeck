@@ -4,6 +4,7 @@
 #include "selection.h"
 #include "tones.h"
 #include <QColor>
+#include <QDateTime>
 #include <QFont>
 #include <QImage>
 #include <QObject>
@@ -56,6 +57,12 @@ class Document : public QObject {
     static constexpr qint64 MaxPixels = 16 * 1024 * 1024;
     static constexpr qint64 MaxLayerBytes = 256 * 1024 * 1024;
     static constexpr qint64 HistoryBudget = 128 * 1024 * 1024;
+    static constexpr int NativeProjectVersion = 5;
+    enum class SaveStatus { Success, Error, ExternalModification, FormatUpgradeRequired };
+    struct SaveOptions {
+        bool allowExternalOverwrite = false;
+        bool allowFormatUpgrade = false;
+    };
     explicit Document(QObject *parent = nullptr);
     State state;
     QString title = "Adsız", path;
@@ -105,6 +112,11 @@ class Document : public QObject {
     qint64 imageBytes() const;
     qint64 historyBytes() const;
     bool save(const QString &file, QString *error, bool markClean = true);
+    bool save(const QString &file, QString *error, bool markClean, const SaveOptions &options);
+    SaveStatus lastSaveStatus() const { return saveStatus; }
+    // Zero denotes a new/imported document; a successful native save changes this to version 5.
+    int sourceVersion() const { return sourceProjectVersion; }
+    bool requiresFormatUpgrade(const QString &file) const;
     bool load(const QString &file, QString *error);
     bool exportImage(const QString &file, int quality, QString *error);
     bool exportRaster(const QString &file, const RasterExportOptions &options, QString *error);
@@ -113,6 +125,10 @@ class Document : public QObject {
     bool isEditing() const { return inEdit; }
     quint64 revision() const { return cursor >= 0 ? history[cursor].id : 0; }
     void markRecovered() {
+        // A recovery snapshot is an unsaved working copy, never the backing project.
+        path.clear();
+        sourceFile = {};
+        sourceProjectVersion = 0;
         savedId = 0;
         dirty = true;
     }
@@ -122,6 +138,19 @@ class Document : public QObject {
     void updated();
 
   private:
+    struct FileVersion {
+        QString absolutePath, resolvedPath;
+        bool exists = false;
+        qint64 size = 0;
+        QDateTime modified;
+        QByteArray identity, digest;
+    };
+    static bool readFileVersion(const QString &file, FileVersion &version, QString *error);
+    static bool sameFileVersion(const FileVersion &a, const FileVersion &b);
+    bool isSourceFile(const FileVersion &version) const;
+    FileVersion sourceFile;
+    int sourceProjectVersion = 0;
+    SaveStatus saveStatus = SaveStatus::Success;
     struct Entry {
         State state;
         QString label;

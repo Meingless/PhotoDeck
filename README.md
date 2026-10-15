@@ -10,7 +10,7 @@ Sistem paketleri: CachyOS/Arch için `qt6-base qt6-imageformats`; Ubuntu/Debian'
 
 ## Görünüm presetleri ve kişiselleştirme
 
-Varsayılan görünüm **Odak**. Çalışma alanı menüsünde Grafit, Kağıt, Odak, Fotoğraf Masası, Çalışma Tezgahı, Şerit, Çizim Atölyesi, Kompakt, Dokunmatik ve Modüler presetleri bulunur. **Ctrl+Alt+P** görünüm düzenleyicisini açar; renkler, yazı ve simge boyutu, köşeler, panel yerleşimi ve görünürlük düzenlenebilir. Paneller taşınabilir/ayrılabilir, ayarlar oturumlar arasında korunur; kişisel presetler kaydedilebilir ve .pdui ile içe/dışa aktarılabilir. Erken erişim kurulum notları [EARLY-ACCESS.md](EARLY-ACCESS.md) içinde.
+Varsayılan görünüm **Odak**: solda araçlar, ortada panellerin kapatmadığı tuval, sağda katmanlar/özellikler ve üstte seçili araca göre değişen seçenekler bulunur. **Ctrl+Alt+1…0** on hazır çalışma alanı arasında geçiş yapar. Çalışma alanı menüsünde Grafit, Kağıt, Odak, Fotoğraf Masası, Çalışma Tezgahı, Şerit, Çizim Atölyesi, Kompakt, Dokunmatik ve Modüler presetleri bulunur. **Ctrl+Alt+P** görünüm düzenleyicisini açar; renkler, yazı ve simge boyutu, köşeler, panel yerleşimi ve görünürlük düzenlenebilir. Paneller taşınabilir/ayrılabilir, ayarlar oturumlar arasında korunur; kişisel presetler kaydedilebilir ve .pdui ile içe/dışa aktarılabilir. Erken erişim kurulum notları [EARLY-ACCESS.md](EARLY-ACCESS.md) içinde.
 
 ## Araçlar
 
@@ -38,14 +38,14 @@ Varsayılan görünüm **Odak**. Çalışma alanı menüsünde Grafit, Kağıt, 
 - Çıktı boyutu, oran kilidi, DPI ve kalite seçimi; sRGB, Display P3 veya Adobe RGB ICC profilli PNG/JPEG/TIFF/WebP çıktı. Profilli RGB girdiler sRGB çalışma alanına dönüştürülür; etiketsiz girdiler sRGB kabul edilir.
 - A4, Letter veya görüntünün fiziksel boyutunda tek sayfalı PDF; yatay/dikey sayfa ve kenar boşlukları. Dosya → Yazdır native yazıcı penceresini açar; şeffaflık beyaz kağıda uygulanır.
 - Orijinalleri değiştirmeyen toplu boyutlandırma, renk ayarı ve biçim dönüşümü. Çıktı adlarında `_photodeck` eki kullanılır; mevcut çıktılar için sayı eklenir.
-- Atomik `.pdeck` proje kaydı; katman, maske, metin, konum, harmanlama ve renk/filtre parametreleri korunur.
-- 45 saniyelik kurtarma kopyaları; sonraki açılışta kurtarma önerisi. Normal kapatmada kaydet/at/iptal seçimi.
+- Atomik `.pdeck` proje kaydı; katman, maske, metin, konum, harmanlama ve renk/filtre parametreleri korunur. Diskte dışarıdan değiştirilen veya silinen açık proje için iptal, ayrı kopya ve açıkça üzerine yazma seçenekleri sunulur.
+- Tamamlanan düzenlemelerden yaklaşık 5 saniye sonra kurtarma kopyası; ayrıca 45 saniyelik periyodik kontrol. Süren çizim/taşıma hareketi sırasında yazma ertelenir, hareket tamamlandığında hemen yeniden denenir. Sonraki açılışta kurtarma önerisi, normal kapatmada kaydet/at/iptal seçimi vardır.
 
 Kısayollar: V taşı, M seç, C kırp, B fırça, P kalem, E silgi, S klon, F kova, G degrade, T metin, U dikdörtgen, O elips, I damlalık, H el, X renk değiştir. Klon kaynağı Alt+tıklama. Kırpmayı Ctrl+Shift+X ile uygula. Ctrl/Cmd+Z geri alır; Ctrl/Cmd+0 sığdırır; Ctrl/Cmd+1 gerçek boyutu gösterir. Tekerlek yakınlaştırır, orta tuş tuvali kaydırır. Bazı özel kısayollar platformdan bağımsız Ctrl olarak tanımlanmıştır; macOS'ta standart Dosya/Düzenle kısayolları Cmd kullanır.
 
 Shift+M eliptik seçim, L kement, Shift+L çokgen kement, W sihirli değnek. Çokgen kement Enter/çift tıklamayla tamamlanır, Esc iptal eder. Seçim sırasında Shift ekler, Alt çıkarır, Shift+Alt kesiştirir; araç seçeneklerinden aynı modlar seçilebilir. Ctrl+Shift+I seçimi ters çevirir. Seçimler bu sürümde geçicidir; proje veya belge geçmişine kaydedilmez.
 
-0.6 projeleri `.pdeck` sürüm 5 olarak kaydedilir; eski sürüm 1/2/3/4 projeleri açılabilir. Eski uygulamalar sürüm 5 dosyalarını açamaz; orijinalleri ayrı saklayın. v2/v3/v4 uyumluluk örnekleri yayımlanmış 0.3/0.4/0.5 AppImage'larıyla oluşturuldu.
+0.9 projeleri `.pdeck` sürüm 5 olarak kaydedilir; eski sürüm 1/2/3/4 projeleri açılabilir. Eski uygulamalar sürüm 5 dosyalarını açamaz. v1–v4 orijinalinin üzerine kaydetmek isteyen arayüz işlemi uyarı verir ve farklı adla v5 kopya kaydetmeye yönlendirir; eski orijinal korunur. v2/v3/v4 uyumluluk örnekleri yayımlanmış 0.3/0.4/0.5 AppImage'larıyla oluşturuldu.
 
 Kırpma zinciri katman sırasına bağlıdır. Temel katmanı silmek çocukların kırpmasını kaldırır; sıralama/yeni katman yerleştirme hangi temel katmana kırpıldığını değiştirebilir. Gizli temelli gruplar görünür birleştirmede korunur. Görünür temeli ve gizli kırpılan çocuğu olan gruplar birleştirilmeden önce ayrılmalı veya görünür yapılmalıdır; ilişkiler sessizce kaybedilmez. Feather ile kesme, kısmi alfa sınırlarında iki ayrı katman oluşturduğu için sert seçim gibi piksel piksel aynı görünümü garanti etmez.
 
@@ -55,9 +55,9 @@ Açılıştaki Horizon kompozisyonu PhotoDeck için kodla çizilmiş özgün bir
 
 ## Hafiflik ve güvenlik sınırları
 
-Tuval en fazla 16 megapiksel, her kenar en fazla 16384 piksel. En fazla 64 katman ve 256 MiB kaynak piksel/maske verisi; katmanların toplam dönüşmüş görünüm alanı da 256 MiB ile sınırlıdır. Geçmiş en fazla 30 durum ve canlı belgeden ayrı toplam 128 MiB benzersiz piksel verisi saklar; büyük belgelerde eski adımlar daha erken atılır. Paylaşılan görüntü tamponları gereksiz kopyaları azaltır; filtre sonuçları önbelleğe alınır. Bu sınırlar toplam süreç RAM'inin üst sınırı değildir: tuval önizlemesi, filtre/dönüşüm tamponları, Qt ve dosya kodlama ek bellek kullanır.
+Tuval en fazla 16 megapiksel, her kenar en fazla 16384 piksel. En fazla 64 katman ve 256 MiB kaynak piksel/maske verisi; katmanların toplam dönüşmüş görünüm alanı da 256 MiB ile sınırlıdır. Geçmiş en fazla 30 durum ve canlı belgeden ayrı toplam 128 MiB benzersiz piksel verisi saklar; büyük belgelerde eski adımlar daha erken atılır. Paylaşılan görüntü tamponları gereksiz kopyaları azaltır; filtre sonuçları önbelleğe alınır. Değişmeyen katman/filmşeridi küçük resimleri yeniden kullanılır, canlı hareket sırasında yardımcı önizleme yenilemesi ertelenir. Bu sınırlar toplam süreç RAM'inin üst sınırı değildir: tuval önizlemesi, filtre/dönüşüm tamponları, Qt ve dosya kodlama ek bellek kullanır.
 
-Bozuk proje okumaları geçici belge üzerinde doğrulanır ve açık belgeyi değiştirmez. Uzunluk, boyut, katman sayısı, maske boyutu ve sayısal parametreler sınırlanır. Proje dosyalarında komut, betik veya harici kaynak çalıştırılmaz. Başarısız kayıt açık belgenin kaydedilmiş durumunu değiştirmez. Proje/geçmiş ayrıdır: undo geçmişi dosyaya yazılmaz. Kurtarma kopyaları son 45 saniyedeki değişiklikleri her zaman kapsamayabilir; büyük belgelerde PNG kodlama arayüzde kısa beklemeye neden olabilir.
+Bozuk proje okumaları geçici belge üzerinde doğrulanır ve açık belgeyi değiştirmez. Uzunluk, boyut, katman sayısı, maske boyutu ve sayısal parametreler sınırlanır. Proje dosyalarında komut, betik veya harici kaynak çalıştırılmaz. Başarısız kayıt açık belgenin kaydedilmiş durumunu değiştirmez. Proje/geçmiş ayrıdır: undo geçmişi dosyaya yazılmaz. Kurtarma sıfır veri kaybı garantisi değildir: henüz tamamlanmamış hareket, yazma öncesi kapanma veya disk hatası son değişiklikleri kaybettirebilir. PNG kodlama ve dosya yazma hâlâ arayüz iş parçacığında eşzamanlıdır; büyük belgelerde bekleme riski sürer. Dış değişiklik kontrolü dosya kimliği, boyut/zaman ve SHA-256 özetiyle iyimser doğrulama yapar; kontrol ile atomik kayıt arasındaki çok dar yarış aralığını bütünüyle kaldırmaz.
 
 ## Linux / Windows / macOS derleme
 
@@ -73,7 +73,22 @@ Linux için `./scripts/build.sh` CMake varsa onu, yoksa qmake6 + make kullanır 
 
 Windows'ta Qt MSVC veya MinGW kitiyle derleyin; `windeployqt` Qt DLL'lerini ve eklentilerini uygulamanın yanına koyar. MSVC/CMake çıktısı `build-cmake/Release/photodeck.exe` olur. macOS'ta çıktı `build-cmake/photodeck.app`; `macdeployqt` bağımlılıkları `.app` içine yerleştirir. Dağıtım için Windows imzalama ve macOS imzalama/notarization ayrıca gerekir.
 
-`.github/workflows/build.yml` üç işletim sistemi için derleme, işlev testleri ve paket hazırlama akışını içerir. Erken erişim akışı Linux x86_64, Windows x64 ve macOS Intel/Apple Silicon için ayrı paketler, test raporları ve açılış görüntüleri üretir. Gerçek run sonuçları artifacts/early-access içinde kaydedilir.
+`.github/workflows/validate.yml` her pull request ve `main` push'unda Qt 6.8.3 ile Linux x86_64, Windows x64, macOS Intel ve Apple Silicon hedeflerinde CMake derlemesi ve tüm CTest gruplarını çalıştıracak şekilde tanımlıdır. Test raporları ve CTest günlükleri iş artifacts bölümüne yüklenir. Bu dört hedefin CI kapsamı, tüm işletim sistemi sürümleri veya fiziksel cihazlar için uyumluluk garantisi değildir. Yeni akışın eklenmesi başarılı bir run kanıtı sayılmaz; ilk GitHub run sonucu ayrıca kontrol edilmelidir.
+
+Ayrı Linux işi uygulama ve test kodunu Clang AddressSanitizer/UndefinedBehaviorSanitizer ile derler; hata ilk bulguda işi durdurur. Küçük, tekrarlanabilir `.pdeck`/`.pdbrush` kesme ve byte mutasyonu corpus'u da bu işte çalışır. Bu bir kapsam güdümlü fuzzing altyapısı veya güvenlik sertifikası değildir. Önceden derlenmiş Qt SDK'sı instrument edilmez; süreç sonu leak detection kapalıdır. Aynı kontrolü Linux'ta Qt yolu tanımlı ortamda çalıştırmak için:
+
+```sh
+cmake -S . -B build-sanitizers -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=ON \
+  -DCMAKE_CXX_COMPILER=clang++ \
+  '-DCMAKE_CXX_FLAGS=-fsanitize=address,undefined -fno-omit-frame-pointer' \
+  '-DCMAKE_EXE_LINKER_FLAGS=-fsanitize=address,undefined'
+cmake --build build-sanitizers --parallel 4
+QT_QPA_PLATFORM=offscreen ASAN_OPTIONS=detect_leaks=0:halt_on_error=1 \
+  UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1 \
+  ctest --test-dir build-sanitizers -C Debug --output-on-failure --timeout 120
+```
+
+`.github/workflows/build.yml` etiket (`v*`) veya manuel çalıştırmayla erken erişim paketlerini hazırlar; PR doğrulama akışından ayrıdır. Linux x86_64, Windows x64 ve macOS Intel/Apple Silicon için paketler, paket testleri ve açılış görüntüleri bu akıştadır. Bu değişiklik yeni paket yayımlamaz veya Windows/macOS dağıtım imzalama/notarization kanıtı oluşturmaz.
 
 Linux paketleme: `./scripts/package-linux.sh` sistem Qt kullanan küçük geliştirici paketini hazırlar. Erken erişim CI paketi `scripts/package-linux-portable.py` ile gerekli Qt kütüphanelerini, Wayland bileşenlerini ve uyumlu font yapılandırmasını içerir.
 
@@ -106,9 +121,9 @@ Filtre sırası pikselleştirme → gren → Gaussian → high-pass → unsharp;
 
 Tüm Photoshop alanlarının karşılaştırması ve açık farklar: [docs/PHOTOSHOP-COMPARISON.md](docs/PHOTOSHOP-COMPARISON.md). 0.3–0.9 farkların bir kısmını kapatır; karşılaştırma çalışması devam eder.
 
-0.7 çıktı kapsamı: Çalışma alanı RGB/sRGB 8 bittir. ICC çıktı pikselleri seçilen RGB profiline dönüştürülür; BMP profil eklemeyi desteklemez. DPI metadata desteği biçime bağlıdır; mevcut piksel ayrıntısını artırmaz. PDF görünür kompozisyonun düzleştirilmiş raster çıktısıdır; katmanlı/vektör/PDF-X değildir. Fiziksel yazıcı testi yapılmadı. CMYK/Lab, yüksek bit derinliği, monitör profiliyle görüntüleme, soft proof ve gamut uyarısı açık hedeflerdir.
+Çıktı kapsamı (0.9): Çalışma alanı RGB/sRGB 8 bittir. ICC çıktı pikselleri seçilen RGB profiline dönüştürülür; BMP profil eklemeyi desteklemez. DPI metadata desteği biçime bağlıdır; mevcut piksel ayrıntısını artırmaz. PDF görünür kompozisyonun düzleştirilmiş raster çıktısıdır; katmanlı/vektör/PDF-X değildir. Fiziksel yazıcı testi yapılmadı. CMYK/Lab, yüksek bit derinliği, monitör profiliyle görüntüleme, soft proof ve gamut uyarısı açık hedeflerdir.
 
-0.8 fırça kapsamı: Darbe aralığı çizgi boyunca korunur; bırakma noktasına son darbe uygulanır. Alfa seçim kapsamı her darbeye ayrı uygulanır. Basınç örnekleri hareket boyunca doğrusal enterpole edilir; boyut minimum + (1−minimum) × basınç^tepki, akış basınç^tepki kullanır. Eğim, eliptik ucu yönlendirir ve sıkıştırır. Ayarlar belge sekmesinin oturumu içindir; proje kaydına eklenmez. Özel görüntü uçları, ABR, fırça kütüphanesi, scatter/jitter/texture, simetri ve fiziksel tablet cihaz matrisi açık hedeflerdir. Fiziksel tablet testi yapılmadı; testler gerçek Qt tablet olaylarını aygıt fixture'larıyla gönderir.
+Fırça kapsamı (0.9): Darbe aralığı çizgi boyunca korunur; bırakma noktasına son darbe uygulanır. Alfa seçim kapsamı her darbeye ayrı uygulanır. Basınç örnekleri hareket boyunca doğrusal enterpole edilir; boyut minimum + (1−minimum) × basınç^tepki, akış basınç^tepki kullanır. Eğim, eliptik ucu yönlendirir ve sıkıştırır. Ayarlar belge sekmesinin oturumu içindir; proje kaydına eklenmez. Özel görüntü uçları ve kalıcı fırça kütüphanesi 0.9 kapsamındadır. ABR, scatter/jitter/texture, smoothing/simetri ve fiziksel tablet cihaz matrisi açık hedeflerdir. Fiziksel tablet testi yapılmadı; testler gerçek Qt tablet olaylarını aygıt fixture'larıyla gönderir.
 
 0.9: Menüler, sekmeler, araçlar, paneller, listeler, girişler, odak/hover/seçim durumları ve diyaloglar ortak modern tasarımla yenilendi. Varsayılan **3 · Odak**, on yerleşim ve .pdui özelleştirmeleri korunur. Araç ikonları farklı çözünürlüklerde çizilir; özel panel renklerinde okunabilir metin rengi türetilir. Renk seçiminiz değiştirilmez.
 
