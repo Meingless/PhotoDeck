@@ -1,4 +1,5 @@
 #include "mainwindow.h"
+#include "version.h"
 #include <QApplication>
 #include <QCommandLineParser>
 #include <QDir>
@@ -8,7 +9,7 @@ int main(int argc, char **argv) {
     QApplication app(argc, argv);
     app.setApplicationName("PhotoDeck");
     app.setOrganizationName("PhotoDeck");
-    app.setApplicationVersion("0.9.0-ea.1");
+    app.setApplicationVersion(PhotoDeck::Version);
     QImageReader::setAllocationLimit(128);
     app.setStyle("Fusion");
     app.setWindowIcon(QIcon(":/photodeck.png"));

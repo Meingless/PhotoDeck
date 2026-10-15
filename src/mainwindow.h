@@ -10,6 +10,7 @@
 #include <QMainWindow>
 #include <QMenu>
 #include <QSettings>
+#include <QSet>
 #include <QSlider>
 #include <QSpinBox>
 #include <QTabWidget>
@@ -17,6 +18,8 @@
 #include <QToolBar>
 #include <QToolButton>
 class QCheckBox;
+class QGridLayout;
+class QScrollArea;
 class Histogram : public QWidget {
   public:
     explicit Histogram(QWidget *parent = nullptr) : QWidget(parent) { setFixedHeight(70); }
@@ -65,6 +68,10 @@ class MainWindow : public QMainWindow {
     QToolBar *documentToolbar, *optionsToolbar, *toolsBar, *ribbonToolbar;
     QDockWidget *toolsDock, *colorDock, *layersDock, *historyDock, *filmDock, *brushDock;
     QWidget *layerPanel;
+    QWidget *toolPalette = nullptr;
+    QGridLayout *toolGrid = nullptr;
+    QScrollArea *toolScroll = nullptr;
+    QVector<QToolButton *> toolButtons;
     QLabel *brandLabel;
     QListWidget *filmstrip;
     QComboBox *presetPicker;
@@ -104,7 +111,17 @@ class MainWindow : public QMainWindow {
     QToolButton *colorButton, *maskButton;
     QLabel *info, *status, *zoomLabel, *layerDetails;
     Histogram *histogram;
-    QTimer refreshTimer, autosaveTimer;
+    QTimer refreshTimer, autosaveTimer, recoverySaveTimer;
+    struct PreviewCache {
+        QByteArray compositeKey;
+        QImage histogramSample;
+        QIcon filmThumbnail;
+        QVector<QByteArray> layerKeys;
+        QVector<QIcon> layerThumbnails;
+    };
+    QHash<Document *, PreviewCache> previewCaches;
+    QSet<Document *> deferredRecovery;
+    void scheduleRecovery(Document *document);
     bool refreshing = false;
     QHash<Document *, QString> recoveryFiles;
     QHash<Document *, QString> recoveryStates;
@@ -112,6 +129,7 @@ class MainWindow : public QMainWindow {
     void buildMenus();
     void buildTools();
     void buildInspector();
+    void updateToolOptions();
     QAction *action(const QString &id, const QString &text, const QKeySequence &shortcut,
                     std::function<void()> fn);
     void refresh();

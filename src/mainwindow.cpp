@@ -1,4 +1,5 @@
 #include "mainwindow.h"
+#include "version.h"
 #include "blending.h"
 #include "effectdialog.h"
 #include "outputdialog.h"
@@ -22,6 +23,7 @@
 #include <QFontComboBox>
 #include <QFormLayout>
 #include <QGroupBox>
+#include <QGridLayout>
 #include <QHBoxLayout>
 #include <QImageWriter>
 #include <QInputDialog>
@@ -35,6 +37,7 @@
 #include <QMimeData>
 #include <QMouseEvent>
 #include <QPlainTextEdit>
+#include <QPainterPath>
 #include <QPrintDialog>
 #include <QPrinter>
 #include <QProgressDialog>
@@ -174,6 +177,84 @@ QIcon toolIcon(int kind, QColor color = QColor("#d5dee5")) {
     }
     return icon;
 }
+QIcon commandIcon(const QString &name, QColor color) {
+    QIcon icon;
+    for (int edge : {20, 24, 32, 48}) {
+        QPixmap pixmap(edge, edge);
+        pixmap.fill(Qt::transparent);
+        QPainter painter(&pixmap);
+        painter.scale(edge / 24.0, edge / 24.0);
+        painter.setRenderHint(QPainter::Antialiasing);
+        painter.setPen(QPen(color, 1.6, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+        if (name == "open") {
+            painter.drawPolyline(QPolygonF{{3, 18}, {3, 6}, {9, 6}, {11, 8}, {20, 8}, {20, 11}});
+            painter.drawPolygon(QPolygonF{{3, 19}, {7, 11}, {22, 11}, {18, 19}});
+        } else if (name == "save") {
+            painter.drawPolygon(QPolygonF{{4, 3}, {18, 3}, {21, 6}, {21, 21}, {4, 21}});
+            painter.drawRect(QRectF(8, 3, 8, 6));
+            painter.drawRect(QRectF(8, 14, 9, 7));
+        } else if (name == "undo" || name == "redo") {
+            if (name == "redo") {
+                painter.translate(24, 0);
+                painter.scale(-1, 1);
+            }
+            painter.drawPolyline(QPolygonF{{8, 5}, {3, 10}, {8, 15}});
+            QPainterPath path;
+            path.moveTo(3, 10);
+            path.lineTo(13, 10);
+            path.cubicTo(21, 10, 23, 19, 14, 20);
+            painter.drawPath(path);
+        } else if (name == "export") {
+            painter.drawPolyline(QPolygonF{{4, 14}, {4, 21}, {20, 21}, {20, 14}});
+            painter.drawLine(12, 16, 12, 3);
+            painter.drawPolyline(QPolygonF{{7, 8}, {12, 3}, {17, 8}});
+        } else if (name == "ui.customize" || name == "brushSettings") {
+            painter.drawLine(4, 6, 20, 6);
+            painter.drawLine(4, 12, 20, 12);
+            painter.drawLine(4, 18, 20, 18);
+            painter.setBrush(color);
+            painter.drawEllipse(QPointF(9, 6), 2, 2);
+            painter.drawEllipse(QPointF(16, 12), 2, 2);
+            painter.drawEllipse(QPointF(8, 18), 2, 2);
+        } else if (name == "brushLibrary") {
+            painter.drawRoundedRect(QRectF(4, 4, 16, 17), 2, 2);
+            painter.drawLine(9, 4, 9, 21);
+            painter.drawLine(13, 9, 17, 9);
+            painter.drawLine(13, 13, 17, 13);
+        } else if (name == "addLayer") {
+            painter.drawLine(12, 5, 12, 19);
+            painter.drawLine(5, 12, 19, 12);
+        } else if (name == "duplicate") {
+            painter.drawRoundedRect(QRectF(8, 8, 12, 12), 2, 2);
+            painter.drawPolyline(QPolygonF{{16, 5}, {16, 3}, {3, 3}, {3, 16}, {5, 16}});
+        } else if (name == "layerUp" || name == "layerDown") {
+            if (name == "layerDown") {
+                painter.translate(0, 24);
+                painter.scale(1, -1);
+            }
+            painter.drawLine(12, 20, 12, 4);
+            painter.drawPolyline(QPolygonF{{6, 10}, {12, 4}, {18, 10}});
+        } else if (name == "lock") {
+            painter.drawRoundedRect(QRectF(5, 10, 14, 11), 2, 2);
+            painter.drawArc(QRectF(8, 3, 8, 14), 0, 180 * 16);
+            painter.drawLine(12, 14, 12, 17);
+        } else if (name == "deleteLayer") {
+            painter.drawPolyline(QPolygonF{{6, 8}, {7, 21}, {17, 21}, {18, 8}});
+            painter.drawLine(4, 6, 20, 6);
+            painter.drawPolyline(QPolygonF{{9, 6}, {9, 3}, {15, 3}, {15, 6}});
+            painter.drawLine(10, 10, 10, 17);
+            painter.drawLine(14, 10, 14, 17);
+        } else if (name == "swapColors") {
+            painter.drawLine(4, 8, 20, 8);
+            painter.drawPolyline(QPolygonF{{16, 4}, {20, 8}, {16, 12}});
+            painter.drawLine(20, 17, 4, 17);
+            painter.drawPolyline(QPolygonF{{8, 13}, {4, 17}, {8, 21}});
+        }
+        painter.end();
+        icon.addPixmap(pixmap);
+    }
+    return icon;
+}
 QWidget *row(QWidget *a, QWidget *b = nullptr, QWidget *c = nullptr) {
     auto *w = new QWidget;
     auto *l = new QHBoxLayout(w);
@@ -210,6 +291,26 @@ QString chooseSaveTarget(QWidget *parent, const QString &title, const QString &i
         *selected = dialog.selectedNameFilter();
     return dialog.selectedFiles().first();
 }
+// Cheap, content-based identities: selection, tool and palette changes do not re-render pixels.
+QByteArray layerPreviewKey(const Layer &layer) {
+    QByteArray key;
+    QDataStream out(&key, QIODevice::WriteOnly);
+    out << layer.pixels.cacheKey() << layer.mask.cacheKey() << layer.geometry
+        << layer.brightness << layer.contrast << layer.saturation << layer.blur;
+    layer.tones.write(out);
+    layer.filters.write(out);
+    layer.maskSettings.write(out);
+    return key;
+}
+QByteArray compositePreviewKey(const Document *document) {
+    QByteArray key;
+    QDataStream out(&key, QIODevice::WriteOnly);
+    out << document->state.size;
+    for (const auto &layer : document->state.layers)
+        out << layerPreviewKey(layer) << layer.offset << layer.visible << layer.opacity
+            << layer.blend << layer.clipped;
+    return key;
+}
 QString recoveryDir() {
     QString dir = QStandardPaths::writableLocation(QStandardPaths::AppLocalDataLocation) + "/recovery";
     QDir().mkpath(dir);
@@ -219,6 +320,10 @@ QString recoveryDir() {
 void Histogram::setImage(const QImage &im) {
     bins.fill(0);
     peak = 1;
+    if (im.isNull()) {
+        update();
+        return;
+    }
     QImage small = im.scaled(256, 160, Qt::KeepAspectRatio, Qt::FastTransformation)
                        .convertToFormat(QImage::Format_ARGB32);
     for (int y = 0; y < small.height(); ++y) {
@@ -296,6 +401,11 @@ MainWindow::MainWindow(bool recovery, bool useSettings) {
     autosaveTimer.setInterval(45000);
     connect(&autosaveTimer, &QTimer::timeout, this, &MainWindow::autosave);
     autosaveTimer.start();
+    recoverySaveTimer.setParent(this);
+    recoverySaveTimer.setObjectName("recoverySaveTimer");
+    recoverySaveTimer.setSingleShot(true);
+    recoverySaveTimer.setInterval(5000);
+    connect(&recoverySaveTimer, &QTimer::timeout, this, &MainWindow::autosave);
     buildAppearanceExtras();
     uiSaveTimer.setSingleShot(true);
     uiSaveTimer.setInterval(300);
@@ -723,19 +833,25 @@ void MainWindow::buildMenus() {
             "siyah gizler. X renkleri değiştirir.\nŞekil: Shift ile kare / daire. Tüm çizim araçları "
             "seçime uyar.\nTekerlek: işaretçinin çevresinde yakınlaştırma. Orta tuş: gezinme.\n\n.pdeck "
             "proje dosyası katmanları, maskeleri ve renk ayarlarını korur.\nPNG/WebP saydamlığı korur; "
-            "JPEG beyaz arka planla düzleştirilir.\nDönüştürme, çizim ve silme metin katmanını piksele "
-            "dönüştürür.\nKilit, doğrudan katman düzenlemesini engeller; tüm görüntü dönüşümleri "
+            "JPEG beyaz arka planla düzleştirilir.\nCtrl+T katman dönüşümü, metni ve kaynak pikselleri "
+            "korur. Görüntüyü yeniden boyutlandırma / 90° döndürme, çizim ve silme metni "
+            "piksele dönüştürebilir.\nKilit, doğrudan katman düzenlemesini engeller; tüm görüntü dönüşümleri "
             "kilitli katmanları da dönüştürür.\n\nSınırlar: 16 MP tuval, 64 katman, 256 MiB katman "
-            "verisi.\nGeçmiş: 30 adım / 128 MiB; büyük belgelerde adım sayısı azalır.\n45 saniyede bir "
-            "kurtarma kopyası alınır.\n\nTamamı bilgisayarınızda çalışır; AI, hesap ve ağ bağlantısı "
+            "verisi.\nGeçmiş: 30 adım / 128 MiB; büyük belgelerde adım sayısı azalır.\nDüzenleme sonrası yaklaşık "
+            "5 saniyede kurtarma kopyası alınır; 45 saniyelik kontrol sürer. Etkin çizimin bitmesi "
+            "beklenir. Kurtarma son değişikliklerin tamamını garanti etmez.\n\nTamamı bilgisayarınızda çalışır; AI, hesap ve ağ bağlantısı "
             "gerekmez.");
     }));
     help->addAction(action("about", "PhotoDeck hakkında", {}, [this] {
-        QMessageBox::about(this, "PhotoDeck 0.6.0 · Erken erişim",
-                           "<h2>PhotoDeck</h2><p>Hafif, yerel fotoğraf ve katman düzenleyici.</p><p>Qt "
-                           "6 / C++ · Linux / Windows / macOS</p><p>AI, reklam, telemetri ve abonelik "
-                           "içermez.</p><p>Bu sürüm RGB raster düzenlemeye odaklanır. PSD/RAW, CMYK/ICC "
-                           "baskı yönetimi, vektör yolları ve Photoshop eklentileri desteklenmez.</p>");
+        const QString title = QString("PhotoDeck %1 · Erken erişim").arg(PhotoDeck::Version);
+        // macOS message boxes omit window titles, so keep the version in the visible body too.
+        QMessageBox::about(this, title,
+                           QString("<h2>%1</h2><p>Hafif, yerel fotoğraf ve katman düzenleyici.</p><p>Qt "
+                                   "6 / C++ · Linux / Windows / macOS</p><p>AI, reklam, telemetri ve "
+                                   "abonelik içermez.</p><p>Bu sürüm RGB 8-bit raster düzenlemeye odaklanır; "
+                                   "RGB ICC giriş ve çıktı profilleri desteklenir. PSD/RAW, CMYK, baskı "
+                                   "provası, vektör yolları ve Photoshop eklentileri desteklenmez.</p>")
+                               .arg(title));
     }));
 }
 void MainWindow::buildTools() {
@@ -743,80 +859,124 @@ void MainWindow::buildTools() {
     top->setObjectName("documentToolbar");
     documentToolbar = top;
     top->setMovable(true);
-    top->setIconSize({20, 20});
-    auto *brand = new QLabel("  PhotoDeck  ");
+    top->setIconSize({19, 19});
+    top->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+    auto *brand = new QLabel("PhotoDeck");
     brandLabel = brand;
     brand->setObjectName("brandLabel");
     top->addWidget(brand);
     top->addSeparator();
+    actions["open"]->setIconText("Aç");
+    actions["save"]->setIconText("Kaydet");
+    actions["export"]->setIconText("Dışa aktar");
     top->addAction(actions["open"]);
     top->addAction(actions["save"]);
     top->addSeparator();
     top->addAction(actions["undo"]);
     top->addAction(actions["redo"]);
+    for (const auto &id : {"undo", "redo"})
+        if (auto *button = qobject_cast<QToolButton *>(top->widgetForAction(actions[id])))
+            button->setToolButtonStyle(Qt::ToolButtonIconOnly);
     top->addSeparator();
     top->addAction(actions["export"]);
+    top->widgetForAction(actions["export"])->setProperty("primary", true);
     auto *spacer = new QWidget;
     spacer->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
     top->addWidget(spacer);
-    auto *local = new QLabel("●  YEREL ÇALIŞMA  ");
+    auto *local = new QLabel("●  Yerel çalışma");
     local->setObjectName("localLabel");
+    local->setToolTip("Görüntüleriniz bu bilgisayarda kalır. Hesap veya bağlantı gerekmez.");
     top->addWidget(local);
     auto *options = addToolBar("Araç seçenekleri");
     options->setObjectName("options");
     optionsToolbar = options;
     options->setMovable(true);
+    options->setIconSize({17, 17});
+    options->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+    auto *contextLabel = new QLabel("TAŞI");
+    contextLabel->setObjectName("toolbarCaption");
+    options->addWidget(contextLabel);
+    options->addSeparator();
     addToolBarBreak(Qt::TopToolBarArea);
     addToolBar(Qt::TopToolBarArea, options);
-    options->addWidget(new QLabel("  Boyut  "));
+    auto *brushControls = new QWidget;
+    brushControls->setObjectName("brushControls");
+    auto *brushLayout = new QHBoxLayout(brushControls);
+    brushLayout->setContentsMargins(0, 0, 0, 0);
+    brushLayout->setSpacing(8);
+    brushLayout->addWidget(new QLabel("Boyut"));
     sizeInput = new QSpinBox;
+    sizeInput->setObjectName("brushSize");
     sizeInput->setRange(1, 512);
     sizeInput->setValue(32);
     sizeInput->setSuffix(" px");
-    sizeInput->setFixedWidth(92);
-    options->addWidget(sizeInput);
-    options->addWidget(new QLabel("   Sertlik  "));
+    sizeInput->setFixedWidth(82);
+    sizeInput->setAccessibleName("Fırça boyutu");
+    sizeInput->setToolTip("Fırça çapı (piksel)");
+    brushLayout->addWidget(sizeInput);
+    brushLayout->addWidget(new QLabel("Sertlik"));
     hardnessInput = new QSpinBox;
+    hardnessInput->setObjectName("brushHardness");
     hardnessInput->setRange(0, 100);
     hardnessInput->setValue(80);
     hardnessInput->setSuffix(" %");
-    hardnessInput->setFixedWidth(83);
-    options->addWidget(hardnessInput);
-    options->addWidget(new QLabel("   Akış  "));
+    hardnessInput->setFixedWidth(76);
+    hardnessInput->setAccessibleName("Fırça sertliği");
+    brushLayout->addWidget(hardnessInput);
     brushOpacityInput = new QSpinBox;
+    brushOpacityInput->setObjectName("brushFlow");
     brushOpacityInput->setRange(1, 100);
     brushOpacityInput->setValue(100);
     brushOpacityInput->setSuffix(" %");
-    brushOpacityInput->setFixedWidth(83);
-    options->addWidget(brushOpacityInput);
-    options->addAction(action("brushSettings", "Fırça / tablet ayarları…", QKeySequence("Ctrl+Alt+B"),
-                              [this] { customizeBrush(); }));
-    options->addAction(action("brushLibrary", "Fırça kütüphanesi…", QKeySequence("Ctrl+Alt+Shift+B"),
-                              [this] { showBrushLibrary(); }));
+    brushOpacityInput->setFixedWidth(76);
+    brushOpacityInput->setAccessibleName("Fırça akışı");
+    actions["ui.options.brush"] = options->addWidget(brushControls);
+    auto *flowControls = row(new QLabel("Akış"), brushOpacityInput);
+    flowControls->setObjectName("flowControls");
+    actions["ui.options.flow"] = options->addWidget(flowControls);
+    action("brushSettings", "Fırça / tablet ayarları…", QKeySequence("Ctrl+Alt+B"),
+           [this] { customizeBrush(); });
+    action("brushLibrary", "Fırça kütüphanesi…", QKeySequence("Ctrl+Alt+Shift+B"),
+           [this] { showBrushLibrary(); });
+    for (const auto &id : {"brushSettings", "brushLibrary"}) {
+        auto *button = new QToolButton;
+        button->setDefaultAction(actions[id]);
+        button->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+        actions[QString("ui.options.") + id] = options->addWidget(button);
+    }
+    actions["brushSettings"]->setIconText("Fırça");
+    actions["brushLibrary"]->setIconText("Uçlar");
+    actions["crop"]->setIconText("Kırp");
     if (auto *editMenu = findChild<QMenu *>("editMenu")) {
         editMenu->addSeparator();
         editMenu->addAction(actions["brushSettings"]);
         editMenu->addAction(actions["brushLibrary"]);
     }
-    options->addSeparator();
-    options->addAction(actions["crop"]);
+    actions["ui.options.divider"] = options->addSeparator();
+    auto *cropButton = new QToolButton;
+    cropButton->setDefaultAction(actions["crop"]);
+    cropButton->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+    actions["ui.options.crop"] = options->addWidget(cropButton);
     auto *selectionMode = new QComboBox;
     selectionModeInput = selectionMode;
     selectionMode->setObjectName("selectionMode");
     selectionMode->addItems({"Yeni seçim", "Seçime ekle", "Seçimden çıkar", "Seçimle kesiştir"});
-    options->addWidget(selectionMode);
+    actions["ui.options.selectionMode"] = options->addWidget(selectionMode);
     auto *tolerance = new QSpinBox;
     tolerance->setObjectName("selectionTolerance");
     selectionToleranceInput = tolerance;
     tolerance->setRange(0, 255);
     tolerance->setValue(24);
     tolerance->setPrefix("Tolerans: ");
-    options->addWidget(tolerance);
+    actions["ui.options.tolerance"] = options->addWidget(tolerance);
     auto *contiguous = new QCheckBox("Bağlı alan");
     contiguous->setObjectName("contiguousSelection");
     contiguousSelectionInput = contiguous;
     contiguous->setChecked(true);
-    options->addWidget(contiguous);
+    actions["ui.options.contiguous"] = options->addWidget(contiguous);
+    auto *hint = new QLabel;
+    hint->setObjectName("toolOptionsHint");
+    options->addWidget(hint);
     auto syncSelection = [this, selectionMode, tolerance, contiguous] {
         if (refreshing)
             return;
@@ -848,6 +1008,20 @@ void MainWindow::buildTools() {
     tools->setMovable(false);
     tools->setIconSize({26, 26});
     tools->setOrientation(Qt::Vertical);
+    toolPalette = new QWidget;
+    toolPalette->setObjectName("toolPalette");
+    toolGrid = new QGridLayout(toolPalette);
+    toolGrid->setContentsMargins(2, 2, 2, 2);
+    toolGrid->setHorizontalSpacing(3);
+    toolGrid->setVerticalSpacing(3);
+    toolGrid->setAlignment(Qt::AlignTop);
+    toolScroll = new QScrollArea;
+    toolScroll->setObjectName("toolPaletteScroll");
+    toolScroll->setFrameShape(QFrame::NoFrame);
+    toolScroll->setWidgetResizable(true);
+    toolScroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    toolScroll->setWidget(toolPalette);
+    tools->addWidget(toolScroll);
     auto *group = new QActionGroup(this);
     group->setExclusive(true);
     QStringList names = {"Taşı",          "Dikdörtgen seçim",
@@ -868,54 +1042,128 @@ void MainWindow::buildTools() {
                                  c->setTool(Canvas::Tool(i));
                                  status->setText(names[i] +
                                                  (i == Canvas::Clone ? " · Alt + tıklama: kaynak" : ""));
+                                 updateToolOptions();
                              }
                          });
         a->setIcon(toolIcon(i));
+        a->setIconText(names[i]);
         a->setCheckable(true);
         group->addAction(a);
         if (i == 0)
             a->setChecked(true);
-        tools->addAction(a);
+        a->setToolTip(names[i] + " · " + keys[i]);
+        auto *button = new QToolButton(toolPalette);
+        button->setDefaultAction(a);
+        button->setObjectName("toolButton" + QString::number(i));
+        button->setProperty("pdToolButton", true);
+        button->setAccessibleName(names[i]);
+        toolButtons.append(button);
+        toolGrid->addWidget(button, i / 2, i % 2);
     }
-    tools->addSeparator();
-    colorButton = new QToolButton;
+    colorButton = new QToolButton(toolPalette);
     colorButton->setObjectName("foreground");
-    colorButton->setFixedSize(36, 36);
-    colorButton->setToolTip("Ön plan rengini seç");
+    colorButton->setFixedSize(32, 32);
+    colorButton->setAccessibleName("Ön plan rengi");
+    colorButton->setToolTip("Ön plan rengini seç · I: tuvalden renk al");
     connect(colorButton, &QToolButton::clicked, this, &MainWindow::chooseColor);
-    tools->addWidget(colorButton);
+    toolGrid->addWidget(colorButton, 9, 0, Qt::AlignCenter);
     auto *swap = action("swapColors", "Renkleri değiştir (X)", QKeySequence("X"), [this] {
         if (auto *c = currentCanvas()) {
             std::swap(c->foreground, c->background);
             refresh();
         }
     });
-    swap->setText("⇄");
-    tools->addAction(swap);
+    auto *swapButton = new QToolButton(toolPalette);
+    swapButton->setDefaultAction(swap);
+    swapButton->setToolButtonStyle(Qt::ToolButtonIconOnly);
+    swapButton->setAccessibleName("Ön ve arka plan renklerini değiştir");
+    swapButton->setObjectName("swapColorsButton");
+    toolGrid->addWidget(swapButton, 9, 1);
     toolsDock = createDock("Araçlar", "toolsDock", tools);
     toolsDock->setAllowedAreas(Qt::AllDockWidgetAreas);
     addDockWidget(Qt::LeftDockWidgetArea, toolsDock);
 }
+void MainWindow::updateToolOptions() {
+    const auto *canvas = currentCanvas();
+    const auto tool = canvas ? canvas->tool : Canvas::Move;
+    const bool brush = canvas && (tool == Canvas::Brush || tool == Canvas::Pencil ||
+                                  tool == Canvas::Eraser || tool == Canvas::Clone);
+    const bool flow = canvas && (brush || tool == Canvas::Fill || tool == Canvas::Gradient ||
+                                 tool == Canvas::Rectangle || tool == Canvas::Ellipse);
+    const bool selection = canvas && canvas->isSelectionTool();
+    const bool crop = canvas && (tool == Canvas::Crop || selection ||
+                                 canvas->document->selection.hasPixels());
+    for (const auto &id : {"brush", "brushSettings", "brushLibrary"})
+        actions[QString("ui.options.") + id]->setVisible(brush);
+    actions["ui.options.flow"]->setVisible(flow);
+    actions["ui.options.divider"]->setVisible(flow && crop);
+    actions["ui.options.crop"]->setVisible(crop);
+    actions["ui.options.selectionMode"]->setVisible(selection);
+    actions["ui.options.tolerance"]->setVisible(canvas && tool == Canvas::Wand);
+    actions["ui.options.contiguous"]->setVisible(canvas && tool == Canvas::Wand);
+    auto *caption = optionsToolbar->findChild<QLabel *>("toolbarCaption");
+    caption->setText(canvas ? actions["tool" + QString::number(tool)]->iconText().toUpper()
+                            : "ARAÇ AYARLARI");
+    QString hint;
+    if (!canvas)
+        hint = "Yeni belge oluşturun veya bir görüntü açın";
+    else if (selection)
+        hint = "Shift: ekle · Alt: çıkar";
+    else if (tool == Canvas::Move)
+        hint = "Etkin katmanı sürükleyin · Ctrl+T: dönüştür";
+    else if (tool == Canvas::Crop)
+        hint = "Alanı sürükleyin, ardından Kırp";
+    else if (tool == Canvas::Clone)
+        hint = "Alt + tıklama: kaynak seç";
+    else if (tool == Canvas::Text)
+        hint = "Metin eklemek için tuvale tıklayın";
+    else if (tool == Canvas::Hand)
+        hint = "Tuvali sürükleyin · Tekerlek: yakınlaştır";
+    else if (tool == Canvas::Picker)
+        hint = "Ön plan rengini almak için tuvale tıklayın";
+    else if (tool == Canvas::Rectangle || tool == Canvas::Ellipse)
+        hint = "Shift: kare veya daire · X: renkleri değiştir";
+    else if (!brush)
+        hint = "Tuvalde uygulayın · X: renkleri değiştir";
+    optionsToolbar->findChild<QLabel *>("toolOptionsHint")->setText(hint);
+}
+
 void MainWindow::buildInspector() {
     auto *panel = new QWidget;
     auto *layout = new QVBoxLayout(panel);
-    layout->setContentsMargins(12, 12, 12, 12);
-    layout->setSpacing(9);
-
+    panel->setObjectName("colorPanel");
+    layout->setContentsMargins(14, 12, 14, 14);
+    layout->setSpacing(12);
+    auto *histogramTitle = new QLabel("TON DAĞILIMI");
+    histogramTitle->setObjectName("sectionTitle");
+    auto *rgbLabel = new QLabel("RGB");
+    rgbLabel->setObjectName("metaBadge");
+    layout->addWidget(row(histogramTitle, rgbLabel));
     histogram = new Histogram;
     histogram->setFixedHeight(56);
     layout->addWidget(histogram);
     auto *form = new QFormLayout;
-    form->setSpacing(10);
+    form->setHorizontalSpacing(12);
+    form->setVerticalSpacing(14);
     brightness = slider();
     contrast = slider();
     saturation = slider();
     brightness->setObjectName("brightness");
     contrast->setObjectName("contrast");
     saturation->setObjectName("saturation");
-    form->addRow("Parlaklık", brightness);
-    form->addRow("Kontrast", contrast);
-    form->addRow("Doygunluk", saturation);
+    auto adjustmentRow = [&](const QString &title, QSlider *control) {
+        control->setAccessibleName(title);
+        auto *value = new QLabel("0");
+        value->setObjectName("valueLabel");
+        value->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+        value->setFixedWidth(30);
+        connect(control, &QSlider::valueChanged, value,
+                [value](int amount) { value->setText(QString::number(amount)); });
+        form->addRow(title, row(control, value));
+    };
+    adjustmentRow("Parlaklık", brightness);
+    adjustmentRow("Kontrast", contrast);
+    adjustmentRow("Doygunluk", saturation);
     layout->addLayout(form);
     for (auto *s : {brightness, contrast, saturation}) {
         connect(s, &QSlider::sliderPressed, this, [this] {
@@ -939,7 +1187,7 @@ void MainWindow::buildInspector() {
                 currentDocument()->commit("Renk ayarı");
         });
     }
-    auto *reset = new QPushButton("Renk ayarlarını sıfırla");
+    auto *reset = new QPushButton("Ayarları sıfırla");
     reset->setFlat(true);
     connect(reset, &QPushButton::clicked, this, [this] {
         if (auto *d = currentDocument()) {
@@ -950,7 +1198,7 @@ void MainWindow::buildInspector() {
         }
     });
     layout->addWidget(reset);
-    auto *advancedTones = new QPushButton("Seviyeler / eğriler / renk…");
+    auto *advancedTones = new QPushButton("Seviyeler, eğriler ve renk…");
     advancedTones->setObjectName("advancedTones");
     connect(advancedTones, &QPushButton::clicked, actions["tones"], &QAction::trigger);
     layout->addWidget(advancedTones);
@@ -959,18 +1207,26 @@ void MainWindow::buildInspector() {
     panel = new QWidget;
     layerPanel = panel;
     layout = new QVBoxLayout(panel);
-    layout->setContentsMargins(12, 10, 12, 10);
-    layout->setSpacing(7);
-
+    panel->setObjectName("layerPanel");
+    layout->setContentsMargins(12, 12, 12, 12);
+    layout->setSpacing(10);
     blend = new QComboBox;
     blend->addItems(Blending::names());
     blend->setObjectName("blendMode");
-    layout->addWidget(blend);
+    blend->setAccessibleName("Katman karışım modu");
+    layout->addWidget(row(new QLabel("Karışım"), blend));
     opacity = slider();
     opacity->setRange(0, 100);
     opacity->setValue(100);
     opacity->setObjectName("layerOpacity");
-    layout->addWidget(row(new QLabel("Opaklık"), opacity));
+    opacity->setAccessibleName("Katman opaklığı");
+    auto *opacityValue = new QLabel("100 %");
+    opacityValue->setObjectName("valueLabel");
+    opacityValue->setFixedWidth(42);
+    opacityValue->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+    connect(opacity, &QSlider::valueChanged, opacityValue,
+            [opacityValue](int value) { opacityValue->setText(QString::number(value) + " %"); });
+    layout->addWidget(row(new QLabel("Opaklık"), opacity, opacityValue));
     connect(blend, &QComboBox::currentIndexChanged, this, [this](int v) {
         if (!refreshing)
             mutate([v](Document *d) {
@@ -1005,7 +1261,8 @@ void MainWindow::buildInspector() {
     layers = new QListWidget;
     layers->setObjectName("layers");
     layers->setIconSize({50, 36});
-    layers->setMinimumHeight(100);
+    layers->setAccessibleName("Belge katmanları");
+    layers->setMinimumHeight(130);
     layers->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     layers->setTextElideMode(Qt::ElideRight);
     layers->setSpacing(3);
@@ -1048,8 +1305,9 @@ void MainWindow::buildInspector() {
                    : id == "layerDown" ? "↓"
                    : id == "lock"      ? "◇"
                                        : "−");
-        b->setMinimumSize(24, 29);
-        b->setMaximumHeight(34);
+        b->setMinimumSize(30, 32);
+        b->setIconSize({18, 18});
+        b->setMaximumHeight(36);
         b->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
         bl->addWidget(b);
     }
@@ -1058,11 +1316,22 @@ void MainWindow::buildInspector() {
     maskButton->setDefaultAction(actions["mask"]);
     maskButton->setToolButtonStyle(Qt::ToolButtonTextOnly);
     maskButton->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+    maskButton->setObjectName("layerMaskButton");
     layout->addWidget(maskButton);
+    auto *propertiesTitle = new QLabel("KATMAN ÖZELLİKLERİ");
+    propertiesTitle->setObjectName("sectionTitle");
+    layout->addWidget(propertiesTitle);
     layerDetails = new QLabel;
     layerDetails->setWordWrap(true);
     layerDetails->setObjectName("layerDetails");
     layout->addWidget(layerDetails);
+    auto *transformButton = new QPushButton("Dönüştür…");
+    transformButton->setObjectName("quickTransform");
+    connect(transformButton, &QPushButton::clicked, actions["transform"], &QAction::trigger);
+    auto *toneButton = new QPushButton("Renk / ton…");
+    toneButton->setObjectName("quickTones");
+    connect(toneButton, &QPushButton::clicked, actions["tones"], &QAction::trigger);
+    layout->addWidget(row(transformButton, toneButton));
     auto *scroll = new QScrollArea;
     scroll->setWidgetResizable(true);
     scroll->setFrameShape(QFrame::NoFrame);
@@ -1093,7 +1362,8 @@ void MainWindow::addDocument(Document *d) {
     }
     tabs->addTab(canvas, d->title);
     tabs->setCurrentWidget(canvas);
-    connect(d, &Document::updated, this, [this] {
+    connect(d, &Document::updated, this, [this, d] {
+        scheduleRecovery(d);
         updateActionAvailability();
         if (!refreshTimer.isActive())
             refreshTimer.start();
@@ -1109,6 +1379,7 @@ void MainWindow::addDocument(Document *d) {
     });
     connect(canvas, &Canvas::textRequested, this, [this](QPoint p) { textDialog(p); });
     QTimer::singleShot(0, canvas, &Canvas::fit);
+    scheduleRecovery(d);
     refresh();
 }
 void MainWindow::demo() {
@@ -1141,12 +1412,14 @@ bool MainWindow::openFile(const QString &file) {
 MainWindow::~MainWindow() {
     refreshTimer.stop();
     autosaveTimer.stop();
+    recoverySaveTimer.stop();
     uiSaveTimer.stop();
     // QWidget base-class teardown can emit visibility signals after our member containers die.
     for (auto *sender : findChildren<QObject *>())
         QObject::disconnect(sender, nullptr, this, nullptr);
     QObject::disconnect(&refreshTimer, nullptr, this, nullptr);
     QObject::disconnect(&autosaveTimer, nullptr, this, nullptr);
+    QObject::disconnect(&recoverySaveTimer, nullptr, this, nullptr);
     QObject::disconnect(&uiSaveTimer, nullptr, this, nullptr);
 }
 void MainWindow::updateActionAvailability() {
@@ -1196,17 +1469,21 @@ void MainWindow::refresh() {
         s->setEnabled(present);
     blend->setEnabled(present);
     maskButton->setEnabled(present);
-    layers->clear();
     history->clear();
     for (int i = 0; i < tabs->count(); ++i) {
         auto *td = qobject_cast<Canvas *>(tabs->widget(i))->document;
         tabs->setTabText(i, td->title + (td->dirty ? " •" : ""));
     }
     if (!d) {
+        layers->clear();
+        filmstrip->clear();
+        histogram->setImage({});
+        zoomLabel->clear();
         setWindowTitle("PhotoDeck");
         info->clear();
         layerDetails->setText("Dosya → Yeni belge ile başlayın.");
         colorButton->setStyleSheet("");
+        updateToolOptions();
         refreshing = false;
         return;
     }
@@ -1220,21 +1497,35 @@ void MainWindow::refresh() {
     for (auto *s : {brightness, contrast, saturation, opacity})
         s->setEnabled(!active.locked);
     blend->setEnabled(!active.locked);
+    auto &previews = previewCaches[d];
+    previews.layerKeys.resize(d->state.layers.size());
+    previews.layerThumbnails.resize(d->state.layers.size());
+    while (layers->count() > d->state.layers.size())
+        delete layers->takeItem(layers->count() - 1);
     for (int i = d->state.layers.size() - 1; i >= 0; --i) {
         auto &l = d->state.layers[i];
-        QPixmap thumb(50, 36);
-        thumb.fill(QColor("#38444f"));
-        QPainter p(&thumb);
-        QImage preview = l.rendered().scaled(50, 36, Qt::KeepAspectRatio, Qt::SmoothTransformation);
-        p.drawImage((50 - preview.width()) / 2, (36 - preview.height()) / 2, preview);
-        p.end();
-        auto *item = new QListWidgetItem(QIcon(thumb), (l.clipped ? "↳  " : "") + l.name +
-                                                           (l.locked ? "  ◇" : "") +
-                                                           (!l.mask.isNull() ? "  ◧" : ""));
+        const QByteArray key = layerPreviewKey(l) + appearance.resolved().raised.name().toUtf8();
+        // Canvas owns the live edit preview. Auxiliary panels catch up once the gesture commits.
+        if (previews.layerThumbnails[i].isNull() ||
+            (!d->isEditing() && previews.layerKeys[i] != key)) {
+            QPixmap thumb(50, 36);
+            thumb.fill(appearance.resolved().raised);
+            QPainter p(&thumb);
+            QImage preview = l.rendered().scaled(50, 36, Qt::KeepAspectRatio, Qt::SmoothTransformation);
+            p.drawImage((50 - preview.width()) / 2, (36 - preview.height()) / 2, preview);
+            p.end();
+            previews.layerThumbnails[i] = QIcon(thumb);
+            previews.layerKeys[i] = key;
+        }
+        const int row = d->state.layers.size() - 1 - i;
+        auto *item = row < layers->count() ? layers->item(row) : new QListWidgetItem(layers);
+        if (item->icon().cacheKey() != previews.layerThumbnails[i].cacheKey())
+            item->setIcon(previews.layerThumbnails[i]);
+        item->setText((l.clipped ? "↳  " : "") + l.name + (l.locked ? "  ◇" : "") +
+                      (!l.mask.isNull() ? "  ◧" : ""));
         item->setFlags(item->flags() | Qt::ItemIsUserCheckable);
         item->setCheckState(l.visible ? Qt::Checked : Qt::Unchecked);
         item->setSizeHint({180, qMax(34, appearance.fontSize + 22)});
-        layers->addItem(item);
     }
     layers->setCurrentRow(d->state.layers.size() - 1 - d->state.active);
     QStringList labels = d->historyLabels();
@@ -1253,7 +1544,21 @@ void MainWindow::refresh() {
                         : d->editingMask     ? "◧  Piksele geri dön"
                                              : "◧  Maskeyi düzenle");
     maskButton->setEnabled(!active.locked);
-    histogram->setImage(d->composite());
+    auto ensureCompositePreview = [this](Document *document) -> PreviewCache & {
+        auto &cached = previewCaches[document];
+        const QByteArray key = compositePreviewKey(document);
+        if (cached.histogramSample.isNull() || (!document->isEditing() && cached.compositeKey != key)) {
+            const QImage composite = document->composite();
+            cached.histogramSample = composite.scaled(256, 160, Qt::KeepAspectRatio,
+                                                       Qt::FastTransformation);
+            cached.filmThumbnail = QIcon(QPixmap::fromImage(composite.scaled(
+                96, 64, Qt::KeepAspectRatio, Qt::SmoothTransformation)));
+            cached.compositeKey = key;
+        }
+        return cached;
+    };
+    if (colorDock && !colorDock->isHidden())
+        histogram->setImage(ensureCompositePreview(d).histogramSample);
     info->setText(QString("%1 × %2 px  ·  %3 katman  ·  %4 MiB piksel  ")
                       .arg(d->state.size.width())
                       .arg(d->state.size.height())
@@ -1279,18 +1584,20 @@ void MainWindow::refresh() {
     actions["tool" + QString::number(c->tool)]->setChecked(true);
     if (filmDock && !filmDock->isHidden()) {
         QSignalBlocker block(filmstrip);
-        filmstrip->clear();
+        while (filmstrip->count() > tabs->count())
+            delete filmstrip->takeItem(filmstrip->count() - 1);
         for (int i = 0; i < tabs->count(); ++i) {
             auto *doc = qobject_cast<Canvas *>(tabs->widget(i))->document;
-            auto *item =
-                new QListWidgetItem(QIcon(QPixmap::fromImage(doc->composite().scaled(
-                                        96, 64, Qt::KeepAspectRatio, Qt::SmoothTransformation))),
-                                    doc->title);
+            const auto &cached = ensureCompositePreview(doc);
+            auto *item = i < filmstrip->count() ? filmstrip->item(i) : new QListWidgetItem(filmstrip);
+            if (item->icon().cacheKey() != cached.filmThumbnail.cacheKey())
+                item->setIcon(cached.filmThumbnail);
+            item->setText(doc->title);
             item->setSizeHint({120, 90});
-            filmstrip->addItem(item);
         }
         filmstrip->setCurrentRow(tabs->currentIndex());
     }
+    updateToolOptions();
     refreshing = false;
 }
 void MainWindow::error(const QString &m) {
@@ -1368,27 +1675,83 @@ bool MainWindow::saveDocument(Document *d, bool saveAs) {
     if (currentCanvas() && currentCanvas()->document == d)
         currentCanvas()->finishPendingGesture();
     QString file = d->path;
-    if (saveAs || file.isEmpty()) {
-        file = chooseSaveTarget(this, "Katmanlı projeyi kaydet",
-                                d->path.isEmpty() ? QFileInfo(d->title).completeBaseName() + ".pdeck"
-                                                  : d->path,
+    auto choose = [&](const QString &initial) {
+        return chooseSaveTarget(this, "Katmanlı projeyi kaydet", initial,
                                 "PhotoDeck projesi (*.pdeck)");
+    };
+    if (saveAs || file.isEmpty()) {
+        file = choose(d->path.isEmpty() ? QFileInfo(d->title).completeBaseName() + ".pdeck"
+                                       : d->path);
         if (file.isEmpty())
             return false;
     }
-    if (!file.endsWith(".pdeck", Qt::CaseInsensitive)) {
-        error("Projeyi .pdeck uzantısıyla kaydedin.");
-        return false;
-    }
-    QString e;
-    if (!d->save(file, &e)) {
-        error(e);
-        return false;
+    Document::SaveOptions options;
+    while (true) {
+        if (!file.endsWith(".pdeck", Qt::CaseInsensitive)) {
+            error("Projeyi .pdeck uzantısıyla kaydedin.");
+            return false;
+        }
+        if (d->requiresFormatUpgrade(file)) {
+            QMessageBox warning(QMessageBox::Warning, "Eski proje biçimini koru",
+                QString("Bu proje v%1 biçiminde açıldı. PhotoDeck yeni kayıtları v%2 biçiminde "
+                        "yazar; eski uygulama sürümleri bu kopyayı açamayabilir.\n\nOrijinal dosyayı "
+                        "korumak için farklı bir adla kaydedin.")
+                    .arg(d->sourceVersion()).arg(Document::NativeProjectVersion),
+                QMessageBox::Cancel, this);
+            warning.setObjectName("projectUpgradeWarning");
+            auto *copy = warning.addButton("Kopya olarak kaydet…", QMessageBox::AcceptRole);
+            copy->setObjectName("saveProjectCopy");
+            warning.setDefaultButton(copy);
+            warning.setEscapeButton(QMessageBox::Cancel);
+            warning.exec();
+            if (warning.clickedButton() != copy)
+                return false;
+            const QFileInfo original(file);
+            file = choose(original.dir().filePath(original.completeBaseName() + "-v" +
+                                                  QString::number(Document::NativeProjectVersion) +
+                                                  ".pdeck"));
+            if (file.isEmpty())
+                return false;
+            options = {};
+            continue; // A path alias to the original must not bypass the compatibility check.
+        }
+        QString e;
+        if (d->save(file, &e, true, options))
+            break;
+        if (d->lastSaveStatus() != Document::SaveStatus::ExternalModification) {
+            error(e);
+            return false;
+        }
+        QMessageBox warning(QMessageBox::Warning, "Dosya dışarıda değişti",
+            "Bu proje açıldıktan veya son kayıttan sonra diskte değiştirilmiş ya da silinmiş. "
+            "Üzerine yazmak diskteki değişiklikleri kaybettirir.\n\nÇalışmanızı ayrı bir kopyaya "
+            "kaydedebilir veya diskteki sürümün üzerine açıkça yazabilirsiniz.",
+            QMessageBox::Cancel, this);
+        warning.setObjectName("projectConflictWarning");
+        auto *copy = warning.addButton("Kopya olarak kaydet…", QMessageBox::AcceptRole);
+        copy->setObjectName("saveProjectCopy");
+        auto *overwrite = warning.addButton("Disktekinin üzerine yaz", QMessageBox::DestructiveRole);
+        overwrite->setObjectName("overwriteProject");
+        warning.setDefaultButton(copy);
+        warning.setEscapeButton(QMessageBox::Cancel);
+        warning.exec();
+        if (warning.clickedButton() == overwrite) {
+            options.allowExternalOverwrite = true;
+        } else if (warning.clickedButton() == copy) {
+            const QFileInfo original(file);
+            file = choose(original.dir().filePath(original.completeBaseName() + "-kopya.pdeck"));
+            if (file.isEmpty())
+                return false;
+            options = {};
+        } else {
+            return false;
+        }
     }
     if (recoveryFiles.contains(d)) {
         QFile::remove(recoveryFiles[d]);
         recoveryStates.remove(d);
     }
+    deferredRecovery.remove(d);
     status->setText("Proje kaydedildi · " + QFileInfo(file).fileName());
     return true;
 }
@@ -1568,6 +1931,8 @@ void MainWindow::closeTab(int index) {
     if (recoveryFiles.contains(d))
         QFile::remove(recoveryFiles.take(d));
     recoveryStates.remove(d);
+    deferredRecovery.remove(d);
+    previewCaches.remove(d);
     tabs->removeTab(index);
     delete canvas;
     delete d;
@@ -1772,11 +2137,31 @@ void MainWindow::dropEvent(QDropEvent *e) {
             openFile(url.toLocalFile());
     e->acceptProposedAction();
 }
+void MainWindow::scheduleRecovery(Document *d) {
+    if (d->isEditing())
+        return;
+    if (deferredRecovery.remove(d)) {
+        recoverySaveTimer.start(0);
+        return;
+    }
+    if (d->dirty && recoveryStates.value(d) != QString::number(d->revision()) &&
+        !recoverySaveTimer.isActive())
+        recoverySaveTimer.start(5000);
+}
 void MainWindow::autosave() {
     for (int i = 0; i < tabs->count(); ++i) {
         auto *d = qobject_cast<Canvas *>(tabs->widget(i))->document;
-        if (!d->dirty || d->isEditing())
+        if (d->isEditing()) {
+            deferredRecovery.insert(d);
             continue;
+        }
+        deferredRecovery.remove(d);
+        if (!d->dirty) {
+            if (recoveryFiles.contains(d))
+                QFile::remove(recoveryFiles.value(d));
+            recoveryStates.remove(d);
+            continue;
+        }
         QString signature = QString::number(d->revision());
         if (recoveryStates.value(d) == signature)
             continue;
@@ -2231,11 +2616,13 @@ QDockWidget *MainWindow::createDock(const QString &title, const QString &name, Q
 void MainWindow::buildAppearanceExtras() {
     floatingTools = new QFrame(workspace);
     floatingTools->setObjectName("floatingTools");
-    auto *toolLayout = new QHBoxLayout(floatingTools);
-    toolLayout->setContentsMargins(5, 5, 5, 5);
-    toolLayout->setSpacing(3);
+    auto *toolLayout = new QVBoxLayout(floatingTools);
+    toolLayout->setContentsMargins(4, 4, 4, 8);
+    toolLayout->setSpacing(4);
     toolsHandle = new QToolButton;
-    toolsHandle->setText("⠿");
+    toolsHandle->setObjectName("toolsHandle");
+    toolsHandle->setText("⠿  ARAÇLAR");
+    toolsHandle->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
     toolsHandle->setToolTip("Araç panelini sürükleyin veya ok tuşlarıyla taşıyın.");
     toolsHandle->setAccessibleName("Araç panelini taşı");
     toolsHandle->setCursor(Qt::SizeAllCursor);
@@ -2244,10 +2631,12 @@ void MainWindow::buildAppearanceExtras() {
     floatingLayers = new QFrame(workspace);
     floatingLayers->setObjectName("floatingLayers");
     auto *layerLayout = new QVBoxLayout(floatingLayers);
-    layerLayout->setContentsMargins(5, 5, 5, 5);
-    layerLayout->setSpacing(1);
+    layerLayout->setContentsMargins(4, 4, 4, 4);
+    layerLayout->setSpacing(0);
     layersHandle = new QToolButton;
-    layersHandle->setText("⠿  Katmanlar");
+    layersHandle->setObjectName("layersHandle");
+    layersHandle->setText("⠿  KATMANLAR");
+    layersHandle->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
     layersHandle->setToolTip("Katman panelini sürükleyin veya ok tuşlarıyla taşıyın.");
     layersHandle->setAccessibleName("Katman panelini taşı");
     layersHandle->setCursor(Qt::SizeAllCursor);
@@ -2332,6 +2721,7 @@ void MainWindow::buildAppearanceExtras() {
         auto *a = action("ui.preset." + p.id, QString::number(++index) + " · " + p.name, {},
                          [this, id = p.id] { applyUiPreset(id); });
         a->setCheckable(true);
+        a->setShortcut(QKeySequence("Ctrl+Alt+" + QString::number(index % 10)));
         a->setToolTip(p.description);
         group->addAction(a);
         presetMenu->addAction(a);
@@ -2390,7 +2780,14 @@ void MainWindow::buildAppearanceExtras() {
             else
                 target = brushDock;
             target->setVisible(visible);
-            if (key == "film")
+            if (appearance.preset == "focus") {
+                if (key == "tools")
+                    appearance.focusToolsVisible = visible;
+                if (key == "layers")
+                    appearance.focusLayersVisible = visible;
+                positionOverlays();
+            }
+            if (key == "film" || key == "color")
                 refresh();
             queueUiSave();
         });
@@ -2398,9 +2795,12 @@ void MainWindow::buildAppearanceExtras() {
     presetPicker = new QComboBox;
     presetPicker->setObjectName("presetPicker");
     presetPicker->setAccessibleName("Arayüz preseti");
-    for (const auto &p : uiPresets())
+    for (const auto &p : uiPresets()) {
         presetPicker->addItem(p.name, p.id);
-    presetPicker->setMinimumContentsLength(10);
+        presetPicker->setItemData(presetPicker->count() - 1, p.description, Qt::ToolTipRole);
+    }
+    presetPicker->setToolTip("Çalışma alanı · Ctrl+Alt+1…0 ile preset değiştirin");
+    presetPicker->setMinimumContentsLength(12);
     presetPicker->setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon);
     documentToolbar->addSeparator();
     documentToolbar->addWidget(presetPicker);
@@ -2409,6 +2809,9 @@ void MainWindow::buildAppearanceExtras() {
             applyUiPreset(presetPicker->itemData(index).toString());
     });
     documentToolbar->addAction(actions["ui.customize"]);
+    if (auto *button = qobject_cast<QToolButton *>(
+            documentToolbar->widgetForAction(actions["ui.customize"])))
+        button->setToolButtonStyle(Qt::ToolButtonIconOnly);
     for (auto *toolbar : {documentToolbar, optionsToolbar, ribbonToolbar}) {
         connect(toolbar, &QToolBar::visibilityChanged, this, [this](bool) { queueUiSave(); });
         connect(toolbar, &QToolBar::topLevelChanged, this, [this](bool) { queueUiSave(); });
@@ -2518,27 +2921,57 @@ void MainWindow::applyAppearanceColors() {
     setStyleSheet(appearance.styleSheet());
     auto p = appearance.resolved();
     histogram->setUiPalette(appearance.palette());
-    brandLabel->setText("  <b>Photo<span style='color:" + p.accent.name() + "'>Deck</span></b>  ");
+    brandLabel->setText("Photo<span style='color:" + p.accent.name() + "'>Deck</span>");
     for (int i = 0; i < Canvas::ToolCount; ++i)
         actions["tool" + QString::number(i)]->setIcon(toolIcon(i, p.text));
-    int layerIconIndex = 0;
-    for (const auto &id :
-         QStringList{"addLayer", "duplicate", "layerUp", "layerDown", "lock", "deleteLayer"}) {
-        QPixmap pixmap(24, 24);
-        pixmap.fill(Qt::transparent);
-        QPainter painter(&pixmap);
-        painter.setPen(p.text);
-        QFont font("Sans Serif");
-        font.setPixelSize(20);
-        painter.setFont(font);
-        painter.drawText(pixmap.rect(), Qt::AlignCenter,
-                         QStringList{"+", "▣", "↑", "↓", "◇", "−"}[layerIconIndex++]);
-        painter.end();
-        actions[id]->setIcon(QIcon(pixmap));
-    }
+    for (const auto &id : QStringList{"open", "save", "undo", "redo", "export", "ui.customize",
+                                      "brushSettings", "brushLibrary", "addLayer", "duplicate",
+                                      "layerUp", "layerDown", "lock", "deleteLayer", "swapColors"})
+        actions[id]->setIcon(commandIcon(id, id == "export" ? appearance.palette().color(
+                                                                  QPalette::HighlightedText)
+                                                            : p.text));
+    actions["crop"]->setIcon(toolIcon(Canvas::Crop, p.text));
     toolsBar->setIconSize({appearance.iconSize, appearance.iconSize});
-    toolsBar->setToolButtonStyle(appearance.toolLabels ? Qt::ToolButtonTextBesideIcon
-                                                       : Qt::ToolButtonIconOnly);
+    const bool horizontalTools = toolsBar->orientation() == Qt::Horizontal;
+    const int columns = horizontalTools ? (appearance.preset == "touch" ? 5 : 20)
+                                        : (appearance.toolLabels ? 1 : 2);
+    while (auto *item = toolGrid->takeAt(0))
+        delete item;
+    const QVector<int> order{0, 1, 14, 15, 16, 17, 2, 12, 3, 4, 5, 6, 7, 8, 9, 10, 11, 13};
+    int position = 0;
+    for (int index : order) {
+        auto *button = toolButtons[index];
+        button->setIconSize({appearance.iconSize, appearance.iconSize});
+        button->setToolButtonStyle(appearance.toolLabels ? Qt::ToolButtonTextBesideIcon
+                                                        : Qt::ToolButtonIconOnly);
+        button->setMinimumSize(appearance.iconSize + 14, appearance.iconSize + 14);
+        button->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+        toolGrid->addWidget(button, position / columns, position % columns);
+        ++position;
+    }
+    toolGrid->addWidget(colorButton, position / columns, position % columns, Qt::AlignCenter);
+    ++position;
+    toolGrid->addWidget(toolPalette->findChild<QToolButton *>("swapColorsButton"), position / columns,
+                        position % columns);
+    toolGrid->invalidate();
+    const QSize paletteSize = toolPalette->sizeHint();
+    if (horizontalTools) {
+        toolScroll->setMinimumWidth(120);
+        toolScroll->setMaximumWidth(QWIDGETSIZE_MAX);
+        toolScroll->setMinimumHeight(paletteSize.height() + 4);
+        toolScroll->setMaximumHeight(paletteSize.height() + 18);
+        toolScroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+        toolScroll->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+        toolsDock->setMaximumWidth(QWIDGETSIZE_MAX);
+    } else {
+        toolScroll->setMinimumWidth(paletteSize.width() + 12);
+        toolScroll->setMaximumWidth(paletteSize.width() + 12);
+        toolScroll->setMinimumHeight(130);
+        toolScroll->setMaximumHeight(QWIDGETSIZE_MAX);
+        toolScroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+        toolScroll->setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+        toolsDock->setMaximumWidth(paletteSize.width() + 28);
+    }
     ribbonToolbar->setIconSize({appearance.iconSize, appearance.iconSize});
     QDockWidget::DockWidgetFeatures features = QDockWidget::DockWidgetClosable;
     if (appearance.movablePanels)
@@ -2598,15 +3031,15 @@ void MainWindow::arrangePreset() {
     historyDock->hide();
     brushDock->hide();
     filmDock->hide();
-    layerDetails->setVisible(appearance.preset != "focus");
+    layerDetails->show();
+    workspace->layout()->setContentsMargins(0, 0, 0, 0);
     if (appearance.preset == "focus") {
         toolsDock->setWidget(nullptr);
         layersDock->setWidget(nullptr);
         toolsDock->hide();
         layersDock->hide();
         colorDock->hide();
-        optionsToolbar->hide();
-        toolsBar->setOrientation(Qt::Horizontal);
+        toolsBar->setOrientation(Qt::Vertical);
         toolsBar->setParent(floatingTools);
         floatingTools->layout()->addWidget(toolsBar);
         layerPanel->setParent(floatingLayers);
@@ -2646,29 +3079,41 @@ void MainWindow::arrangePreset() {
     }
 }
 void MainWindow::positionOverlays() {
-    if (!floatingTools || appearance.preset != "focus")
+    if (!floatingTools || appearance.preset != "focus") {
+        if (workspace && workspace->layout())
+            workspace->layout()->setContentsMargins(0, 0, 0, 0);
         return;
-    int w = workspace->width(), h = workspace->height();
+    }
+    const int w = workspace->width(), h = workspace->height();
     if (w < 50 || h < 50)
         return;
-    QSize toolsSize(
-        qMin(w - 24, qMax(340, toolsBar->sizeHint().width() + toolsHandle->sizeHint().width() + 24)),
-        toolsBar->sizeHint().height() + 16);
-    QSize layerSize(qMin(appearance.panelWidth, w - 24), qMin(qMax(260, h - 130), 420));
+    const int toolWidth = qMin(w - 24, qMax(toolScroll->minimumWidth() + 16,
+                                            toolsHandle->sizeHint().width() + 16));
+    const QSize toolsSize(toolWidth,
+                          qMin(h - 24, toolPalette->sizeHint().height() +
+                                            toolsHandle->sizeHint().height() + 24));
+    const QSize layerSize(qMin(appearance.panelWidth, qMax(220, w / 2 - 40)), h - 24);
+    const bool layersOnLeft = appearance.panelSide == "left";
+    const int toolsMargin = appearance.focusToolsVisible ? toolsSize.width() + 24 : 8;
+    const int layersMargin = appearance.focusLayersVisible ? layerSize.width() + 24 : 8;
+    // Keep the artwork in its own viewport. Floating panels can still be moved by the user.
+    workspace->layout()->setContentsMargins(layersOnLeft ? layersMargin : toolsMargin, 0,
+                                            layersOnLeft ? toolsMargin : layersMargin, 0);
     auto place = [&](QFrame *panel, QSize size, QPointF normalized, QPoint fallback) {
-        int maxX = qMax(0, w - size.width()), maxY = qMax(0, h - size.height());
-        QPoint at = normalized.x() < 0 || normalized.y() < 0
-                        ? fallback
-                        : QPoint(qRound(normalized.x() * maxX), qRound(normalized.y() * maxY));
+        const int maxX = qMax(0, w - size.width()), maxY = qMax(0, h - size.height());
+        const QPoint at = normalized.x() < 0 || normalized.y() < 0
+                              ? fallback
+                              : QPoint(qRound(normalized.x() * maxX), qRound(normalized.y() * maxY));
         panel->setGeometry(qBound(0, at.x(), maxX), qBound(0, at.y(), maxY), size.width(),
-                           size.height());
+                            size.height());
         panel->raise();
     };
     place(floatingTools, toolsSize, appearance.toolsPosition,
-          {(w - toolsSize.width()) / 2, h - toolsSize.height() - 18});
+          {layersOnLeft ? w - toolsSize.width() - 12 : 12, 12});
     place(floatingLayers, layerSize, appearance.layersPosition,
-          {appearance.panelSide == "left" ? 18 : w - layerSize.width() - 18, 50});
+          {layersOnLeft ? 12 : w - layerSize.width() - 12, 12});
 }
+
 bool MainWindow::eventFilter(QObject *object, QEvent *event) {
     if (object == workspace && event->type() == QEvent::Resize) {
         positionOverlays();

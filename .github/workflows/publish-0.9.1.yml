@@ -1,0 +1,99 @@
+name: Publish reviewed 0.9.1 early access
+
+# This workflow is deliberately limited to PR #1 and this single release.
+on:
+  workflow_run:
+    workflows: ['Build and test']
+    branches: [main]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: The only authorized release
+        required: true
+        type: choice
+        options: ['v0.9.1-ea.1']
+        default: 'v0.9.1-ea.1'
+      expected_sha:
+        description: Full reviewed PR 1 merge SHA, already successful on main CI
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: publish-photodeck-v0.9.1-ea.1
+  cancel-in-progress: false
+
+jobs:
+  guard:
+    if: >-
+      github.repository == 'Meingless/PhotoDeck' &&
+      (github.event_name == 'workflow_dispatch' ||
+       (github.event.workflow_run.conclusion == 'success' &&
+        github.event.workflow_run.event == 'push' &&
+        github.event.workflow_run.head_branch == 'main' &&
+        github.event.workflow_run.head_repository.full_name == github.repository))
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      actions: read
+      pull-requests: read
+    timeout-minutes: 5
+    outputs:
+      source_sha: ${{ steps.guard.outputs.source_sha }}
+      ci_run_id: ${{ steps.guard.outputs.ci_run_id }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Validate publisher regression tests
+        run: python3 -m unittest discover -s scripts/tests -p 'test_publish_early_access.py' -v
+      - name: Pin reviewed merge, current main, and successful source CI
+        id: guard
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EXPECTED_SHA: ${{ inputs.expected_sha || github.event.workflow_run.head_sha }}
+          REQUESTED_TAG: ${{ inputs.version || 'v0.9.1-ea.1' }}
+        run: python3 scripts/publish-early-access.py check
+
+  packages:
+    needs: guard
+    permissions:
+      contents: read
+    uses: ./.github/workflows/build.yml
+    with:
+      checkout_ref: ${{ needs.guard.outputs.source_sha }}
+
+  publish:
+    needs: [guard, packages]
+    if: needs.guard.result == 'success' && needs.packages.result == 'success'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    # This is the only job with write permission. The token is ephemeral.
+    permissions:
+      contents: write
+      actions: read
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.guard.outputs.source_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: PhotoDeck-*
+          path: release-artifacts
+          merge-multiple: false
+      - name: Recheck authorization, verify every package, and publish prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EXPECTED_SHA: ${{ needs.guard.outputs.source_sha }}
+          EXPECTED_CI_RUN_ID: ${{ needs.guard.outputs.ci_run_id }}
+          REQUESTED_TAG: 'v0.9.1-ea.1'
+        run: python3 scripts/publish-early-access.py publish --artifacts release-artifacts

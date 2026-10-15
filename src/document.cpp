@@ -1,7 +1,9 @@
 #include "document.h"
 #include "blending.h"
 #include <QBuffer>
+#include <QCryptographicHash>
 #include <QDataStream>
+#include <QDir>
 #include <QFile>
 #include <QFileInfo>
 #include <QFontMetrics>
@@ -16,8 +18,64 @@
 #include <limits>
 #include <memory>
 #include <vector>
+#ifdef Q_OS_UNIX
+#include <sys/stat.h>
+#endif
 
 namespace {
+QString resolvedFilePath(const QString &file, int depth = 0) {
+    QFileInfo info(file);
+    const QString canonical = info.canonicalFilePath();
+    if (!canonical.isEmpty())
+        return canonical;
+    if (info.isSymLink() && depth < 32)
+        return resolvedFilePath(info.symLinkTarget(), depth + 1);
+    // canonicalFilePath() is empty after deletion. Still resolve directory aliases so a
+    // deleted source cannot evade protection through an alternative spelling of its path.
+    const QString parent = info.dir().canonicalPath();
+    return QDir(parent.isEmpty() ? info.absolutePath() : parent).absoluteFilePath(info.fileName());
+}
+bool samePath(const QString &a, const QString &b) {
+#ifdef Q_OS_WIN
+    return a.compare(b, Qt::CaseInsensitive) == 0;
+#else
+    return a == b;
+#endif
+}
+QByteArray fileIdentity(QFileDevice &file) {
+#ifdef Q_OS_UNIX
+    struct stat info;
+    if (file.handle() >= 0 && ::fstat(file.handle(), &info) == 0)
+        return QByteArray::number(quint64(info.st_dev)) + ':' +
+               QByteArray::number(quint64(info.st_ino));
+#else
+    Q_UNUSED(file);
+#endif
+    return {};
+}
+// Hash exactly the serialized bytes, without rereading the destination after commit and
+// accidentally adopting somebody else's newer contents as our saved baseline.
+class HashedWriter : public QIODevice {
+  public:
+    explicit HashedWriter(QSaveFile &file) : file(file), hash(QCryptographicHash::Sha256) {
+        open(QIODevice::WriteOnly);
+    }
+    QByteArray digest() const { return hash.result(); }
+    bool isSequential() const override { return true; }
+
+  protected:
+    qint64 readData(char *, qint64) override { return -1; }
+    qint64 writeData(const char *data, qint64 length) override {
+        const qint64 written = file.write(data, length);
+        if (written > 0)
+            hash.addData(QByteArrayView(data, written));
+        return written;
+    }
+
+  private:
+    QSaveFile &file;
+    QCryptographicHash hash;
+};
 qint64 bytes(const State &s) {
     qint64 n = 0;
     for (const auto &l : s.layers)
@@ -426,6 +484,8 @@ bool Document::create(QSize size, bool white) {
     l.pixels.fill(white ? Qt::white : Qt::transparent);
     state.layers.append(l);
     path.clear();
+    sourceFile = {};
+    sourceProjectVersion = 0;
     resetHistory("Yeni belge");
     return true;
 }
@@ -492,6 +552,8 @@ bool Document::importImage(const QString &file, bool asLayer, QString *error) {
         return insertLayer(layer, "Görüntü katmanı eklendi", error);
     state = {image.size(), {layer}, 0};
     path.clear();
+    sourceFile = {};
+    sourceProjectVersion = 0;
     title = QFileInfo(file).fileName();
     resetHistory("Görüntü açıldı");
     return true;
@@ -1195,18 +1257,115 @@ void Document::markSaved() {
     dirty = false;
     emit updated();
 }
+bool Document::sameFileVersion(const FileVersion &a, const FileVersion &b) {
+    return a.exists == b.exists && samePath(a.resolvedPath, b.resolvedPath) && a.size == b.size &&
+           a.modified == b.modified && a.identity == b.identity && a.digest == b.digest;
+}
+bool Document::readFileVersion(const QString &file, FileVersion &version, QString *error) {
+    version = {};
+    const QFileInfo info(file);
+    version.absolutePath = QDir::cleanPath(info.absoluteFilePath());
+    version.resolvedPath = resolvedFilePath(file);
+    if (!info.exists() && (!info.isSymLink() || !QFileInfo(info.symLinkTarget()).exists()))
+        return true;
+    auto fail = [&] {
+        if (error)
+            *error = "Dosyanın güncel durumu güvenle doğrulanamadı. Dosya değişmiş, erişilemiyor "
+                     "veya normal bir proje dosyası olmayabilir.";
+        return false;
+    };
+    if (!info.isFile())
+        return fail();
+    QFile input(version.absolutePath);
+    if (!input.open(QIODevice::ReadOnly) || input.size() > 384 * 1024 * 1024)
+        return fail();
+    version.exists = true;
+    version.size = input.size();
+    version.modified = input.fileTime(QFileDevice::FileModificationTime);
+    version.identity = fileIdentity(input);
+    QCryptographicHash hash(QCryptographicHash::Sha256);
+    if (!hash.addData(&input) || input.error() != QFileDevice::NoError ||
+        input.size() != version.size ||
+        input.fileTime(QFileDevice::FileModificationTime) != version.modified)
+        return fail();
+    version.digest = hash.result();
+    // Reopen the path as well as checking the descriptor: an atomic replacement can
+    // leave the original descriptor readable while the path already names another file.
+    QFile current(version.absolutePath);
+    if (!current.open(QIODevice::ReadOnly) || current.size() != version.size ||
+        current.fileTime(QFileDevice::FileModificationTime) != version.modified ||
+        fileIdentity(current) != version.identity ||
+        !samePath(resolvedFilePath(file), version.resolvedPath))
+        return fail();
+    return true;
+}
+bool Document::isSourceFile(const FileVersion &version) const {
+    return sourceProjectVersion > 0 &&
+           (samePath(version.absolutePath, sourceFile.absolutePath) ||
+            samePath(version.resolvedPath, sourceFile.resolvedPath) ||
+            (!version.identity.isEmpty() && version.identity == sourceFile.identity));
+}
+bool Document::requiresFormatUpgrade(const QString &file) const {
+    if (sourceProjectVersion <= 0 || sourceProjectVersion >= NativeProjectVersion)
+        return false;
+    FileVersion destination;
+    destination.absolutePath = QDir::cleanPath(QFileInfo(file).absoluteFilePath());
+    destination.resolvedPath = resolvedFilePath(file);
+    QFile input(file);
+    if (input.open(QIODevice::ReadOnly))
+        destination.identity = fileIdentity(input);
+    return isSourceFile(destination);
+}
 bool Document::save(const QString &file, QString *error, bool markClean) {
+    return save(file, error, markClean, SaveOptions{});
+}
+bool Document::save(const QString &file, QString *error, bool markClean, const SaveOptions &options) {
+    saveStatus = SaveStatus::Error;
+    if (error)
+        error->clear();
     if (!validState(state, error))
         return false;
-    QSaveFile f(file);
+    FileVersion destination;
+    if (!readFileVersion(file, destination, error))
+        return false;
+    const bool overwritesSource = isSourceFile(destination);
+    if (overwritesSource && !markClean) {
+        if (error)
+            *error = "Kurtarma kopyası özgün projenin üzerine yazılamaz. Ayrı bir dosya seçin.";
+        return false;
+    }
+    auto externalChange = [&] {
+        saveStatus = SaveStatus::ExternalModification;
+        if (error)
+            *error = "Proje dosyası açıldıktan veya son kayıttan sonra başka bir işlem tarafından "
+                     "değiştirildi ya da silindi. Farklı Kaydet'i kullanın veya üzerine yazmayı "
+                     "açıkça onaylayın.";
+        return false;
+    };
+    if (overwritesSource && !options.allowExternalOverwrite &&
+        !sameFileVersion(destination, sourceFile))
+        return externalChange();
+    if (overwritesSource && sourceProjectVersion < NativeProjectVersion &&
+        !options.allowFormatUpgrade) {
+        saveStatus = SaveStatus::FormatUpgradeRequired;
+        if (error)
+            *error = QString("Bu proje v%1 biçiminde açıldı. Özgün dosyanın üzerine v%2 biçiminde "
+                             "yazmak için yükseltmeyi onaylayın veya Farklı Kaydet'i kullanın.")
+                         .arg(sourceProjectVersion)
+                         .arg(NativeProjectVersion);
+        return false;
+    }
+    QSaveFile f(destination.resolvedPath);
+    f.setDirectWriteFallback(false);
     if (!f.open(QIODevice::WriteOnly)) {
         if (error)
             *error = f.errorString();
         return false;
     }
-    QDataStream out(&f);
+    HashedWriter writer(f);
+    QDataStream out(&writer);
     out.setVersion(QDataStream::Qt_6_2);
-    out << quint32(0x50444543) << quint32(5) << state.size << qint32(state.active)
+    out << quint32(0x50444543) << quint32(NativeProjectVersion) << state.size << qint32(state.active)
         << qint32(state.layers.size());
     for (const auto &l : state.layers) {
         out << l.name << l.offset << l.visible << l.locked << double(l.opacity) << qint32(l.blend)
@@ -1222,7 +1381,26 @@ bool Document::save(const QString &file, QString *error, bool markClean) {
             return false;
         }
     }
-    if (out.status() != QDataStream::Ok || !f.commit()) {
+    if (out.status() != QDataStream::Ok || !f.flush()) {
+        if (error)
+            *error = f.errorString();
+        return false;
+    }
+    FileVersion written = destination;
+    written.exists = true;
+    written.size = f.size();
+    written.modified = f.fileTime(QFileDevice::FileModificationTime);
+    written.identity = fileIdentity(f);
+    written.digest = writer.digest();
+    FileVersion current;
+    // This is an optimistic check immediately before the atomic rename, not a lock
+    // against uncooperative writers. It also protects Save As destinations that changed
+    // while serialization was running, even when an earlier overwrite was authorized.
+    if (!readFileVersion(file, current, error))
+        return false;
+    if (!sameFileVersion(current, destination))
+        return externalChange();
+    if (!f.commit()) {
         if (error)
             *error = f.errorString();
         return false;
@@ -1230,11 +1408,18 @@ bool Document::save(const QString &file, QString *error, bool markClean) {
     if (markClean) {
         path = file;
         title = QFileInfo(file).fileName();
+        sourceFile = written;
+        sourceProjectVersion = NativeProjectVersion;
+        saveStatus = SaveStatus::Success;
         markSaved();
     }
+    saveStatus = SaveStatus::Success;
     return true;
 }
 bool Document::load(const QString &file, QString *error) {
+    FileVersion original;
+    if (!readFileVersion(file, original, error))
+        return false;
     QFile f(file);
     auto fail = [&]() {
         if (error)
@@ -1319,9 +1504,19 @@ bool Document::load(const QString &file, QString *error) {
     }
     if (in.status() != QDataStream::Ok || !f.atEnd() || !validState(pending, error))
         return fail();
+    FileVersion current;
+    if (!readFileVersion(file, current, error))
+        return false;
+    if (!sameFileVersion(original, current)) {
+        if (error)
+            *error = "Proje okunurken dosya değiştirildi. Yeniden açmayı deneyin.";
+        return false;
+    }
     state = pending;
     path = file;
     title = QFileInfo(file).fileName();
+    sourceFile = current;
+    sourceProjectVersion = int(version);
     resetHistory("Proje açıldı");
     return true;
 }
