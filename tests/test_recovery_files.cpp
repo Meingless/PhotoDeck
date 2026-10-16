@@ -45,14 +45,24 @@ QByteArray readFile(const QString &path) {
     return file.open(QIODevice::ReadOnly) ? file.readAll() : QByteArray();
 }
 
-bool readReplaceableFile(const QString &path, QByteArray *bytes) {
 #ifdef Q_OS_WIN
-    // Atomic replacement requires readers to share delete access on Windows.
-    // Ordinary QFile readers deliberately deny that operation; checked below.
-    const auto native = QDir::toNativeSeparators(path).toStdWString();
-    HANDLE handle = CreateFileW(native.c_str(), GENERIC_READ,
-                                FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
-                                nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+struct WindowsReader {
+    HANDLE handle = INVALID_HANDLE_VALUE;
+    explicit WindowsReader(const QString &path,
+                           DWORD sharing = FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE) {
+        const auto native = QDir::toNativeSeparators(path).toStdWString();
+        handle = CreateFileW(native.c_str(), GENERIC_READ, sharing, nullptr, OPEN_EXISTING,
+                             FILE_ATTRIBUTE_NORMAL, nullptr);
+    }
+    WindowsReader(const WindowsReader &) = delete;
+    WindowsReader &operator=(const WindowsReader &) = delete;
+    ~WindowsReader() {
+        if (handle != INVALID_HANDLE_VALUE)
+            CloseHandle(handle);
+    }
+};
+
+bool readWindowsHandle(HANDLE handle, QByteArray *bytes) {
     if (handle == INVALID_HANDLE_VALUE)
         return false;
     bytes->clear();
@@ -68,8 +78,15 @@ bool readReplaceableFile(const QString &path, QByteArray *bytes) {
             break;
         bytes->append(buffer, qsizetype(count));
     }
-    CloseHandle(handle);
     return success;
+}
+#endif
+
+bool readReplaceableFile(const QString &path, QByteArray *bytes) {
+#ifdef Q_OS_WIN
+    // Readers must grant delete sharing as well as use POSIX replacement.
+    WindowsReader reader(path);
+    return readWindowsHandle(reader.handle, bytes);
 #else
     QFile file(path);
     if (!file.open(QIODevice::ReadOnly))
@@ -368,26 +385,43 @@ class RecoveryFilesTests : public QObject {
         const QString destination = directory.filePath("recovery.pdeck");
         const QByteArray oldData(256 * 1024, '\x13'), newData(384 * 1024, '\xa7');
         QVERIFY(writeFile(destination, oldData));
+        QString error;
+#ifdef Q_OS_WIN
+        {
+            // Deterministically overlap an open old file with publication. A
+            // lucky gap between concurrent reads must not hide legacy rename.
+            WindowsReader held(destination);
+            QVERIFY(held.handle != INVALID_HANDLE_VALUE);
+            QVERIFY(writeFile(staging, newData));
+            QVERIFY2(RecoveryFiles::atomicReplace(staging, destination, &error), qPrintable(error));
+            QByteArray retained;
+            QVERIFY(readWindowsHandle(held.handle, &retained));
+            QCOMPARE(retained, oldData);
+            QCOMPARE(readFile(destination), newData);
+            QVERIFY(!QFileInfo::exists(staging));
+        }
+#endif
         std::atomic<bool> stop{false}, invalid{false}, ready{false};
         std::atomic<int> reads{0};
         std::thread reader([&] {
-            ready.store(true);
             while (!stop.load()) {
                 QByteArray bytes;
                 if (!readReplaceableFile(destination, &bytes)) {
                     invalid.store(true);
+                    ready.store(true);
                     break;
                 }
                 if (bytes != oldData && bytes != newData) {
                     invalid.store(true);
+                    ready.store(true);
                     break;
                 }
                 reads.fetch_add(1);
+                ready.store(true);
             }
         });
         while (!ready.load())
             std::this_thread::yield();
-        QString error;
         bool published = true;
         for (int iteration = 0; iteration < 100 && published; ++iteration) {
             published = writeFile(staging, iteration % 2 ? oldData : newData) &&
@@ -400,15 +434,17 @@ class RecoveryFilesTests : public QObject {
         QVERIFY(!invalid.load());
 #ifdef Q_OS_WIN
         // A non-sharing reader must fail closed, retaining both complete files.
-        QFile held(destination);
-        QVERIFY(held.open(QIODevice::ReadOnly));
-        const QByteArray previous = held.readAll();
-        QVERIFY(writeFile(staging, newData));
-        QVERIFY(!RecoveryFiles::atomicReplace(staging, destination, &error));
-        QVERIFY(!error.isEmpty());
-        QCOMPARE(readFile(staging), newData);
-        QCOMPARE(readFile(destination), previous);
-        held.close();
+        {
+            WindowsReader held(destination, FILE_SHARE_READ | FILE_SHARE_WRITE);
+            QVERIFY(held.handle != INVALID_HANDLE_VALUE);
+            QByteArray previous;
+            QVERIFY(readWindowsHandle(held.handle, &previous));
+            QVERIFY(writeFile(staging, newData));
+            QVERIFY(!RecoveryFiles::atomicReplace(staging, destination, &error));
+            QVERIFY(!error.isEmpty());
+            QCOMPARE(readFile(staging), newData);
+            QCOMPARE(readFile(destination), previous);
+        }
         QVERIFY2(RecoveryFiles::atomicReplace(staging, destination, &error), qPrintable(error));
         QCOMPARE(readFile(destination), newData);
 #endif

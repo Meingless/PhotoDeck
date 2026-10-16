@@ -480,6 +480,17 @@ QWidget *row(QWidget *a, QWidget *b = nullptr, QWidget *c = nullptr) {
         l->addWidget(c);
     return w;
 }
+QWidget *wrappingRow(QWidget *first, QWidget *second) {
+    auto *widget = new QWidget;
+    auto *layout = new QFormLayout(widget);
+    layout->setContentsMargins(0, 0, 0, 0);
+    layout->setHorizontalSpacing(6);
+    layout->setVerticalSpacing(6);
+    layout->setRowWrapPolicy(QFormLayout::WrapLongRows);
+    layout->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow);
+    layout->addRow(first, second);
+    return widget;
+}
 QSlider *slider() {
     auto *s = new QSlider(Qt::Horizontal);
     s->setRange(-100, 100);
@@ -1877,6 +1888,7 @@ void MainWindow::buildInspector() {
     layout->setSpacing(12);
     auto *histogramTitle = new QLabel("TON DAĞILIMI");
     histogramTitle->setObjectName("sectionTitle");
+    histogramTitle->setWordWrap(true);
     auto *rgbLabel = new QLabel("RGB");
     rgbLabel->setObjectName("metaBadge");
     layout->addWidget(row(histogramTitle, rgbLabel));
@@ -1886,6 +1898,7 @@ void MainWindow::buildInspector() {
     auto *form = new QFormLayout;
     form->setHorizontalSpacing(12);
     form->setVerticalSpacing(14);
+    form->setRowWrapPolicy(QFormLayout::WrapLongRows);
     brightness = slider();
     contrast = slider();
     saturation = slider();
@@ -1944,7 +1957,8 @@ void MainWindow::buildInspector() {
         }
     });
     layout->addWidget(reset);
-    auto *advancedTones = new QPushButton("Seviyeler, eğriler ve renk…");
+    auto *advancedTones = new QPushButton("Seviyeler,\neğriler ve renk…");
+    advancedTones->setAccessibleName("Seviyeler, eğriler ve renk…");
     advancedTones->setObjectName("advancedTones");
     connect(advancedTones, &QPushButton::clicked, actions["tones"], &QAction::trigger);
     layout->addWidget(advancedTones);
@@ -1971,7 +1985,7 @@ void MainWindow::buildInspector() {
     blend->setMinimumContentsLength(6);
     blend->setObjectName("blendMode");
     blend->setAccessibleName("Katman karışım modu");
-    layout->addWidget(row(new QLabel("Karışım"), blend));
+    layout->addWidget(wrappingRow(new QLabel("Karışım"), blend));
     opacity = slider();
     opacity->setRange(0, 100);
     opacity->setValue(100);
@@ -2241,6 +2255,7 @@ void MainWindow::buildInspector() {
     layout->addWidget(maskButton);
     auto *propertiesTitle = new QLabel("KATMAN ÖZELLİKLERİ");
     propertiesTitle->setObjectName("sectionTitle");
+    propertiesTitle->setWordWrap(true);
     layout->addWidget(propertiesTitle);
     layerDetails = new QLabel;
     layerDetails->setWordWrap(true);
@@ -2260,14 +2275,14 @@ void MainWindow::buildInspector() {
     alignButton->setMenu(findChild<QMenu *>("layerAlignmentMenu"));
     alignButton->setPopupMode(QToolButton::InstantPopup);
     alignButton->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
-    layout->addWidget(row(positionButton, alignButton));
+    layout->addWidget(wrappingRow(positionButton, alignButton));
     auto *transformButton = new QPushButton("Dönüştür…");
     transformButton->setObjectName("quickTransform");
     connect(transformButton, &QPushButton::clicked, actions["transform"], &QAction::trigger);
     auto *toneButton = new QPushButton("Renk / ton…");
     toneButton->setObjectName("quickTones");
     connect(toneButton, &QPushButton::clicked, actions["tones"], &QAction::trigger);
-    layout->addWidget(row(transformButton, toneButton));
+    layout->addWidget(wrappingRow(transformButton, toneButton));
     auto *scroll = new QScrollArea;
     scroll->setWidgetResizable(true);
     scroll->setFrameShape(QFrame::NoFrame);
@@ -2640,9 +2655,12 @@ void MainWindow::refresh() {
                              .arg(active.text.isEmpty() ? "Piksel katmanı" : "Düzenlenebilir metin")
                              .arg(active.renderedOffset().x())
                              .arg(active.renderedOffset().y()));
-    maskButton->setText(active.mask.isNull() ? "◧  Katman maskesi ekle"
-                        : d->editingMask     ? "◧  Piksele geri dön"
-                                             : "◧  Maskeyi düzenle");
+    maskButton->setText(active.mask.isNull() ? "◧  Katman\nmaskesi ekle"
+                        : d->editingMask     ? "◧  Piksele\ngeri dön"
+                                             : "◧  Maskeyi\ndüzenle");
+    maskButton->setAccessibleName(active.mask.isNull() ? "Katman maskesi ekle"
+                                  : d->editingMask     ? "Piksele geri dön"
+                                                       : "Maskeyi düzenle");
     maskButton->setEnabled(!active.locked);
     auto ensureCompositePreview = [this](Document *document) -> PreviewCache & {
         auto &cached = previewCaches[document];

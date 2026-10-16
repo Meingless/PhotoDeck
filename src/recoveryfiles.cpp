@@ -18,6 +18,8 @@
 #define NOMINMAX
 #endif
 #include <windows.h>
+#include <cstring>
+#include <new>
 #else
 #include <cerrno>
 #include <csignal>
@@ -219,6 +221,50 @@ QString windowsError(DWORD code) {
         message.isEmpty() ? QString() : QStringLiteral(": ") + message);
 }
 
+bool renameWindowsFile(const std::wstring &source, const std::wstring &target, DWORD *error) {
+#ifdef FILE_RENAME_FLAG_POSIX_SEMANTICS
+    // Legacy replacement refuses an open destination, even when every reader
+    // grants FILE_SHARE_DELETE. POSIX replacement keeps those old handles valid
+    // and makes subsequent opens resolve to the complete new file instead.
+    const size_t nameBytes = target.size() * sizeof(wchar_t);
+    if (nameBytes > std::numeric_limits<DWORD>::max() - sizeof(FILE_RENAME_INFO)) {
+        *error = ERROR_FILENAME_EXCED_RANGE;
+        return false;
+    }
+    const DWORD bufferBytes = DWORD(sizeof(FILE_RENAME_INFO) + nameBytes);
+    auto buffer = std::make_unique<char[]>(bufferBytes);
+    auto *rename = new (buffer.get()) FILE_RENAME_INFO{};
+    rename->Flags = FILE_RENAME_FLAG_REPLACE_IF_EXISTS | FILE_RENAME_FLAG_POSIX_SEMANTICS;
+    rename->FileNameLength = DWORD(nameBytes);
+    std::memcpy(rename->FileName, target.data(), nameBytes);
+    HANDLE handle = CreateFileW(source.c_str(), DELETE,
+                                FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                                nullptr, OPEN_EXISTING, FILE_FLAG_OPEN_REPARSE_POINT, nullptr);
+    if (handle == INVALID_HANDLE_VALUE) {
+        *error = GetLastError();
+        return false;
+    }
+    const bool renamed = SetFileInformationByHandle(handle, FileRenameInfoEx, rename, bufferBytes);
+    const DWORD code = renamed ? ERROR_SUCCESS : GetLastError();
+    CloseHandle(handle);
+    if (renamed)
+        return true;
+    // Older Windows/filesystems can reject this information class or flags.
+    // Only then try the legacy atomic rename once; genuine access/sharing/I/O
+    // failures are reported as-is. Never wait or retry a busy file on the GUI.
+    if (code != ERROR_INVALID_PARAMETER && code != ERROR_INVALID_FUNCTION &&
+        code != ERROR_NOT_SUPPORTED) {
+        *error = code;
+        return false;
+    }
+#endif
+    // No COPY_ALLOWED fallback, attribute changes, or remove-then-rename window.
+    if (MoveFileExW(source.c_str(), target.c_str(), MOVEFILE_REPLACE_EXISTING))
+        return true;
+    *error = GetLastError();
+    return false;
+}
+
 bool sameWindowsObject(const QString &first, const QString &second, bool *same, DWORD *error) {
     const auto information = [error](const QString &path, BY_HANDLE_FILE_INFORMATION *info) {
         const std::wstring native = extendedWindowsPath(path).toStdWString();
@@ -305,9 +351,8 @@ bool atomicReplace(const QString &staging, const QString &destination, QString *
 #ifdef Q_OS_WIN
     const std::wstring sourceNative = extendedWindowsPath(sourcePath).toStdWString();
     const std::wstring targetNative = extendedWindowsPath(targetPath).toStdWString();
-    // No COPY_ALLOWED fallback, attribute changes, or remove-then-rename window.
-    if (!MoveFileExW(sourceNative.c_str(), targetNative.c_str(), MOVEFILE_REPLACE_EXISTING)) {
-        const DWORD code = GetLastError();
+    DWORD code = 0;
+    if (!renameWindowsFile(sourceNative, targetNative, &code)) {
         return fail(error, QStringLiteral("Could not atomically publish recovery file: %1.")
                                .arg(windowsError(code)));
     }

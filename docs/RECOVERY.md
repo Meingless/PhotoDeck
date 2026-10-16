@@ -46,12 +46,19 @@ processing nested events, it atomically replaces the final `.pdeck` pathname wit
 the closed staging file. It records the captured revision, never a newer live
 revision. Newer edits remain requested and are captured when their turn comes.
 
-Publication uses one same-directory native rename: std::filesystem::rename on
-POSIX, and MoveFileExW with MOVEFILE_REPLACE_EXISTING on Windows. A Windows
-reader that does not grant FILE_SHARE_DELETE can temporarily block replacement;
-publication then reports an error and retains the complete staging/destination
-files. The tests cover both delete-sharing readers observing only whole old/new
-files and a non-sharing reader failing closed until it closes. Windows paths
+Publication uses a same-directory native rename: std::filesystem::rename on
+POSIX, and SetFileInformationByHandle with FileRenameInfoEx and
+FILE_RENAME_FLAG_REPLACE_IF_EXISTS | FILE_RENAME_FLAG_POSIX_SEMANTICS on supported
+Windows systems/filesystems. [Microsoft documents these replacement semantics](https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/ntifs/ns-ntifs-_file_rename_information):
+old delete-sharing handles remain valid and later opens see the new file. If the
+information class or flags are unsupported, publication falls back once to
+MoveFileExW with MOVEFILE_REPLACE_EXISTING; that legacy operation can fail while
+even a delete-sharing reader is open. No busy-file retries or waits run on the
+GUI thread. A Windows reader that does not grant FILE_SHARE_DELETE can also
+temporarily block replacement. Publication reports the native error and retains
+the complete staging/destination files. Tests cover an old handle held across
+replacement, concurrent readers observing only whole old/new files, and a
+non-sharing reader failing closed until it closes. Windows paths
 remain UTF-16 and are converted to extended-length absolute/UNC paths. There is
 no remove-old-then-rename window, cross-volume copy fallback, GUI QSaveFile commit,
 or copying of project bytes on the GUI thread. Symlinks, directories, identical

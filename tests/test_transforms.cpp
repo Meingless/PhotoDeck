@@ -8,6 +8,7 @@
 #include <QDir>
 #include <QFileDialog>
 #include <QFocusEvent>
+#include <QFontMetrics>
 #include <QTabBar>
 #include <QLabel>
 #include <QLayout>
@@ -19,6 +20,7 @@
 #include <QPushButton>
 #include <QSpinBox>
 #include <QStandardPaths>
+#include <QStyleFactory>
 #include <QTabWidget>
 #include <QTemporaryDir>
 #include <QtTest>
@@ -1669,6 +1671,73 @@ class TransformTests : public QObject {
                 QVERIFY(button->height() >= button->sizeHint().height());
             }
             c.cancelTransform();
+        }
+    }
+    void onCanvasNativeMetricsRefreshAfterLabelAndRowChanges_data() {
+        QTest::addColumn<bool>("wideText");
+        QTest::newRow("wide-font") << true;
+        QTest::newRow("wide-padding") << false;
+    }
+    void onCanvasNativeMetricsRefreshAfterLabelAndRowChanges() {
+        QFETCH(bool, wideText);
+        QScopedPointer<QStyle> nativeStyle(QStyleFactory::create("Windows"));
+        QVERIFY(nativeStyle);
+        for (bool rulers : {false, true}) {
+            Document d;
+            transformFixture(d);
+            Canvas c(&d);
+            prepare(c);
+            c.showRulers = rulers;
+            for (auto *button : c.findChildren<QToolButton *>()) {
+                button->setStyle(nativeStyle.data());
+                if (wideText) {
+                    QFont font = button->font();
+                    // Target native-like digit widths rather than multiplying
+                    // an already-wide platform font into an impossible target.
+                    const int stretch = qMax(100, font.stretch());
+                    const int digits = qMax(1, QFontMetrics(font).horizontalAdvance("123"));
+                    font.setStretch(qMax(stretch, qRound(stretch * 54.0 / digits)));
+                    button->setFont(font);
+                } else
+                    button->setStyleSheet("min-width:50px; padding:6px 9px; font-size:11px;");
+            }
+            const auto verify = [&] {
+                auto *controls = c.findChild<QWidget *>("transformControls");
+                QVERIFY(c.rect().contains(controls->geometry()));
+                for (auto *button : controls->findChildren<QToolButton *>()) {
+                    QVERIFY(button->isVisible());
+                    QVERIFY2(controls->rect().contains(button->geometry()),
+                             qPrintable(QString("%1 canvas=%2x%3 controls=%4x%5 button=%6,%7 %8x%9")
+                                            .arg(button->objectName()).arg(c.width()).arg(c.height())
+                                            .arg(controls->width()).arg(controls->height())
+                                            .arg(button->x()).arg(button->y())
+                                            .arg(button->width()).arg(button->height())));
+                    QVERIFY(button->width() >= button->sizeHint().width());
+                    QVERIFY(button->height() >= button->sizeHint().height());
+                }
+                if (c.findChild<QLabel *>("transformInfo")->isHidden())
+                    QCOMPARE(controls->size(), compactTransformControlsSize(*controls));
+            };
+            // Switch between full/compact labels and one/two button rows.
+            // Check before event processing, after it, and with an unchanged
+            // frame size: a nested grid must never reuse earlier label metrics.
+            for (QSize size : {QSize(760, 580), QSize(180, 100), QSize(360, 100),
+                               QSize(220, 160), QSize(601, 185), QSize(760, 580)}) {
+                c.resize(size);
+                c.fit();
+                QVERIFY(c.beginTransform());
+                verify();
+                QTest::qWait(10);
+                verify();
+                const QSize controlsSize = c.findChild<QWidget *>("transformControls")->size();
+                c.fit();
+                verify();
+                QCOMPARE(c.findChild<QWidget *>("transformControls")->size(), controlsSize);
+                c.cancelTransform();
+                QVERIFY(c.beginTransform());
+                verify();
+                c.cancelTransform();
+            }
         }
     }
     void perspectiveTabStartsFromLastPreview() {

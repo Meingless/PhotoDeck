@@ -4,6 +4,7 @@
 #include <QDialogButtonBox>
 #include <QFile>
 #include <QFileDialog>
+#include <QFontMetrics>
 #include <QInputDialog>
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -496,6 +497,60 @@ class PresetTests : public QObject {
             a = brightness(resolved.muted);
             QVERIFY((qMax(a, b) + .05) / (qMin(a, b) + .05) >= 4.5);
             QVERIFY(!settings.styleSheet().contains('@'));
+        }
+    }
+    void inspectorsFitWideNativeText_data() {
+        QTest::addColumn<QString>("preset");
+        for (const auto &entry : uiPresets())
+            QTest::newRow(qPrintable(entry.id)) << entry.id;
+    }
+    void inspectorsFitWideNativeText() {
+        QFETCH(QString, preset);
+        MainWindow w(false, false);
+        auto *d = new Document;
+        QVERIFY(d->create({24, 24}, true));
+        d->markSaved();
+        w.addDocument(d);
+        w.applyUiPreset(preset, false);
+        w.resize(900, 620);
+        w.show();
+        QTest::qWait(30);
+        auto *color = w.findChild<QScrollArea *>("colorPanelScroll");
+        QScrollArea *layer = nullptr;
+        for (auto *scroll : w.findChildren<QScrollArea *>())
+            if (scroll->widget() && scroll->widget()->objectName() == "layerPanel")
+                layer = scroll;
+        QVERIFY(color && layer);
+        // Reproduce wide native Windows text metrics without changing the
+        // machine's installed fonts or reducing any control's honest hint.
+        for (auto *scroll : {color, layer})
+            for (auto *control : scroll->widget()->findChildren<QWidget *>()) {
+                QFont font = control->font();
+                const int stretch = qMax(100, font.stretch());
+                const int digits = qMax(1, QFontMetrics(font).horizontalAdvance("000000"));
+                const int target = qMax(1, font.pixelSize()) * 6;
+                font.setStretch(qMax(stretch, qRound(stretch * double(target) / digits)));
+                control->setFont(font);
+            }
+        QTest::qWait(30);
+        for (auto *scroll : {color, layer}) {
+            if (!scroll->isVisible())
+                continue;
+            QTRY_VERIFY2(scroll->widget()->minimumSizeHint().width() <= scroll->viewport()->width(),
+                         qPrintable(QString("%1 %2 minimum=%3 viewport=%4")
+                                        .arg(preset, scroll->widget()->objectName())
+                                        .arg(scroll->widget()->minimumSizeHint().width())
+                                        .arg(scroll->viewport()->width())));
+            QCOMPARE(scroll->horizontalScrollBar()->maximum(), 0);
+        }
+        for (const auto *id : {"quickPosition", "quickAlign", "quickTransform", "quickTones",
+                               "layerMaskButton"}) {
+            auto *button = w.findChild<QWidget *>(id);
+            QVERIFY(button);
+            layer->ensureWidgetVisible(button, 0, 0);
+            QTRY_VERIFY(button->visibleRegion().contains(button->rect()));
+            QVERIFY(button->width() >= button->minimumSizeHint().width());
+            QVERIFY(button->height() >= button->minimumSizeHint().height());
         }
     }
     void colorInspectorKeepsControlsReachable_data() {

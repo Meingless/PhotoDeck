@@ -1342,7 +1342,8 @@ void Canvas::positionTransformControls() {
         return;
     const int available = qMax(180, width() - 32);
     const int controlsWidth = qMin(540, available);
-    auto *buttons = qobject_cast<QGridLayout *>(transformControls->layout()->itemAt(0)->layout());
+    auto *controlsLayout = transformControls->layout();
+    auto *buttons = qobject_cast<QGridLayout *>(controlsLayout->itemAt(0)->layout());
     const auto setButtonRows = [&](bool twoRows) {
         if (buttons->property("twoRows").toBool() == twoRows)
             return;
@@ -1362,6 +1363,7 @@ void Canvas::positionTransformControls() {
             buttons->addWidget(transformApply, 0, 4);
         }
         buttons->setProperty("twoRows", twoRows);
+        controlsLayout->invalidate();
     };
     setButtonRows(false);
     const auto setButtonLabels = [&](bool compact) {
@@ -1375,11 +1377,17 @@ void Canvas::positionTransformControls() {
             // complete label needs. Never let the row elide an action button.
             button->setMinimumSize(button->sizeHint());
         }
+        // updateGeometry() reaches the widget's outer layout, but not this
+        // nested grid. Discard its cached row metrics before measuring labels.
+        buttons->invalidate();
+        controlsLayout->invalidate();
     };
     setButtonLabels(controlsWidth < 390);
     const auto rowWidth = [&] {
-        const auto margins = transformControls->layout()->contentsMargins();
-        return buttons->minimumSize().width() + margins.left() + margins.right();
+        const auto margins = controlsLayout->contentsMargins();
+        const auto frame = transformControls->contentsMargins();
+        return buttons->minimumSize().width() + margins.left() + margins.right() +
+               frame.left() + frame.right();
     };
     if (!transformCaption->isHidden() && rowWidth() > controlsWidth)
         setButtonLabels(true);
@@ -1390,6 +1398,7 @@ void Canvas::positionTransformControls() {
     const qreal top = showRulers ? 36 : 12;
     const bool showInfo = controlsWidth >= 300 && height() >= top + 76 + 12;
     transformInfo->setVisible(showInfo);
+    controlsLayout->invalidate();
     const QRectF viewport = showRulers ? QRectF(rect().adjusted(24, 24, 0, 0)) : QRectF(rect());
     const TransformHandles box = transformBox();
     QVector<QRectF> targets;
@@ -1461,6 +1470,7 @@ void Canvas::positionTransformControls() {
         // fit the buttons below the handles, but not the two-row help panel.
         // Keep the help whenever it fits without hiding a pointer target.
         transformInfo->hide();
+        controlsLayout->invalidate();
         const int compactHeight = qMax(48, transformControls->minimumSizeHint().height());
         const Placement compactPlacement = bestPlacement(compactHeight);
         if (compactPlacement.covered < best.covered) {
