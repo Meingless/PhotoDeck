@@ -783,7 +783,23 @@ class PresetTests : public QObject {
                 scroll->maximumViewportSize().width());
         QVERIFY(scroll->widget()->heightForWidth(scroll->maximumViewportSize().width()) >
                 scroll->widget()->minimumSizeHint().height());
-        QTRY_COMPARE(scroll->verticalScrollBar()->maximum(), 0);
+        const auto geometry = [&] {
+            return QString("dock=%1x%2 viewport=%3x%4 maximumViewport=%5x%6 "
+                           "content=%7x%8 minimumHint=%9x%10 hfw(current)=%11 "
+                           "hfw(maximum)=%12 verticalRange=%13 horizontalRange=%14")
+                .arg(w.findChild<QDockWidget *>("colorDock")->width())
+                .arg(w.findChild<QDockWidget *>("colorDock")->height())
+                .arg(scroll->viewport()->width()).arg(scroll->viewport()->height())
+                .arg(scroll->maximumViewportSize().width())
+                .arg(scroll->maximumViewportSize().height())
+                .arg(panel->width()).arg(panel->height())
+                .arg(panel->minimumSizeHint().width()).arg(panel->minimumSizeHint().height())
+                .arg(panel->heightForWidth(scroll->viewport()->width()))
+                .arg(panel->heightForWidth(scroll->maximumViewportSize().width()))
+                .arg(scroll->verticalScrollBar()->maximum())
+                .arg(scroll->horizontalScrollBar()->maximum());
+        };
+        QTRY_VERIFY2(scroll->verticalScrollBar()->maximum() == 0, qPrintable(geometry()));
         QTRY_COMPARE(scroll->horizontalScrollBar()->maximum(), 0);
         auto *advanced = w.findChild<QPushButton *>("advancedTones");
         QVERIFY(advanced->visibleRegion().contains(advanced->rect()));

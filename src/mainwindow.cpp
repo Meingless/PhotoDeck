@@ -4192,8 +4192,14 @@ void MainWindow::applyUiSettings(const UiSettings &settings, bool resetLayout, b
             // Match QScrollArea's height-for-width sizing. Wrapping form rows
             // can need more than minimumSizeHint even when their width fits.
             const QSize viewport = scroll->maximumViewportSize();
+            // An existing vertical bar narrows the first height-for-width pass.
+            // Budget for that width too, otherwise Qt can retain the bar even
+            // when the full-width contents would fit without one.
+            const int contentWidth = qMax(scroll->widget()->minimumSizeHint().width(),
+                                          viewport.width() -
+                                              scroll->verticalScrollBar()->sizeHint().width());
             const int contentHeight = qMax(scroll->widget()->minimumSizeHint().height(),
-                                            scroll->widget()->heightForWidth(viewport.width()));
+                                            scroll->widget()->heightForWidth(contentWidth));
             const int frameHeight = colorDock->height() - viewport.height();
             const int colorHeight = contentHeight + frameHeight;
             const int layerHeight = qMax(layersDock->minimumSizeHint().height(),
