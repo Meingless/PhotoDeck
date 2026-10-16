@@ -8,7 +8,6 @@
 #include <QDir>
 #include <QFileDialog>
 #include <QFocusEvent>
-#include <QFontMetrics>
 #include <QTabBar>
 #include <QLabel>
 #include <QLayout>
@@ -1691,13 +1690,27 @@ class TransformTests : public QObject {
             for (auto *button : c.findChildren<QToolButton *>()) {
                 button->setStyle(nativeStyle.data());
                 if (wideText) {
+                    const QString label = button->text();
+                    const bool numeric = button->objectName() == "transformNumeric";
+                    button->setText(numeric ? "123"
+                                           : button->objectName() == "transformCancel" ? "×" : "✓");
+                    button->ensurePolished();
                     QFont font = button->font();
-                    // Target native-like digit widths rather than multiplying
-                    // an already-wide platform font into an impossible target.
-                    const int stretch = qMax(100, font.stretch());
-                    const int digits = qMax(1, QFontMetrics(font).horizontalAdvance("123"));
-                    font.setStretch(qMax(stretch, qRound(stretch * 54.0 / digits)));
-                    button->setFont(font);
+                    // Native fallback fonts can apply stretch nonlinearly. Use
+                    // the complete polished compact hint, including padding,
+                    // to keep this synthetic fixture feasible in a 180px panel.
+                    const int maximumWidth = numeric ? 92 : 60;
+                    int stretch = 300;
+                    do {
+                        font.setStretch(stretch);
+                        button->setFont(font);
+                        button->ensurePolished();
+                    } while (button->sizeHint().width() > maximumWidth && --stretch >= 100);
+                    QVERIFY2(button->sizeHint().width() <= maximumWidth,
+                             qPrintable(QString("%1 compact hint=%2 maximum=%3 stretch=%4")
+                                            .arg(button->objectName()).arg(button->sizeHint().width())
+                                            .arg(maximumWidth).arg(font.stretch())));
+                    button->setText(label);
                 } else
                     button->setStyleSheet("min-width:50px; padding:6px 9px; font-size:11px;");
             }

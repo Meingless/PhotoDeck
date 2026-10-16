@@ -4,7 +4,6 @@
 #include <QDialogButtonBox>
 #include <QFile>
 #include <QFileDialog>
-#include <QFontMetrics>
 #include <QInputDialog>
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -521,18 +520,38 @@ class PresetTests : public QObject {
             if (scroll->widget() && scroll->widget()->objectName() == "layerPanel")
                 layer = scroll;
         QVERIFY(color && layer);
-        // Reproduce wide native Windows text metrics without changing the
-        // machine's installed fonts or reducing any control's honest hint.
+        // Widen action text using actual native fonts. Other controls retain
+        // their real platform metrics; no installed fonts need to change.
         for (auto *scroll : {color, layer})
-            for (auto *control : scroll->widget()->findChildren<QWidget *>()) {
-                QFont font = control->font();
-                const int stretch = qMax(100, font.stretch());
-                const int digits = qMax(1, QFontMetrics(font).horizontalAdvance("000000"));
-                const int target = qMax(1, font.pixelSize()) * 6;
-                font.setStretch(qMax(stretch, qRound(stretch * double(target) / digits)));
-                control->setFont(font);
+            for (auto *button : scroll->widget()->findChildren<QAbstractButton *>()) {
+                QFont font = button->font();
+                font.setStretch(qMax(100, font.stretch()) * 2);
+                button->setFont(font);
             }
         QTest::qWait(30);
+        // Font fallback/stretch resolution is not proportional on every
+        // platform. Keep each synthetic button individually feasible using its
+        // actual polished hint, while retaining at least its native font width.
+        // 200 px fits individually in the 212 px content width of Compact.
+        constexpr int maximumSyntheticButtonWidth = 200;
+        for (auto *scroll : {color, layer}) {
+            if (!scroll->isVisible())
+                continue;
+            for (auto *button : scroll->widget()->findChildren<QAbstractButton *>())
+                for (int pass = 0; pass < 8 &&
+                     button->minimumSizeHint().width() > maximumSyntheticButtonWidth; ++pass) {
+                    QFont font = button->font();
+                    const int stretch = qMax(100, font.stretch());
+                    if (stretch == 100)
+                        break;
+                    font.setStretch(qMax(100, qMin(stretch - 1,
+                        qFloor(stretch * double(maximumSyntheticButtonWidth) /
+                               button->minimumSizeHint().width()))));
+                    button->setFont(font);
+                    button->ensurePolished();
+                    QCoreApplication::processEvents();
+                }
+        }
         for (auto *scroll : {color, layer}) {
             if (!scroll->isVisible())
                 continue;
@@ -549,8 +568,46 @@ class PresetTests : public QObject {
             QVERIFY(button);
             layer->ensureWidgetVisible(button, 0, 0);
             QTRY_VERIFY(button->visibleRegion().contains(button->rect()));
-            QVERIFY(button->width() >= button->minimumSizeHint().width());
-            QVERIFY(button->height() >= button->minimumSizeHint().height());
+            const auto dimensions = [&] {
+                const QSize hint = button->minimumSizeHint();
+                return QString("%1 %2 actual=%3x%4 minimumHint=%5x%6 row=%7x%8 viewport=%9x%10")
+                    .arg(preset, id).arg(button->width()).arg(button->height())
+                    .arg(hint.width()).arg(hint.height())
+                    .arg(button->parentWidget()->width()).arg(button->parentWidget()->height())
+                    .arg(layer->viewport()->width()).arg(layer->viewport()->height());
+            };
+            QVERIFY2(button->width() >= button->minimumSizeHint().width(),
+                     qPrintable(dimensions()));
+            QVERIFY2(button->height() >= button->minimumSizeHint().height(),
+                     qPrintable(dimensions()));
+        }
+    }
+    void actionRowsWrapBeforeSqueezingAButton() {
+        MainWindow w(false, false);
+        auto *d = new Document;
+        QVERIFY(d->create({24, 24}, true));
+        d->markSaved();
+        w.addDocument(d);
+        w.applyUiPreset("touch", false);
+        w.resize(900, 620);
+        w.show();
+        QTest::qWait(30);
+        for (const auto &pair : {qMakePair("quickPosition", "quickAlign"),
+                                 qMakePair("quickTransform", "quickTones")}) {
+            auto *first = w.findChild<QWidget *>(pair.first);
+            auto *second = w.findChild<QWidget *>(pair.second);
+            QVERIFY(first && second);
+            auto *row = second->parentWidget();
+            // One pixel short of fitting both honest hints and the 6 px gap.
+            // Both controls fit individually, so this must choose two rows.
+            row->setFixedWidth(first->sizeHint().width() + second->minimumSizeHint().width() + 5);
+            QTRY_VERIFY(first->mapTo(row, QPoint()).y() + first->height() <= second->y());
+            for (auto *button : {first, second}) {
+                QVERIFY2(button->width() >= button->minimumSizeHint().width(),
+                         qPrintable(button->objectName()));
+                const QRect bounds(button->mapTo(row, QPoint()), button->size());
+                QVERIFY(row->rect().contains(bounds));
+            }
         }
     }
     void colorInspectorKeepsControlsReachable_data() {

@@ -889,7 +889,8 @@ class UiResilienceTests : public QObject {
         d->markSaved();
         w.addDocument(d);
         w.show();
-        QTest::qWait(30);
+        w.activateWindow();
+        QTRY_VERIFY(w.isActiveWindow());
         const auto revision = d->revision();
         const auto history = d->historyLabels();
         const auto pixels = d->composite();
@@ -914,7 +915,11 @@ class UiResilienceTests : public QObject {
                 QCOMPARE(cancel->accessibleName(), QString("İptal"));
                 QCOMPARE(box->defaultButton(), cancel);
                 QCOMPARE(box->escapeButton(), cancel);
-                QVERIFY(cancel->hasFocus());
+                // Modal visibility precedes activation/focus delivery on macOS.
+                // Observe the production default focus after activation without
+                // assigning it in the harness, which could hide a safety bug.
+                QTRY_VERIFY(box->isActiveWindow());
+                QTRY_VERIFY(cancel->hasFocus());
                 const QString screenshots = qEnvironmentVariable("PHOTODECK_DIALOG_SCREENSHOTS");
                 if (!screenshots.isEmpty()) {
                     QVERIFY(QDir().mkpath(screenshots));

@@ -484,11 +484,18 @@ QWidget *wrappingRow(QWidget *first, QWidget *second) {
     auto *widget = new QWidget;
     auto *layout = new QFormLayout(widget);
     layout->setContentsMargins(0, 0, 0, 0);
-    layout->setHorizontalSpacing(6);
+    // Qt's WrapLongRows fit check omits horizontalSpacing, then subtracts it
+    // during placement. Budget the gap inside the label cell so a near-fitting
+    // pair wraps instead of taking those pixels from the second control.
+    auto *labelCell = new QWidget;
+    auto *labelLayout = new QHBoxLayout(labelCell);
+    labelLayout->setContentsMargins(0, 0, 6, 0);
+    labelLayout->addWidget(first);
+    layout->setHorizontalSpacing(0);
     layout->setVerticalSpacing(6);
     layout->setRowWrapPolicy(QFormLayout::WrapLongRows);
     layout->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow);
-    layout->addRow(first, second);
+    layout->addRow(labelCell, second);
     return widget;
 }
 QSlider *slider() {
