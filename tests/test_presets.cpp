@@ -7,6 +7,7 @@
 #include <QInputDialog>
 #include <QJsonArray>
 #include <QJsonDocument>
+#include <QLayout>
 #include <QMessageBox>
 #include <QMouseEvent>
 #include <QPushButton>
@@ -560,7 +561,9 @@ class PresetTests : public QObject {
                                         .arg(preset, scroll->widget()->objectName())
                                         .arg(scroll->widget()->minimumSizeHint().width())
                                         .arg(scroll->viewport()->width())));
-            QCOMPARE(scroll->horizontalScrollBar()->maximum(), 0);
+            // Layout constraints and QScrollArea ranges settle on queued
+            // LayoutRequest events after the final font calibration.
+            QTRY_COMPARE(scroll->horizontalScrollBar()->maximum(), 0);
         }
         for (const auto *id : {"quickPosition", "quickAlign", "quickTransform", "quickTones",
                                "layerMaskButton"}) {
@@ -750,6 +753,41 @@ class PresetTests : public QObject {
         QCOMPARE(d->composite(), pixels);
         d->markSaved();
         w.close();
+    }
+    void colorInspectorAllocatesWrappedPreferredHeight() {
+        MainWindow w(false, false);
+        auto *d = new Document;
+        QVERIFY(d->create({24, 24}, true));
+        d->markSaved();
+        w.addDocument(d);
+        auto *panel = w.findChild<QWidget *>("colorPanel");
+        QVERIFY(panel);
+        auto *description = new QLabel(
+            "A wrapping inspector description keeps every color adjustment visible "
+            "within the available panel width. The preferred height must include "
+            "every line of this description.");
+        description->setWordWrap(true);
+        panel->layout()->addWidget(description);
+        auto settings = UiSettings::forPreset("paper");
+        w.applyUiSettings(settings, true, false);
+        w.resize(1280, 1000);
+        w.show();
+        auto *scroll = w.findChild<QScrollArea *>("colorPanelScroll");
+        QVERIFY(scroll);
+        QTest::qWait(30);
+        // An individually fitting, native-font description exercises real
+        // height-for-width wrapping without platform-specific font proportions.
+        QVERIFY(description->minimumSizeHint().width() <
+                scroll->maximumViewportSize().width());
+        QVERIFY(scroll->widget()->minimumSizeHint().width() <=
+                scroll->maximumViewportSize().width());
+        QVERIFY(scroll->widget()->heightForWidth(scroll->maximumViewportSize().width()) >
+                scroll->widget()->minimumSizeHint().height());
+        QTRY_COMPARE(scroll->verticalScrollBar()->maximum(), 0);
+        QTRY_COMPARE(scroll->horizontalScrollBar()->maximum(), 0);
+        auto *advanced = w.findChild<QPushButton *>("advancedTones");
+        QVERIFY(advanced->visibleRegion().contains(advanced->rect()));
+        QVERIFY(!d->dirty);
     }
     void colorInspectorPreservesRoomyAndSavedLayouts() {
         {

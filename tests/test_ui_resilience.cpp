@@ -93,7 +93,12 @@ bool driveDialogs(const std::function<void()> &open,
     bool seen = false, expired = false;
     QObject::connect(&driver, &QTimer::timeout, [&] {
         auto *dialog = currentDialog();
-        if (!dialog || dialog == last)
+        if (!dialog || dialog == last || !dialog->isVisible())
+            return;
+        // Modal visibility can precede activation and initial focus delivery.
+        // Wait before driving controls, without assigning the production focus.
+        // Modeless About windows remain discoverable on macOS.
+        if (dialog->isModal() && !dialog->isActiveWindow())
             return;
         last = dialog;
         seen = true;
@@ -806,7 +811,7 @@ class UiResilienceTests : public QObject {
                         mode->setCurrentIndex(Selection::Subtract);
                     }
                 }
-                QVERIFY(field->hasFocus());
+                QTRY_VERIFY(field->hasFocus());
                 bool buddy = false;
                 for (auto *label : dialog->findChildren<QLabel *>())
                     buddy |= label->buddy() == field && hasLabelAccessKey(label->text());
@@ -915,10 +920,6 @@ class UiResilienceTests : public QObject {
                 QCOMPARE(cancel->accessibleName(), QString("İptal"));
                 QCOMPARE(box->defaultButton(), cancel);
                 QCOMPARE(box->escapeButton(), cancel);
-                // Modal visibility precedes activation/focus delivery on macOS.
-                // Observe the production default focus after activation without
-                // assigning it in the harness, which could hide a safety bug.
-                QTRY_VERIFY(box->isActiveWindow());
                 QTRY_VERIFY(cancel->hasFocus());
                 const QString screenshots = qEnvironmentVariable("PHOTODECK_DIALOG_SCREENSHOTS");
                 if (!screenshots.isEmpty()) {
@@ -979,9 +980,9 @@ class UiResilienceTests : public QObject {
                 QCOMPARE(cancel->accessibleName(), QString("İptal"));
                 QCOMPARE(x->accessibleName(), QString("Dönüşmüş katman sol kenarı X"));
                 QCOMPARE(y->accessibleName(), QString("Dönüşmüş katman üst kenarı Y"));
-                QVERIFY(x->hasFocus());
+                QTRY_VERIFY(x->hasFocus());
                 QTest::keyClick(x, Qt::Key_Tab);
-                QVERIFY(y->hasFocus());
+                QTRY_VERIFY(y->hasFocus());
                 for (auto *field : {x, y}) {
                     bool buddy = false;
                     for (auto *label : dialog->findChildren<QLabel *>())

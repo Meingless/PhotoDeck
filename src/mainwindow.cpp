@@ -4189,10 +4189,13 @@ void MainWindow::applyUiSettings(const UiSettings &settings, bool resetLayout, b
             const auto *scroll = qobject_cast<QScrollArea *>(colorDock->widget());
             scroll->widget()->ensurePolished();
             scroll->widget()->layout()->activate();
-            // Size the actual viewport, including native dock decorations and
-            // any scroll-area frame, rather than subtracting unrelated hints.
-            const int frameHeight = colorDock->height() - scroll->viewport()->height();
-            const int colorHeight = scroll->widget()->minimumSizeHint().height() + frameHeight;
+            // Match QScrollArea's height-for-width sizing. Wrapping form rows
+            // can need more than minimumSizeHint even when their width fits.
+            const QSize viewport = scroll->maximumViewportSize();
+            const int contentHeight = qMax(scroll->widget()->minimumSizeHint().height(),
+                                            scroll->widget()->heightForWidth(viewport.width()));
+            const int frameHeight = colorDock->height() - viewport.height();
+            const int colorHeight = contentHeight + frameHeight;
             const int layerHeight = qMax(layersDock->minimumSizeHint().height(),
                                         colorDock->height() + layersDock->height() - colorHeight);
             resizeDocks({colorDock, layersDock}, {colorHeight, layerHeight},
