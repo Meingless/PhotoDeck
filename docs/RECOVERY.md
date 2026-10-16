@@ -47,7 +47,11 @@ the closed staging file. It records the captured revision, never a newer live
 revision. Newer edits remain requested and are captured when their turn comes.
 
 Publication uses one same-directory native rename: std::filesystem::rename on
-POSIX, and MoveFileExW with MOVEFILE_REPLACE_EXISTING on Windows. Windows paths
+POSIX, and MoveFileExW with MOVEFILE_REPLACE_EXISTING on Windows. A Windows
+reader that does not grant FILE_SHARE_DELETE can temporarily block replacement;
+publication then reports an error and retains the complete staging/destination
+files. The tests cover both delete-sharing readers observing only whole old/new
+files and a non-sharing reader failing closed until it closes. Windows paths
 remain UTF-16 and are converted to extended-length absolute/UNC paths. There is
 no remove-old-then-rename window, cross-volume copy fallback, GUI QSaveFile commit,
 or copying of project bytes on the GUI thread. Symlinks, directories, identical

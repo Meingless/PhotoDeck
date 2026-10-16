@@ -22,6 +22,29 @@
 #include <cmath>
 
 namespace {
+// Qt disables automatic Alt mnemonics on macOS. Keep checking the label's
+// declared access key there, while exercising its native keyboard behavior below.
+QString declaredAccessKey(const QString &text) {
+    for (int index = 0; index + 1 < text.size(); ++index) {
+        if (text[index] != '&')
+            continue;
+        if (text[index + 1] == '&') {
+            ++index;
+            continue;
+        }
+        return QString(text[index + 1]).toUpper();
+    }
+    return {};
+}
+bool hasLabelAccessKey(const QString &text) {
+    if (declaredAccessKey(text).isEmpty())
+        return false;
+#ifdef Q_OS_MACOS
+    return QKeySequence::mnemonic(text).isEmpty();
+#else
+    return !QKeySequence::mnemonic(text).isEmpty();
+#endif
+}
 double renderedContrast(QColor foreground, QColor background) {
     const auto luminance = [](QColor color) {
         const auto channel = [](double value) {
@@ -378,7 +401,13 @@ class UiResilienceTests : public QObject {
         auto *menu = w.findChild<QMenu *>("selectionMenu");
         auto *edit = w.findChild<QMenu *>("editMenu");
         QVERIFY(menu && edit);
+        QCOMPARE(QString(menu->title()).remove('&'), QString("Seçim"));
+        QCOMPARE(declaredAccessKey(menu->title()), QString("S"));
+#ifdef Q_OS_MACOS
+        QVERIFY(QKeySequence::mnemonic(menu->title()).isEmpty());
+#else
         QCOMPARE(QKeySequence::mnemonic(menu->title()), QKeySequence("Alt+S"));
+#endif
         const QRect menuPosition = w.menuBar()->actionGeometry(menu->menuAction());
         QVERIFY(!menuPosition.isEmpty());
         QVERIFY(w.menuBar()->rect().contains(menuPosition));
@@ -395,8 +424,8 @@ class UiResilienceTests : public QObject {
             }
             actual << action->objectName();
             QVERIFY(!edit->actions().contains(action));
-            const QString mnemonic = QKeySequence::mnemonic(action->text()).toString();
-            QVERIFY2(!mnemonic.isEmpty(), qPrintable(action->objectName()));
+            const QString mnemonic = declaredAccessKey(action->text());
+            QVERIFY2(hasLabelAccessKey(action->text()), qPrintable(action->objectName()));
             QVERIFY2(!mnemonics.contains(mnemonic), qPrintable(mnemonic));
             mnemonics.insert(mnemonic);
         }
@@ -414,8 +443,28 @@ class UiResilienceTests : public QObject {
             alphaMenus += candidate->actions().contains(w.findChild<QAction *>("selectLayerPixels"));
         QCOMPARE(alphaMenus, 2);
         auto openMenu = [&] {
+#ifdef Q_OS_MACOS
+            // Qt follows macOS convention and disables Alt-letter mnemonics.
+            // Open the menu and verify arrow/Return navigation with real key events.
+            menu->popup(w.menuBar()->mapToGlobal(menuPosition.bottomLeft()));
+#else
             QTest::keyClick(w.currentCanvas(), Qt::Key_S, Qt::AltModifier);
+#endif
             return QTest::qWaitFor([&] { return menu->isVisible(); });
+        };
+        const auto chooseAction = [&](const char *id, Qt::Key mnemonic) {
+#ifdef Q_OS_MACOS
+            Q_UNUSED(mnemonic);
+            auto *target = w.findChild<QAction *>(id);
+            QTest::keyClick(menu, Qt::Key_Home);
+            for (int step = 0; step < menu->actions().size() && menu->activeAction() != target; ++step)
+                QTest::keyClick(menu, Qt::Key_Down);
+            QCOMPARE(menu->activeAction(), target);
+            QTest::keyClick(menu, Qt::Key_Return);
+#else
+            Q_UNUSED(id);
+            QTest::keyClick(menu, mnemonic);
+#endif
         };
         QVERIFY(openMenu());
         for (auto *action : menu->actions()) {
@@ -431,14 +480,14 @@ class UiResilienceTests : public QObject {
             QVERIFY(w.grab().save(screenshots + "/selection-window-" + preset + ".png"));
             QVERIFY(menu->grab().save(screenshots + "/selection-menu-" + preset + ".png"));
         }
-        QTest::keyClick(menu, Qt::Key_T);
+        chooseAction("selectAll", Qt::Key_T);
         QTRY_VERIFY(!menu->isVisible());
         QCOMPARE(document->selection.bounds(), QRect(QPoint(), document->state.size));
         QVERIFY(openMenu());
-        QTest::keyClick(menu, Qt::Key_K);
+        chooseAction("deselect", Qt::Key_K);
         QTRY_VERIFY(document->selection.isEmpty());
         QVERIFY(openMenu());
-        QTest::keyClick(menu, Qt::Key_N);
+        chooseAction("reselect", Qt::Key_N);
         QTRY_VERIFY(!document->selection.isEmpty());
         QCOMPARE(document->selection.bounds(), QRect(QPoint(), document->state.size));
         // Esc must leave both document state and subsequent keyboard menu access intact.
@@ -734,10 +783,9 @@ class UiResilienceTests : public QObject {
                 QCOMPARE(QString(cancel->text()).remove('&'), QString("İptal"));
                 QCOMPARE(accept->accessibleName(), verb);
                 QCOMPARE(cancel->accessibleName(), QString("İptal"));
-                QVERIFY(!QKeySequence::mnemonic(accept->text()).isEmpty());
-                QVERIFY(!QKeySequence::mnemonic(cancel->text()).isEmpty());
-                QVERIFY(QKeySequence::mnemonic(accept->text()) !=
-                        QKeySequence::mnemonic(cancel->text()));
+                QVERIFY(hasLabelAccessKey(accept->text()));
+                QVERIFY(hasLabelAccessKey(cancel->text()));
+                QVERIFY(declaredAccessKey(accept->text()) != declaredAccessKey(cancel->text()));
                 QWidget *field = nullptr;
                 if (actionId == "saveSelection") {
                     auto *name = dialog->findChild<QLineEdit *>("savedSelectionName");
@@ -761,8 +809,7 @@ class UiResilienceTests : public QObject {
                 QVERIFY(field->hasFocus());
                 bool buddy = false;
                 for (auto *label : dialog->findChildren<QLabel *>())
-                    buddy |= label->buddy() == field &&
-                             !QKeySequence::mnemonic(label->text()).isEmpty();
+                    buddy |= label->buddy() == field && hasLabelAccessKey(label->text());
                 QVERIFY(buddy);
                 if (escape && !screenshots.isEmpty()) {
                     QVERIFY(QDir().mkpath(screenshots));
@@ -933,8 +980,7 @@ class UiResilienceTests : public QObject {
                 for (auto *field : {x, y}) {
                     bool buddy = false;
                     for (auto *label : dialog->findChildren<QLabel *>())
-                        buddy |= label->buddy() == field &&
-                                 !QKeySequence::mnemonic(label->text()).isEmpty();
+                        buddy |= label->buddy() == field && hasLabelAccessKey(label->text());
                     QVERIFY(buddy);
                 }
                 x->setValue(-12);

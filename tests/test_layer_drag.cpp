@@ -24,6 +24,26 @@ QLineEdit *nameEditor(MainWindow &window) {
             return line;
     return nullptr;
 }
+// Document::updated deliberately schedules the inspector refresh. A fixed sleep
+// can expire before its timer is delivered on a busy runner. Wait for the public
+// history row IDs and layer selection that the same refresh publishes instead.
+void settleLayerRows(MainWindow &window) {
+    QApplication::processEvents();
+    auto *document = window.currentDocument();
+    auto *layers = window.findChild<QListWidget *>("layers");
+    auto *history = window.findChild<QListWidget *>("history");
+    QVERIFY(document && layers && history);
+    QTRY_COMPARE(layers->count(), document->state.layers.size());
+    QTRY_COMPARE(history->count(), document->historyDescriptions().size());
+    const int current = document->currentHistoryIndex();
+    QVERIFY(current >= 0 && current < history->count());
+    QTRY_COMPARE(history->item(current)->data(Qt::UserRole).toULongLong(), document->revision());
+    QTRY_COMPARE(layers->currentRow(), document->state.layers.size() - 1 - document->state.active);
+    // Updating row sizes and scrollbars can enqueue a second layout pass. Drain
+    // it before recording synthetic pointer positions in the resized inspector.
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::LayoutRequest);
+    QApplication::processEvents();
+}
 Document *layerFixture(MainWindow &window) {
     auto *d = new Document;
     d->create({30, 20}, true);
@@ -32,7 +52,10 @@ Document *layerFixture(MainWindow &window) {
     window.addDocument(d);
     window.resize(1000, 720);
     window.show();
-    QTest::qWait(20);
+    window.activateWindow();
+    if (!QTest::qWaitFor([&] { return window.isActiveWindow(); }))
+        QTest::qFail("Layer fixture window did not become active", __FILE__, __LINE__);
+    settleLayerRows(window);
     return d;
 }
 class EditorTeardownProbe : public QObject {
@@ -106,7 +129,7 @@ Document *dragFixture(MainWindow &window) {
     document->addLayer("Middle");
     document->addLayer("Top");
     document->markSaved();
-    QTest::qWait(40);
+    settleLayerRows(window);
     return document;
 }
 } // namespace
@@ -162,7 +185,7 @@ class LayerDragTests : public QObject {
         d->reorderLayer(3, 1);
         d->undo();
         d->markSaved();
-        QTest::qWait(40);
+        settleLayerRows(w);
         const auto revision = d->revision();
         const int history = d->historyDescriptions().size();
         auto result = dragLayer(list, rowDragPoint(list, 0), rowDragPoint(list, 0));
@@ -189,7 +212,7 @@ class LayerDragTests : public QObject {
         d->selection = QRect(1, 2, 6, 5);
         d->markSaved();
         const Layer source = d->state.layers[3];
-        QTest::qWait(40);
+        settleLayerRows(w);
         auto *list = w.findChild<QListWidget *>("layers");
         const auto result = dragLayer(list, rowDragPoint(list, 0), rowDragPoint(list, 2));
         QVERIFY(result.started && result.released);
@@ -214,7 +237,7 @@ class LayerDragTests : public QObject {
         w.addDocument(other);
         auto *tabs = w.findChild<QTabWidget *>("documents");
         tabs->setCurrentWidget(sourceCanvas);
-        QTest::qWait(40);
+        settleLayerRows(w);
         auto *list = w.findChild<QListWidget *>("layers");
         const auto revision = other->revision();
         const auto result = dragLayer(list, rowDragPoint(list, 0), rowDragPoint(list, 2), [&] {
@@ -261,7 +284,7 @@ class LayerDragTests : public QObject {
             d->addLayer(QString("Layer %1").arg(i));
         d->markSaved();
         w.resize(size);
-        QTest::qWait(60);
+        settleLayerRows(w);
         QCOMPARE(w.size(), size);
         auto *list = w.findChild<QListWidget *>("layers");
         auto *scroll = list->verticalScrollBar();
@@ -273,15 +296,28 @@ class LayerDragTests : public QObject {
         QVERIFY(visible.width() > 20 && visible.height() > 20);
         const QPoint point(visible.center().x(), visible.bottom() - 4);
         const auto result = dragLayer(list, rowDragPoint(list, 0), point, {}, true, [&] {
-            QTest::qWait(180);
-            QVERIFY(scroll->value() > 0);
+            QTRY_VERIFY2(scroll->value() > 0,
+                         qPrintable(QString("Autoscroll stalled: initial area %1,%2 %3x%4, current area %5,%6 %7x%8, "
+                                            "hover %9,%10, scroll maximum %11, focus %12, DPR %13")
+                                        .arg(visible.x()).arg(visible.y()).arg(visible.width()).arg(visible.height())
+                                        .arg(list->viewport()->visibleRegion().boundingRect().x())
+                                        .arg(list->viewport()->visibleRegion().boundingRect().y())
+                                        .arg(list->viewport()->visibleRegion().boundingRect().width())
+                                        .arg(list->viewport()->visibleRegion().boundingRect().height())
+                                        .arg(point.x()).arg(point.y()).arg(scroll->maximum())
+                                        .arg(list->hasFocus()).arg(w.devicePixelRatioF())));
             const QImage image = list->viewport()->grab().toImage().convertToFormat(QImage::Format_RGB32);
             const QColor accent = list->palette().color(QPalette::Highlight);
-            for (int y = 0; y < image.height(); ++y) {
+            const qreal imageRatio = image.devicePixelRatio();
+            const QRect visibleRect = list->viewport()->visibleRegion().boundingRect();
+            const QRect visiblePixels = QRectF(QPointF(visibleRect.topLeft()) * imageRatio,
+                                              QSizeF(visibleRect.size()) * imageRatio)
+                                            .toAlignedRect().intersected(image.rect());
+            for (int y = visiblePixels.top(); y <= visiblePixels.bottom(); ++y) {
                 int matching = 0;
-                for (int x = 0; x < image.width(); ++x)
+                for (int x = visiblePixels.left(); x <= visiblePixels.right(); ++x)
                     matching += image.pixelColor(x, y).rgb() == accent.rgb();
-                if (matching > image.width() * .8) {
+                if (matching > visiblePixels.width() * .8) {
                     marker = true;
                     break;
                 }
@@ -325,7 +361,7 @@ class LayerDragTests : public QObject {
         for (int i = 4; i < 20; ++i)
             document->addLayer(QString("Layer %1").arg(i));
         document->markSaved();
-        QTest::qWait(40);
+        settleLayerRows(*window);
         QPointer<QListWidget> list = window->findChild<QListWidget *>("layers");
         QPointer<QWidget> viewport = list->viewport();
         const QPoint start = rowDragPoint(list, 0);
@@ -347,8 +383,7 @@ class LayerDragTests : public QObject {
         QMouseEvent move(QEvent::MouseMove, edge, viewport->mapToGlobal(edge),
                          Qt::NoButton, Qt::LeftButton, Qt::NoModifier);
         QApplication::sendEvent(viewport, &move);
-        QTest::qWait(120);
-        QVERIFY(changed);
+        QTRY_VERIFY(changed);
         if (change == "window-delete") {
             QVERIFY(!window && !document && !list && !viewport);
             QWidget target;
@@ -370,7 +405,7 @@ class LayerDragTests : public QObject {
             d->addLayer(QString("Layer %1").arg(i));
         d->markSaved();
         w.resize(900, 620);
-        QTest::qWait(60);
+        settleLayerRows(w);
         auto *list = w.findChild<QListWidget *>("layers");
         auto *scroll = list->verticalScrollBar();
         const int history = d->historyLabels().size();
@@ -423,7 +458,7 @@ class LayerDragTests : public QObject {
             QCOMPARE(d->state.active, direction > 0 ? 0 : 19);
             QCOMPARE(d->state.layers[d->state.active].name, QString("Layer 19"));
             QCOMPARE(d->historyLabels().size(), history + (direction > 0 ? 1 : 2));
-            QTest::qWait(40);
+            settleLayerRows(w);
             shot(direction > 0 ? "bottom-after" : "top-after");
         }
     }
@@ -435,7 +470,7 @@ class LayerDragTests : public QObject {
             d->addLayer(QString("Layer %1").arg(i));
         d->markSaved();
         w.resize(900, 620);
-        QTest::qWait(60);
+        settleLayerRows(w);
         auto *list = w.findChild<QListWidget *>("layers");
         const auto revision = d->revision();
         const auto names = layerNames(*d);
@@ -539,7 +574,7 @@ class LayerDragTests : public QObject {
         window->addDocument(other);
         auto *tabs = window->findChild<QTabWidget *>("documents");
         tabs->setCurrentWidget(canvas);
-        QTest::qWait(40);
+        settleLayerRows(*window);
         QPointer<QListWidget> list = window->findChild<QListWidget *>("layers");
         QPointer<QWidget> viewport = list->viewport();
         if (kind == "rename") {
@@ -755,7 +790,7 @@ class LayerDragTests : public QObject {
         other->create({20, 10});
         w.addDocument(other);
         tabs->setCurrentWidget(canvas);
-        QTest::qWait(40);
+        settleLayerRows(w);
         QStringList expected;
         quint64 revision = 0;
         const auto result = dragLayer(list, rowDragPoint(list, 0), rowDragPoint(list, 2), {}, true, [&] {
@@ -810,7 +845,7 @@ class LayerDragTests : public QObject {
             other->create({30, 20});
             w.addDocument(other);
             tabs->setCurrentWidget(canvas);
-            QTest::qWait(40);
+            settleLayerRows(w);
         }
         QStringList expected;
         quint64 revision = 0;
@@ -928,7 +963,7 @@ class LayerDragTests : public QObject {
         QCOMPARE(d->state.layers[3].name, QString("Renamed top"));
         d->undo();
         QCOMPARE(d->state.layers[3].name, QString("Top"));
-        QTest::qWait(40);
+        settleLayerRows(w);
         auto *canvas = w.currentCanvas();
         QVERIFY(canvas->beginTransform());
         QTest::keyClick(canvas, Qt::Key_Right);

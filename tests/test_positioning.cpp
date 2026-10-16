@@ -1088,6 +1088,9 @@ class PositioningTests : public QObject {
         QCOMPARE(d->revision(), revision);
         menu.hide();
         text.hide();
+        // Popup dismissal restores activation asynchronously on some platforms.
+        w.activateWindow();
+        QTRY_VERIFY(w.isActiveWindow());
         canvas->setFocus();
         QTRY_VERIFY(canvas->hasFocus());
         QVERIFY(canvas->beginTransform());
@@ -1289,7 +1292,10 @@ class PositioningTests : public QObject {
         for (QWidget *parent = position->parentWidget(); parent && !scroll; parent = parent->parentWidget())
             scroll = qobject_cast<QScrollArea *>(parent);
         QVERIFY(scroll);
-        QVERIFY(scroll->widget()->minimumSizeHint().width() <= scroll->viewport()->width());
+        QVERIFY2(scroll->widget()->minimumSizeHint().width() <= scroll->viewport()->width(),
+                 qPrintable(QString("Inspector minimum width %1 exceeds viewport width %2 (%3)")
+                                .arg(scroll->widget()->minimumSizeHint().width())
+                                .arg(scroll->viewport()->width()).arg(preset)));
         QVERIFY(!position->geometry().intersects(align->geometry()));
         const QString screenshots = qEnvironmentVariable("PHOTODECK_POSITIONING_SCREENSHOTS");
         if (!screenshots.isEmpty()) {

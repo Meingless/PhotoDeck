@@ -1641,6 +1641,36 @@ class TransformTests : public QObject {
         demo->markSaved();
         w.close();
     }
+    void onCanvasCompactButtonsWrapWithoutClipping() {
+        for (bool rulers : {false, true}) {
+            Document d;
+            transformFixture(d);
+            Canvas c(&d);
+            prepare(c);
+            c.showRulers = rulers;
+            c.resize(180, 100);
+            c.fit();
+            // Model native styles whose honest button hints exceed a single
+            // compact row, without depending on the machine's default font.
+            for (const auto *id : {"transformNumeric", "transformCancel", "transformApply"})
+                c.findChild<QToolButton *>(id)->setStyleSheet(
+                    "min-width:50px; padding:6px 9px; font-size:11px;");
+            QVERIFY(c.beginTransform());
+            auto *controls = c.findChild<QWidget *>("transformControls");
+            auto *numeric = c.findChild<QToolButton *>("transformNumeric");
+            auto *cancel = c.findChild<QToolButton *>("transformCancel");
+            auto *apply = c.findChild<QToolButton *>("transformApply");
+            QVERIFY(c.rect().contains(controls->geometry()));
+            QVERIFY(numeric->y() < cancel->y());
+            QCOMPARE(cancel->y(), apply->y());
+            for (auto *button : {numeric, cancel, apply}) {
+                QVERIFY(controls->rect().contains(button->geometry()));
+                QVERIFY(button->width() >= button->sizeHint().width());
+                QVERIFY(button->height() >= button->sizeHint().height());
+            }
+            c.cancelTransform();
+        }
+    }
     void perspectiveTabStartsFromLastPreview() {
         Document d;
         d.create({60, 40});
@@ -1664,24 +1694,29 @@ class TransformTests : public QObject {
         QTest::addColumn<QString>("preset");
         QTest::addColumn<bool>("largeUi");
         QTest::addColumn<bool>("squeezeDock");
+        QTest::addColumn<bool>("layersOnLeft");
         for (const auto &preset : uiPresets()) {
-            QTest::newRow(qPrintable(preset.id)) << preset.id << false << false;
-            QTest::newRow(qPrintable(preset.id + "-large-ui")) << preset.id << true << false;
+            QTest::newRow(qPrintable(preset.id)) << preset.id << false << false << false;
+            QTest::newRow(qPrintable(preset.id + "-large-ui")) << preset.id << true << false << false;
         }
-        QTest::newRow("graphite-wide-dock") << QString("graphite") << false << true;
-        QTest::newRow("touch-wide-dock") << QString("touch") << false << true;
-        QTest::newRow("touch-large-ui-wide-dock") << QString("touch") << true << true;
+        QTest::newRow("focus-large-ui-layers-left") << QString("focus") << true << false << true;
+        QTest::newRow("graphite-wide-dock") << QString("graphite") << false << true << false;
+        QTest::newRow("touch-wide-dock") << QString("touch") << false << true << false;
+        QTest::newRow("touch-large-ui-wide-dock") << QString("touch") << true << true << false;
     }
     void onCanvasMinimumWindowViewportContainsControls() {
         QFETCH(QString, preset);
         QFETCH(bool, largeUi);
         QFETCH(bool, squeezeDock);
+        QFETCH(bool, layersOnLeft);
         MainWindow w(false, false);
         auto *d = new Document;
         d->makeDemo();
         d->state.active = 2;
         w.addDocument(d);
         UiSettings settings = UiSettings::forPreset(preset);
+        if (layersOnLeft)
+            settings.panelSide = "left";
         if (largeUi) {
             settings.panelWidth = 440;
             settings.toolLabels = true;
@@ -1715,6 +1750,16 @@ class TransformTests : public QObject {
                 QVERIFY2(ancestor->rect().contains(controlsBounds),
                          qPrintable(preset + " controls extend beyond " +
                                     ancestor->metaObject()->className()));
+            }
+            if (preset == "focus") {
+                auto *workspace = w.findChild<QWidget *>("workspace");
+                const QRect canvasBounds(canvas->mapTo(workspace, QPoint()), canvas->size());
+                for (const auto *id : {"floatingTools", "floatingLayers"}) {
+                    auto *panel = w.findChild<QWidget *>(id);
+                    QVERIFY(panel && panel->isVisible());
+                    QVERIFY(workspace->rect().contains(panel->geometry()));
+                    QVERIFY(!canvasBounds.intersects(panel->geometry()));
+                }
             }
             for (const auto *id : {"transformNumeric", "transformCancel", "transformApply"}) {
                 auto *button = canvas->findChild<QToolButton *>(id);

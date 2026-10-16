@@ -335,9 +335,8 @@ class HistoryNavigationTests : public QObject {
         auto *d = fixture(w);
         for (int i = 0; i < 27; ++i)
             paint(*d, QColor(i + 1, 30, 40), QString("Step %1").arg(i));
-        QTest::qWait(40);
         auto *list = history(w);
-        QCOMPARE(list->count(), 30);
+        QTRY_COMPARE(list->count(), 30);
         const quint64 id = list->item(4)->data(Qt::UserRole).toULongLong();
         paint(*d, Qt::yellow, "Trim before refresh");
         QCOMPARE(list->item(4)->data(Qt::UserRole).toULongLong(), id);
@@ -351,8 +350,8 @@ class HistoryNavigationTests : public QObject {
         auto *d = fixture(w);
         for (int i = 0; i < 27; ++i)
             paint(*d, QColor(i + 1, 30, 40), QString("Step %1").arg(i));
-        QTest::qWait(40);
         auto *list = history(w);
+        QTRY_COMPARE(list->count(), 30);
         const quint64 stale = list->item(0)->data(Qt::UserRole).toULongLong();
         paint(*d, Qt::yellow, "Trim");
         const quint64 current = d->revision();

@@ -63,21 +63,23 @@ class MainWindow : public QMainWindow {
     bool eventFilter(QObject *, QEvent *) override;
 
   private:
-    QTabWidget *tabs;
+    QTabWidget *tabs = nullptr;
     QWidget *workspace = nullptr;
     QFrame *floatingTools = nullptr, *floatingLayers = nullptr;
     QToolButton *toolsHandle = nullptr, *layersHandle = nullptr;
-    QToolBar *documentToolbar, *optionsToolbar, *toolsBar, *ribbonToolbar;
-    QDockWidget *toolsDock, *colorDock, *layersDock, *historyDock, *filmDock, *brushDock;
-    QWidget *layerPanel;
+    QToolBar *documentToolbar = nullptr, *optionsToolbar = nullptr, *toolsBar = nullptr,
+             *ribbonToolbar = nullptr;
+    QDockWidget *toolsDock = nullptr, *colorDock = nullptr, *layersDock = nullptr,
+                *historyDock = nullptr, *filmDock = nullptr, *brushDock = nullptr;
+    QWidget *layerPanel = nullptr;
     QWidget *toolPalette = nullptr;
     QGridLayout *toolGrid = nullptr;
     QScrollArea *toolScroll = nullptr;
     QVector<QToolButton *> toolButtons;
-    QLabel *brandLabel;
-    QListWidget *filmstrip;
-    QComboBox *presetPicker;
-    QMenu *presetMenu, *userPresetMenu;
+    QLabel *brandLabel = nullptr;
+    QListWidget *filmstrip = nullptr;
+    QComboBox *presetPicker = nullptr;
+    QMenu *presetMenu = nullptr, *userPresetMenu = nullptr;
     QVector<QPair<QString, UiSettings>> userPresets;
     UiSettings appearance;
     bool persistSettings = true, applyingAppearance = false;
@@ -103,19 +105,19 @@ class MainWindow : public QMainWindow {
     QDockWidget *createDock(const QString &, const QString &, QWidget *);
     void queueUiSave();
     void syncPanelActions();
-    QListWidget *layers, *history = nullptr;
+    QListWidget *layers = nullptr, *history = nullptr;
     QPointer<Document> historyDocument;
     void refreshHistory();
     bool navigateHistory(Document *document, quint64 revision);
-    QComboBox *blend;
-    QSlider *opacity, *brightness, *contrast, *saturation;
-    QSpinBox *sizeInput, *hardnessInput, *brushOpacityInput;
-    QComboBox *selectionModeInput;
-    QSpinBox *selectionToleranceInput;
-    QCheckBox *contiguousSelectionInput;
-    QToolButton *colorButton, *maskButton;
-    QLabel *info, *status, *zoomLabel, *layerDetails;
-    Histogram *histogram;
+    QComboBox *blend = nullptr;
+    QSlider *opacity = nullptr, *brightness = nullptr, *contrast = nullptr, *saturation = nullptr;
+    QSpinBox *sizeInput = nullptr, *hardnessInput = nullptr, *brushOpacityInput = nullptr;
+    QComboBox *selectionModeInput = nullptr;
+    QSpinBox *selectionToleranceInput = nullptr;
+    QCheckBox *contiguousSelectionInput = nullptr;
+    QToolButton *colorButton = nullptr, *maskButton = nullptr;
+    QLabel *info = nullptr, *status = nullptr, *zoomLabel = nullptr, *layerDetails = nullptr;
+    Histogram *histogram = nullptr;
     QTimer refreshTimer, autosaveTimer, recoverySaveTimer;
     struct PreviewCache {
         QByteArray compositeKey;

@@ -12,12 +12,20 @@
 #include <QTemporaryDir>
 #include <QtTest>
 #include <atomic>
+#include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
 #include <limits>
 #include <memory>
 #include <thread>
+
+#ifdef Q_OS_WIN
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#endif
 
 using RecoveryIdentity = RecoveryFiles::Internal::Identity;
 Q_DECLARE_METATYPE(RecoveryIdentity)
@@ -35,6 +43,40 @@ bool writeFile(const QString &path, const QByteArray &data) {
 QByteArray readFile(const QString &path) {
     QFile file(path);
     return file.open(QIODevice::ReadOnly) ? file.readAll() : QByteArray();
+}
+
+bool readReplaceableFile(const QString &path, QByteArray *bytes) {
+#ifdef Q_OS_WIN
+    // Atomic replacement requires readers to share delete access on Windows.
+    // Ordinary QFile readers deliberately deny that operation; checked below.
+    const auto native = QDir::toNativeSeparators(path).toStdWString();
+    HANDLE handle = CreateFileW(native.c_str(), GENERIC_READ,
+                                FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                                nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (handle == INVALID_HANDLE_VALUE)
+        return false;
+    bytes->clear();
+    char buffer[65536];
+    DWORD count = 0;
+    bool success = true;
+    while (true) {
+        if (!ReadFile(handle, buffer, sizeof(buffer), &count, nullptr)) {
+            success = false;
+            break;
+        }
+        if (!count)
+            break;
+        bytes->append(buffer, qsizetype(count));
+    }
+    CloseHandle(handle);
+    return success;
+#else
+    QFile file(path);
+    if (!file.open(QIODevice::ReadOnly))
+        return false;
+    *bytes = file.readAll();
+    return file.error() == QFileDevice::NoError;
+#endif
 }
 
 QString ownerPath(const QString &staging) {
@@ -331,12 +373,11 @@ class RecoveryFilesTests : public QObject {
         std::thread reader([&] {
             ready.store(true);
             while (!stop.load()) {
-                QFile file(destination);
-                if (!file.open(QIODevice::ReadOnly)) {
+                QByteArray bytes;
+                if (!readReplaceableFile(destination, &bytes)) {
                     invalid.store(true);
                     break;
                 }
-                const QByteArray bytes = file.readAll();
                 if (bytes != oldData && bytes != newData) {
                     invalid.store(true);
                     break;
@@ -357,6 +398,20 @@ class RecoveryFilesTests : public QObject {
         QVERIFY2(published, qPrintable(error));
         QVERIFY(reads.load() > 0);
         QVERIFY(!invalid.load());
+#ifdef Q_OS_WIN
+        // A non-sharing reader must fail closed, retaining both complete files.
+        QFile held(destination);
+        QVERIFY(held.open(QIODevice::ReadOnly));
+        const QByteArray previous = held.readAll();
+        QVERIFY(writeFile(staging, newData));
+        QVERIFY(!RecoveryFiles::atomicReplace(staging, destination, &error));
+        QVERIFY(!error.isEmpty());
+        QCOMPARE(readFile(staging), newData);
+        QCOMPARE(readFile(destination), previous);
+        held.close();
+        QVERIFY2(RecoveryFiles::atomicReplace(staging, destination, &error), qPrintable(error));
+        QCOMPARE(readFile(destination), newData);
+#endif
     }
 
     void sessionsOwnUniqueFlatNamespacesAndRemoveOnlyTheirStages() {
@@ -406,11 +461,14 @@ class RecoveryFilesTests : public QObject {
         const QString staging = foreign.stagingPath(1);
         QVERIFY(writeFile(staging, "active-stage"));
         QVERIFY(writeFile(foreign.recoveryPath(1), "active-final"));
-        QFile lock(ownerPath(staging));
-        QVERIFY(lock.open(QIODevice::ReadWrite));
-        QVERIFY(lock.setFileTime(QDateTime::currentDateTimeUtc().addDays(-7),
-                                 QFileDevice::FileModificationTime));
-        lock.close();
+        // Change metadata without requesting data-write access to a live
+        // Windows QLockFile, which correctly denies a second writer.
+        const QFile lock(ownerPath(staging));
+        std::error_code timeError;
+        const auto oldTime = std::filesystem::file_time_type::clock::now() - std::chrono::hours(24 * 7);
+        std::filesystem::last_write_time(lock.filesystemFileName(), oldTime, timeError);
+        QVERIFY2(!timeError, timeError.message().c_str());
+        QVERIFY(QFileInfo(lock.fileName()).lastModified() < QDateTime::currentDateTimeUtc().addDays(-6));
         RecoveryFiles::Session own(directory.path());
         QVERIFY(own.valid());
         QCOMPARE(readFile(staging), QByteArray("active-stage"));

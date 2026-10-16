@@ -675,8 +675,8 @@ class LayerOpsTests : public QObject {
         QVERIFY(d->addMask(&error));
         w.findChild<QAction *>("lock")->trigger();
         auto *list = w.findChild<QListWidget *>("layers");
-        QTest::qWait(40);
-        QVERIFY(list->item(0)->text().contains("Metin"));
+        QTRY_VERIFY(list->count() == d->state.layers.size() &&
+                    list->item(0)->text().contains("Metin"));
         QVERIFY(list->item(0)->text().contains("Maske"));
         QVERIFY(list->item(0)->text().contains("Kilitli"));
         QVERIFY(list->item(0)->toolTip().contains("Ad ve görünürlük"));
@@ -747,7 +747,11 @@ class LayerOpsTests : public QObject {
                     readableText += qAbs(qRed(row.pixel(x, y)) - qRed(textColor)) < 30 &&
                                     qAbs(qGreen(row.pixel(x, y)) - qGreen(textColor)) < 30 &&
                                     qAbs(qBlue(row.pixel(x, y)) - qBlue(textColor)) < 30;
-            QVERIFY2(readableText > 4, qPrintable(preset.id));
+            QVERIFY2(readableText > 4,
+                     qPrintable(QString("%1 readable=%2 row=%3x%4 viewport=%5x%6")
+                                    .arg(preset.id).arg(readableText)
+                                    .arg(row.width()).arg(row.height())
+                                    .arg(list->viewport()->width()).arg(list->viewport()->height())));
             w.findChild<QAction *>("ui.panel.layers")->setChecked(false);
             QVERIFY(!list->isVisible());
             w.findChild<QAction *>("rename")->trigger();

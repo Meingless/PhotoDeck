@@ -73,6 +73,68 @@ QByteArray v6FromV5(QByteArray bytes, const QByteArray &extension) {
     bytes[7] = 6;
     return bytes + extension;
 }
+// Read the released v5 field layout, preserving every non-image byte exactly.
+// Embedded PNGs are decoded/re-encoded on this runtime: compatible PNG encoders
+// can produce different compressed bytes for identical pixels and metadata.
+QByteArray canonicalV5Images(const QByteArray &bytes) {
+    QDataStream in(bytes);
+    in.setVersion(QDataStream::Qt_6_2);
+    quint32 magic = 0, version = 0;
+    QSize size;
+    qint32 active = 0, count = 0;
+    in >> magic >> version >> size >> active >> count;
+    if (in.status() != QDataStream::Ok || magic != 0x50444543 || version != 5 || count < 1 ||
+        count > 64)
+        return {};
+    QByteArray result;
+    QDataStream out(&result, QIODevice::WriteOnly);
+    out.setVersion(QDataStream::Qt_6_2);
+    qint64 metadataStart = 0;
+    for (int i = 0; i < count; ++i) {
+        QString name, text, font;
+        QPoint offset;
+        bool visible = false, locked = false, clipped = false;
+        double opacity = 0;
+        qint32 blend = 0, brightness = 0, contrast = 0, saturation = 0, blur = 0;
+        QColor color;
+        QTransform geometry;
+        ToneSettings tones;
+        FilterSettings filters;
+        MaskSettings maskSettings;
+        in >> name >> offset >> visible >> locked >> opacity >> blend >> brightness >> contrast >>
+            saturation >> blur >> text >> font >> color;
+        if (!ToneSettings::read(in, tones))
+            return {};
+        in >> geometry >> clipped;
+        if (!FilterSettings::read(in, filters) || !MaskSettings::read(in, maskSettings))
+            return {};
+        const qint64 metadataEnd = in.device()->pos();
+        if (out.writeRawData(bytes.constData() + metadataStart, metadataEnd - metadataStart) !=
+            metadataEnd - metadataStart)
+            return {};
+        for (int imageIndex = 0; imageIndex < 2; ++imageIndex) {
+            quint32 length = 0;
+            in >> length;
+            if (in.status() != QDataStream::Ok || length > in.device()->bytesAvailable())
+                return {};
+            QByteArray png(length, Qt::Uninitialized);
+            if (in.readRawData(png.data(), length) != qint64(length))
+                return {};
+            QImage image;
+            if (length) {
+                image = QImage::fromData(png, "PNG");
+                if (image.isNull())
+                    return {};
+                image = image.convertToFormat(QImage::Format_ARGB32_Premultiplied);
+            }
+            out << image;
+        }
+        metadataStart = in.device()->pos();
+    }
+    return in.status() == QDataStream::Ok && in.device()->atEnd() && out.status() == QDataStream::Ok
+               ? result
+               : QByteArray();
+}
 } // namespace
 
 class SelectionWorkflowTests : public QObject {
@@ -385,6 +447,8 @@ class SelectionWorkflowTests : public QObject {
         const QString fixture = QFINDTESTDATA("fixtures/v5-demo.pdeck");
         QVERIFY(!fixture.isEmpty() && QFile::copy(fixture, original));
         const QByteArray baseline = contents(original);
+        const QByteArray compatibleBaseline = canonicalV5Images(baseline);
+        QVERIFY(!compatibleBaseline.isEmpty());
         Document d;
         QString error;
         QVERIFY2(d.load(original, &error), qPrintable(error));
@@ -394,7 +458,8 @@ class SelectionWorkflowTests : public QObject {
         QVERIFY(d.setSelection(Selection(3, 4, 12, 10)));
         QVERIFY(!d.dirty);
         QVERIFY2(d.save(original, &error), qPrintable(error));
-        QCOMPARE(contents(original), baseline); // Released v5 layer serialization is unchanged.
+        const QByteArray savedV5 = contents(original);
+        QCOMPARE(canonicalV5Images(savedV5), compatibleBaseline);
         const Selection feather = Selection(8, 9, 20, 20).feathered(3, d.state.size);
         QVERIFY(d.setSelection(feather));
         QVERIFY(d.saveSelection("Feather", &error));
@@ -408,7 +473,7 @@ class SelectionWorkflowTests : public QObject {
         QVERIFY(!d.save(original, &error));
         QCOMPARE(d.lastSaveStatus(), Document::SaveStatus::FormatUpgradeRequired);
         QVERIFY(before.matches(d));
-        QCOMPARE(contents(original), baseline);
+        QCOMPARE(contents(original), savedV5); // Rejected upgrades must preserve exact disk bytes.
         QVERIFY2(d.save(copy, &error), qPrintable(error));
         QCOMPARE(d.sourceVersion(), 6);
         Document reopened;
@@ -428,7 +493,8 @@ class SelectionWorkflowTests : public QObject {
         QVERIFY(!reopened.requiresFormatUpgrade(copy));
         QVERIFY(reopened.save(copy, &error));
         QCOMPARE(reopened.sourceVersion(), 5);
-        QCOMPARE(contents(copy), baseline);
+        QCOMPARE(canonicalV5Images(contents(copy)), compatibleBaseline);
+        QCOMPARE(contents(fixture), baseline);
     }
     void recoveryContextIsExplicitAndDoesNotAdoptSnapshot() {
         Document d;

@@ -123,12 +123,17 @@ class LayerNameDelegate : public QStyledItemDelegate {
         const QRect textRect = style->subElementRect(QStyle::SE_ItemViewItemText, &row, row.widget);
         row.text.clear();
         style->drawControl(QStyle::CE_ItemViewItem, &row, painter, row.widget);
+        QFont nameFont = row.font;
+        // At Compact's 11 px size, thin hinted strokes can fade into the
+        // selection tint on some system fonts. Keep the editable name distinct.
+        if (nameFont.pixelSize() > 0 && nameFont.pixelSize() <= 11)
+            nameFont.setWeight(QFont::DemiBold);
         QFont small = row.font;
         if (small.pixelSize() > 0)
             small.setPixelSize(qMax(9, small.pixelSize() - 1));
         else
             small.setPointSizeF(qMax(7.0, small.pointSizeF() - 1));
-        const QFontMetrics mainMetrics(row.font), smallMetrics(small);
+        const QFontMetrics mainMetrics(nameFont), smallMetrics(small);
         const int height = mainMetrics.height() + smallMetrics.height() + 2;
         QRect nameRect = textRect;
         nameRect.setTop(textRect.center().y() - height / 2);
@@ -140,7 +145,7 @@ class LayerNameDelegate : public QStyledItemDelegate {
         const QColor foreground = row.palette.color(QPalette::WindowText);
         painter->save();
         painter->setClipRect(option.rect);
-        painter->setFont(row.font);
+        painter->setFont(nameFont);
         painter->setPen(foreground);
         painter->drawText(nameRect, Qt::AlignLeft | Qt::AlignVCenter,
                           mainMetrics.elidedText(index.data(LayerNameRole).toString(),
@@ -1960,6 +1965,10 @@ void MainWindow::buildInspector() {
     layout->setSpacing(10);
     blend = new QComboBox;
     blend->addItems(Blending::names());
+    // The popup can show long mode names without forcing the whole inspector
+    // wider than its scroll viewport on native Windows fonts.
+    blend->setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon);
+    blend->setMinimumContentsLength(6);
     blend->setObjectName("blendMode");
     blend->setAccessibleName("Katman karışım modu");
     layout->addWidget(row(new QLabel("Karışım"), blend));
@@ -4155,9 +4164,10 @@ void MainWindow::applyUiSettings(const UiSettings &settings, bool resetLayout, b
             const auto *scroll = qobject_cast<QScrollArea *>(colorDock->widget());
             scroll->widget()->ensurePolished();
             scroll->widget()->layout()->activate();
-            const int titleHeight =
-                colorDock->minimumSizeHint().height() - scroll->minimumSizeHint().height();
-            const int colorHeight = scroll->widget()->minimumSizeHint().height() + titleHeight;
+            // Size the actual viewport, including native dock decorations and
+            // any scroll-area frame, rather than subtracting unrelated hints.
+            const int frameHeight = colorDock->height() - scroll->viewport()->height();
+            const int colorHeight = scroll->widget()->minimumSizeHint().height() + frameHeight;
             const int layerHeight = qMax(layersDock->minimumSizeHint().height(),
                                         colorDock->height() + layersDock->height() - colorHeight);
             resizeDocks({colorDock, layersDock}, {colorHeight, layerHeight},
@@ -4359,9 +4369,16 @@ void MainWindow::positionOverlays() {
     const QSize toolsSize(toolWidth,
                           qMin(h - 24, toolPalette->sizeHint().height() +
                                             toolsHandle->sizeHint().height() + 24));
-    const QSize layerSize(qMin(appearance.panelWidth, qMax(220, w / 2 - 40)), h - 24);
-    const bool layersOnLeft = appearance.panelSide == "left";
     const int toolsMargin = appearance.focusToolsVisible ? toolsSize.width() + 24 : 8;
+    // Large, labelled tools and a wide inspector share the same horizontal
+    // budget. Reserve the tab viewport's minimum before sizing the inspector;
+    // otherwise QStackedWidget can become narrower than its canvas child.
+    const int viewportMinimum = qMax(tabs->minimumWidth(), tabs->minimumSizeHint().width());
+    const int layerWidth = qMin(appearance.panelWidth, qMax(220, w / 2 - 40));
+    const int layerBudget = qMax(0, w - toolsMargin - 24 - viewportMinimum);
+    const QSize layerSize(appearance.focusLayersVisible ? qMin(layerWidth, layerBudget) : layerWidth,
+                          h - 24);
+    const bool layersOnLeft = appearance.panelSide == "left";
     const int layersMargin = appearance.focusLayersVisible ? layerSize.width() + 24 : 8;
     // Keep the artwork in its own viewport. Floating panels can still be moved by the user.
     workspace->layout()->setContentsMargins(layersOnLeft ? layersMargin : toolsMargin, 0,

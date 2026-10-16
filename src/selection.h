@@ -9,7 +9,8 @@
 // an active, all-zero mask means no pixels may be edited. Keep these states distinct.
 class Selection {
   public:
-    enum Mode { Replace, Add, Subtract, Intersect };
+    // Keep unsupported integer values defined so callers can validate/reject them.
+    enum Mode : int { Replace, Add, Subtract, Intersect };
     Selection() = default;
     Selection(QRect rectangle) : rectangle(rectangle) {}
     Selection(int x, int y, int w, int h) : rectangle(x, y, w, h) {}

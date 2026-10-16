@@ -4,6 +4,7 @@
 #include <QDialogButtonBox>
 #include <QFocusEvent>
 #include <QFrame>
+#include <QGridLayout>
 #include <QHBoxLayout>
 #include <QKeyEvent>
 #include <QLabel>
@@ -72,12 +73,12 @@ Canvas::Canvas(Document *d, QWidget *parent) : QWidget(parent), document(d), key
     auto *controlsLayout = new QVBoxLayout(transformControls);
     controlsLayout->setContentsMargins(12, 9, 12, 9);
     controlsLayout->setSpacing(5);
-    auto *buttons = new QHBoxLayout;
+    auto *buttons = new QGridLayout;
     buttons->setSpacing(6);
     transformCaption = new QLabel("DÖNÜŞTÜR");
     transformCaption->setObjectName("transformCaption");
-    buttons->addWidget(transformCaption);
-    buttons->addStretch();
+    buttons->addWidget(transformCaption, 0, 0);
+    buttons->setColumnStretch(1, 1);
     auto button = [buttons](QString name, QString text, QString help) {
         auto *control = new QToolButton;
         control->setObjectName(name);
@@ -85,7 +86,7 @@ Canvas::Canvas(Document *d, QWidget *parent) : QWidget(parent), document(d), key
         control->setToolTip(help);
         control->setAccessibleName(help);
         control->setFocusPolicy(Qt::NoFocus);
-        buttons->addWidget(control);
+        buttons->addWidget(control, 0, buttons->columnCount());
         return control;
     };
     transformNumeric = button("transformNumeric", "Sayısal…",
@@ -1341,11 +1342,51 @@ void Canvas::positionTransformControls() {
         return;
     const int available = qMax(180, width() - 32);
     const int controlsWidth = qMin(540, available);
-    const bool compact = controlsWidth < 390;
-    transformCaption->setVisible(!compact);
-    transformNumeric->setText(compact ? "123" : "Sayısal…");
-    transformCancel->setText(compact ? "×" : "İptal · Esc");
-    transformApply->setText(compact ? "✓" : "Uygula ↵");
+    auto *buttons = qobject_cast<QGridLayout *>(transformControls->layout()->itemAt(0)->layout());
+    const auto setButtonRows = [&](bool twoRows) {
+        if (buttons->property("twoRows").toBool() == twoRows)
+            return;
+        while (auto *item = buttons->takeAt(0))
+            delete item;
+        for (int i = 0; i < 5; ++i)
+            buttons->setColumnStretch(i, 0);
+        if (twoRows) {
+            buttons->addWidget(transformNumeric, 0, 0, 1, 2);
+            buttons->addWidget(transformCancel, 1, 0);
+            buttons->addWidget(transformApply, 1, 1);
+        } else {
+            buttons->addWidget(transformCaption, 0, 0);
+            buttons->setColumnStretch(1, 1);
+            buttons->addWidget(transformNumeric, 0, 2);
+            buttons->addWidget(transformCancel, 0, 3);
+            buttons->addWidget(transformApply, 0, 4);
+        }
+        buttons->setProperty("twoRows", twoRows);
+    };
+    setButtonRows(false);
+    const auto setButtonLabels = [&](bool compact) {
+        transformCaption->setVisible(!compact);
+        transformNumeric->setText(compact ? "123" : "Sayısal…");
+        transformCancel->setText(compact ? "×" : "İptal · Esc");
+        transformApply->setText(compact ? "✓" : "Uygula ↵");
+        for (auto *button : {transformNumeric, transformCancel, transformApply}) {
+            button->ensurePolished();
+            // Native styles may offer a smaller minimumSizeHint than the
+            // complete label needs. Never let the row elide an action button.
+            button->setMinimumSize(button->sizeHint());
+        }
+    };
+    setButtonLabels(controlsWidth < 390);
+    const auto rowWidth = [&] {
+        const auto margins = transformControls->layout()->contentsMargins();
+        return buttons->minimumSize().width() + margins.left() + margins.right();
+    };
+    if (!transformCaption->isHidden() && rowWidth() > controlsWidth)
+        setButtonLabels(true);
+    // Compact glyphs still have native-style padding. On a very narrow
+    // viewport give the numeric action its own row instead of clipping labels.
+    if (rowWidth() > controlsWidth)
+        setButtonRows(true);
     const qreal top = showRulers ? 36 : 12;
     const bool showInfo = controlsWidth >= 300 && height() >= top + 76 + 12;
     transformInfo->setVisible(showInfo);
@@ -1372,7 +1413,10 @@ void Canvas::positionTransformControls() {
             y = below;
         else if (above >= top)
             y = above;
-        const int minY = qRound(top), maxY = qMax(minY, height() - controlsHeight - 12);
+        // A native-style two-row fallback may consume the bottom gutter in a
+        // short viewport. Keep the whole panel in the canvas before adding gaps.
+        const int minY = qMin(qRound(top), qMax(0, height() - controlsHeight));
+        const int maxY = qMax(minY, height() - controlsHeight - 12);
         const int maxX = width() - controlsWidth, centerX = maxX / 2;
         const int preferredY = qBound(minY, qRound(y), maxY);
         QVector<int> columns{centerX, qMin(16, maxX), qMax(0, maxX - 16), 0, maxX};
