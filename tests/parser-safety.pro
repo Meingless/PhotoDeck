@@ -7,3 +7,7 @@ HEADERS += ../src/document.h ../src/canvas.h ../src/mainwindow.h ../src/appearan
 INCLUDEPATH += ../src
 RESOURCES += ../resources.qrc
 msvc:QMAKE_CXXFLAGS += /utf-8
+
+CONFIG += thread
+SOURCES += ../src/recoverymanager.cpp ../src/recoveryfiles.cpp
+HEADERS += ../src/recoverymanager.h ../src/recoveryfiles.h

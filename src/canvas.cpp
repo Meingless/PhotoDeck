@@ -1,23 +1,123 @@
 #include "canvas.h"
+#include "transformdialog.h"
 #include <QBitArray>
+#include <QDialogButtonBox>
 #include <QFocusEvent>
+#include <QFrame>
+#include <QHBoxLayout>
 #include <QKeyEvent>
+#include <QLabel>
 #include <QMouseEvent>
 #include <QPainterPath>
+#include <QPushButton>
 #include <QRadialGradient>
 #include <QTabletEvent>
+#include <QToolButton>
+#include <QVBoxLayout>
 #include <QWheelEvent>
 #include <QtMath>
 #include <cmath>
+#include <limits>
 
-Canvas::Canvas(Document *d, QWidget *parent) : QWidget(parent), document(d) {
+namespace {
+double relativeLuminance(QColor color) {
+    const auto linear = [](double channel) {
+        return channel <= .04045 ? channel / 12.92 : std::pow((channel + .055) / 1.055, 2.4);
+    };
+    return .2126 * linear(color.redF()) + .7152 * linear(color.greenF()) +
+           .0722 * linear(color.blueF());
+}
+double contrastRatio(QColor first, QColor second) {
+    const double a = relativeLuminance(first), b = relativeLuminance(second);
+    return (qMax(a, b) + .05) / (qMin(a, b) + .05);
+}
+QColor readableOverlayText(QColor preferred, QColor surface) {
+    // Stylesheets render 8-bit RGB values; evaluate the exact colors they will paint.
+    preferred = QColor(preferred.name());
+    surface = QColor(surface.name());
+    // Keep the established palette, including Focus, whenever it meets WCAG AA for small text.
+    // Only the foreground changes; custom accent and surface colors remain exactly as chosen.
+    if (contrastRatio(preferred, surface) >= 4.5)
+        return preferred;
+    return contrastRatio(Qt::black, surface) >= contrastRatio(Qt::white, surface)
+               ? QColor(Qt::black)
+               : QColor(Qt::white);
+}
+bool matchesTransformTarget(const Document *target, int layer, quint64 revision, QSize canvasSize,
+                            qsizetype layerCount, const Layer &source) {
+    if (!target || target->isEditing() || target->revision() != revision ||
+        target->state.size != canvasSize || target->state.layers.size() != layerCount ||
+        target->state.active != layer || layer < 0 || layer >= target->state.layers.size())
+        return false;
+    const Layer &a = target->state.layers[layer], &b = source;
+    return a.pixels.cacheKey() == b.pixels.cacheKey() && a.mask.cacheKey() == b.mask.cacheKey() &&
+           a.geometry == b.geometry && a.offset == b.offset && a.visible == b.visible &&
+           a.locked == b.locked && a.clipped == b.clipped && a.opacity == b.opacity &&
+           a.blend == b.blend && a.brightness == b.brightness && a.contrast == b.contrast &&
+           a.saturation == b.saturation && a.blur == b.blur && a.tones == b.tones &&
+           a.filters == b.filters && a.maskSettings == b.maskSettings && a.text == b.text &&
+           a.font == b.font && a.color == b.color;
+}
+} // namespace
+
+Canvas::Canvas(Document *d, QWidget *parent) : QWidget(parent), document(d), keyboardDocument(d) {
     setFocusPolicy(Qt::StrongFocus);
     setMouseTracking(true);
-    setMinimumSize(220, 220);
+    // Leave room for compact controls without overrunning the short tab viewport
+    // above Touch's bottom dock at the supported minimum window size.
+    setMinimumSize(180, 100);
     setObjectName("canvas");
+    transformControls = new QFrame(this);
+    transformControls->setObjectName("transformControls");
+    auto *controlsLayout = new QVBoxLayout(transformControls);
+    controlsLayout->setContentsMargins(12, 9, 12, 9);
+    controlsLayout->setSpacing(5);
+    auto *buttons = new QHBoxLayout;
+    buttons->setSpacing(6);
+    transformCaption = new QLabel("DÖNÜŞTÜR");
+    transformCaption->setObjectName("transformCaption");
+    buttons->addWidget(transformCaption);
+    buttons->addStretch();
+    auto button = [buttons](QString name, QString text, QString help) {
+        auto *control = new QToolButton;
+        control->setObjectName(name);
+        control->setText(text);
+        control->setToolTip(help);
+        control->setAccessibleName(help);
+        control->setFocusPolicy(Qt::NoFocus);
+        buttons->addWidget(control);
+        return control;
+    };
+    transformNumeric = button("transformNumeric", "Sayısal…",
+                              "Sayısal dönüşüm (Ctrl+Alt+T): ölçek, açı, eğme, aynalama ve perspektif");
+    transformCancel = button("transformCancel", "İptal · Esc", "Dönüşümü iptal et (Esc)");
+    transformApply = button("transformApply", "Uygula ↵", "Dönüşümü uygula (Enter)");
+    controlsLayout->addLayout(buttons);
+    transformInfo = new QLabel;
+    transformInfo->setObjectName("transformInfo");
+    transformInfo->setWordWrap(true);
+    controlsLayout->addWidget(transformInfo);
+    transformControls->hide();
+    connect(transformApply, &QToolButton::clicked, this, &Canvas::applyTransform);
+    connect(transformCancel, &QToolButton::clicked, this, &Canvas::cancelTransform);
+    connect(transformNumeric, &QToolButton::clicked, this, &Canvas::showNumericTransform);
+    setUiColors(canvasColor, rulerColor, rulerText, accentColor);
+    connect(d, &QObject::destroyed, this, [this] { endKeyboardNudge(); });
     connect(d, &Document::updated, this, [this] {
+        if (!applyingNudge || ++nudgeUpdates != 1)
+            endKeyboardNudge();
+        else
+            nudgeUpdateRevision = keyboardDocument ? keyboardDocument->revision() : 0;
         cacheDirty = true;
         update();
+        // A preview belongs to one unchanged layer. Refresh/focus alone never dismisses it.
+        if (transformActive && !transformSourceMatches()) {
+            const QPointer<Canvas> self(this);
+            const quint64 ended = transformGeneration + 1;
+            cancelTransform();
+            if (self && transformGeneration == ended && !transformActive)
+                emit toolHint("Belge değiştiği için dönüşüm önizlemesi kapatıldı.");
+        }
     });
 }
 void Canvas::setUiColors(QColor canvas, QColor panel, QColor text, QColor accent) {
@@ -25,10 +125,32 @@ void Canvas::setUiColors(QColor canvas, QColor panel, QColor text, QColor accent
     rulerColor = panel;
     rulerText = text;
     accentColor = accent;
+    const QColor buttonSurface = panel.lighter(135), hoverSurface = panel.lighter(160);
+    const QColor infoText = readableOverlayText(text, panel);
+    const QColor captionText = readableOverlayText(accent, panel);
+    const QColor buttonText = readableOverlayText(text.lighter(160), buttonSurface);
+    const QColor hoverText = readableOverlayText(text.lighter(160), hoverSurface);
+    const QColor applyText = readableOverlayText(QColor("#15221f"), accent);
+    transformControls->setStyleSheet(
+        QString("QFrame#transformControls { background: %1; border: 1px solid %2; border-radius: 9px; }"
+                "QFrame#transformControls QLabel { color: %3; border: none; background: transparent; }"
+                "QLabel#transformCaption { color: %7; font-size: 11px; font-weight: 700; }"
+                "QLabel#transformInfo { font-size: 10px; }"
+                "QFrame#transformControls QToolButton { color: %4; background: %5; border: none; "
+                "border-radius: 5px; padding: 6px 9px; font-size: 11px; }"
+                "QFrame#transformControls QToolButton:hover { color: %9; background: %6; }"
+                "QFrame#transformControls QToolButton#transformApply { color: %8; "
+                "background: %2; font-weight: 700; }")
+            .arg(panel.name(), accent.name(), infoText.name(), buttonText.name(),
+                 buttonSurface.name(), hoverSurface.name(), captionText.name(), applyText.name(),
+                 hoverText.name()));
     update();
 }
 void Canvas::setTool(Tool value) {
+    const QPointer<Canvas> self(this);
     finishPendingGesture();
+    if (!self)
+        return;
     tool = value;
     updateCursor();
     update();
@@ -45,10 +167,16 @@ Selection::Mode Canvas::effectiveSelectionMode(Qt::KeyboardModifiers modifiers) 
                         : selectionMode;
 }
 void Canvas::selectArea(const Selection &area) {
-    document->selection = selectionBefore.combined(area, gestureSelectionMode, document->state.size);
+    const Selection result = selectionBefore.combined(area, gestureSelectionMode, document->state.size);
     selectionBefore = {};
     selectionPoints.clear();
-    document->changed();
+    if (selectionRevision != document->revision()) {
+        update();
+        return; // A newer undo/edit superseded this unfinished gesture.
+    }
+    QString error;
+    if (!document->setSelection(result, "Seçim yapıldı", &error))
+        emit toolHint(error);
 }
 void Canvas::completePolygon() {
     if (!polygonActive)
@@ -60,13 +188,16 @@ void Canvas::completePolygon() {
         path.closeSubpath();
         selectArea(Selection::fromPath(path, document->state.size));
     } else {
-        document->selection = selectionBefore;
         selectionBefore = {};
         selectionPoints.clear();
         update();
     }
 }
 void Canvas::updateCursor() {
+    if (transformActive) {
+        updateTransformCursor(toWidget(hover));
+        return;
+    }
     setCursor(tool == Hand ? Qt::OpenHandCursor : (tool == Move ? Qt::ArrowCursor : Qt::CrossCursor));
 }
 QPointF Canvas::toImage(QPointF p) const {
@@ -76,6 +207,7 @@ QPointF Canvas::toWidget(QPointF p) const {
     return p * zoom + pan;
 }
 void Canvas::fit() {
+    transformDragging = false;
     zoom = qBound(.02,
                   qMin(qreal(width() - 100) / document->state.size.width(),
                        qreal(height() - 100) / document->state.size.height()),
@@ -83,6 +215,7 @@ void Canvas::fit() {
     pan = {(width() - document->state.size.width() * zoom) / 2,
            (height() - document->state.size.height() * zoom) / 2};
     fitted = true;
+    positionTransformControls();
     update();
     emit zoomChanged();
 }
@@ -90,18 +223,21 @@ void Canvas::actualSize() {
     setZoom(1);
 }
 void Canvas::setZoom(qreal z, QPointF anchor) {
+    transformDragging = false;
     if (anchor.isNull())
         anchor = QPointF(width() / 2.0, height() / 2.0);
     QPointF pixel = toImage(anchor);
     zoom = qBound(.02, z, 16.0);
     pan = anchor - pixel * zoom;
     fitted = false;
+    positionTransformControls();
     update();
     emit zoomChanged();
 }
 void Canvas::resizeEvent(QResizeEvent *) {
     if (fitted || pan.isNull())
         fit();
+    positionTransformControls();
 }
 void Canvas::paintEvent(QPaintEvent *) {
     QPainter p(this);
@@ -120,7 +256,13 @@ void Canvas::paintEvent(QPaintEvent *) {
                 p.fillRect(x, y, step, step, QColor("#41464d"));
     p.setRenderHint(QPainter::SmoothPixmapTransform, zoom < 1);
     if (cacheDirty) {
-        compositeCache = document->composite();
+        if (transformActive) {
+            Document previewDocument;
+            previewDocument.state = document->state;
+            previewDocument.state.layers[transformLayer].geometry = transformPreview;
+            compositeCache = previewDocument.composite();
+        } else
+            compositeCache = document->composite();
         cacheDirty = false;
     }
     p.drawImage(imageRect, compositeCache);
@@ -178,7 +320,7 @@ void Canvas::paintEvent(QPaintEvent *) {
         p.setPen(QPen(Qt::white, 1 / zoom, Qt::DashLine));
         p.drawLine(press, last);
     }
-    if (tool == Brush || tool == Pencil || tool == Eraser || tool == Clone) {
+    if (!transformActive && (tool == Brush || tool == Pencil || tool == Eraser || tool == Clone)) {
         p.save();
         p.setTransform(tipTransform(hover), true);
         const qreal radius = stampDiameter(inputPressure) / 2;
@@ -189,14 +331,16 @@ void Canvas::paintEvent(QPaintEvent *) {
         p.drawEllipse(QPointF(), radius, radius);
         p.restore();
     }
-    if (tool == Clone && hasClone) {
+    if (!transformActive && tool == Clone && hasClone) {
         p.setPen(QPen(accentColor, 1 / zoom));
         p.drawLine(cloneAnchor + QPoint(-8, 0), cloneAnchor + QPoint(8, 0));
         p.drawLine(cloneAnchor + QPoint(0, -8), cloneAnchor + QPoint(0, 8));
     }
     p.restore();
-    if (!showRulers)
+    if (!showRulers) {
+        paintTransform(p);
         return;
+    }
     // Rulers stay readable at any zoom.
     p.fillRect(0, 0, width(), 24, rulerColor);
     p.fillRect(0, 0, 24, height(), rulerColor);
@@ -224,6 +368,7 @@ void Canvas::paintEvent(QPaintEvent *) {
         p.restore();
     }
     p.fillRect(0, 0, 24, 24, rulerColor);
+    paintTransform(p);
 }
 QImage &Canvas::target() {
     auto &l = document->state.layers[document->state.active];
@@ -462,17 +607,29 @@ void Canvas::fillAt(QPoint docPoint) {
     document->commit("Boya kovası");
 }
 void Canvas::mousePressEvent(QMouseEvent *e) {
+    endKeyboardNudge();
     setFocus();
     hover = toImage(e->position());
     press = last = hover;
     widgetLast = e->position();
-    if (e->button() == Qt::MiddleButton || (e->button() == Qt::LeftButton && tool == Hand)) {
+    if (e->button() == Qt::MiddleButton || (e->button() == Qt::LeftButton && tool == Hand && !transformActive)) {
+        transformDragging = false;
         panning = true;
         setCursor(Qt::ClosedHandCursor);
         return;
     }
     if (e->button() != Qt::LeftButton)
         return;
+    if (transformActive) {
+        transformGesture = transformBox();
+        transformHandle = transformGesture.hitTest(e->position(), zoom, pan);
+        transformDragging = transformHandle != TransformHandles::None;
+        transformPress = hover;
+        updateTransformCursor(e->position());
+        update();
+        e->accept();
+        return;
+    }
     if (tool == Picker) {
         QImage image = document->composite();
         if (image.rect().contains(QPoint(qFloor(hover.x()), qFloor(hover.y()))))
@@ -494,6 +651,7 @@ void Canvas::mousePressEvent(QMouseEvent *e) {
         if (!polygonActive) {
             polygonActive = true;
             selectionBefore = document->selection;
+            selectionRevision = document->revision();
             gestureSelectionMode = effectiveSelectionMode(e->modifiers());
             selectionPoints.clear();
         }
@@ -507,6 +665,7 @@ void Canvas::mousePressEvent(QMouseEvent *e) {
     }
     if (tool == Wand) {
         selectionBefore = document->selection;
+        selectionRevision = document->revision();
         gestureSelectionMode = effectiveSelectionMode(e->modifiers());
         const QImage image = document->composite();
         QPoint seed(qFloor(hover.x()), qFloor(hover.y()));
@@ -521,6 +680,7 @@ void Canvas::mousePressEvent(QMouseEvent *e) {
         dragging = true;
         preview = QRectF(press, QSizeF());
         selectionBefore = document->selection;
+        selectionRevision = document->revision();
         gestureSelectionMode =
             tool == Crop ? Selection::Replace : effectiveSelectionMode(e->modifiers());
         selectionPoints = {press};
@@ -562,6 +722,13 @@ void Canvas::mouseMoveEvent(QMouseEvent *e) {
         pan += e->position() - widgetLast;
         widgetLast = e->position();
         fitted = false;
+        positionTransformControls();
+        update();
+        return;
+    }
+    if (transformActive) {
+        advanceTransform(hover, e->modifiers());
+        updateTransformCursor(e->position());
         update();
         return;
     }
@@ -659,6 +826,10 @@ void Canvas::applyGradient() {
         l.text.clear();
 }
 bool Canvas::finishPendingGesture() {
+    const bool nudged = nudgeKey != 0;
+    endKeyboardNudge();
+    if (transformActive)
+        return applyTransform();
     if (polygonActive) {
         completePolygon();
         tabletActive = tabletEraser = false;
@@ -672,7 +843,7 @@ bool Canvas::finishPendingGesture() {
     if (!dragging) {
         tabletActive = tabletEraser = false;
         inputPressure = lastInputPressure = 1;
-        return false;
+        return nudged;
     }
     const bool erasing = (tool == Brush || tool == Pencil || tool == Eraser || tool == Clone) &&
                          (tool == Eraser || tabletEraser);
@@ -689,7 +860,6 @@ bool Canvas::finishPendingGesture() {
                 path.closeSubpath();
                 selectArea(Selection::fromPath(path, document->state.size));
             } else {
-                document->selection = selectionBefore;
                 selectionBefore = {};
                 selectionPoints.clear();
                 document->changed();
@@ -721,16 +891,26 @@ bool Canvas::finishPendingGesture() {
     return true;
 }
 void Canvas::mouseReleaseEvent(QMouseEvent *e) {
-    if (e->button() == Qt::MiddleButton || (e->button() == Qt::LeftButton && panning)) {
+    if (panning && (e->button() == Qt::MiddleButton || e->button() == Qt::LeftButton)) {
         pan += e->position() - widgetLast;
         widgetLast = e->position();
         panning = false;
         fitted = false;
         updateCursor();
+        positionTransformControls();
         update();
         return;
     }
     if (e->button() == Qt::LeftButton) {
+        if (transformActive) {
+            advanceTransform(toImage(e->position()), e->modifiers());
+            transformDragging = false;
+            transformHandle = TransformHandles::None;
+            updateTransformCursor(e->position());
+            update();
+            e->accept();
+            return;
+        }
         if (tool == PolygonLasso && polygonActive)
             return;
         advanceGesture(toImage(e->position()), e->modifiers());
@@ -738,6 +918,27 @@ void Canvas::mouseReleaseEvent(QMouseEvent *e) {
     }
 }
 void Canvas::tabletEvent(QTabletEvent *e) {
+    if (transformActive) {
+        if (TransformHandles::finite(e->position()) && std::isfinite(e->pressure()) &&
+            std::isfinite(e->xTilt()) && std::isfinite(e->yTilt())) {
+            const QEvent::Type type = e->type() == QEvent::TabletPress
+                                          ? QEvent::MouseButtonPress
+                                      : e->type() == QEvent::TabletRelease
+                                          ? QEvent::MouseButtonRelease
+                                          : QEvent::MouseMove;
+            QMouseEvent pointer(type, e->position(), e->globalPosition(), e->button(),
+                                e->buttons(), e->modifiers(), e->pointingDevice());
+            if (type == QEvent::MouseButtonPress)
+                mousePressEvent(&pointer);
+            else if (type == QEvent::MouseButtonRelease)
+                mouseReleaseEvent(&pointer);
+            else
+                mouseMoveEvent(&pointer);
+        }
+        // Transform mode owns pen and eraser input, regardless of the previously selected tool.
+        e->accept();
+        return;
+    }
     if (tool != Brush && tool != Pencil && tool != Eraser && tool != Clone) {
         // Qt already emulates mouse gestures (including polygon double-clicks)
         // for these tools. Keep that platform behavior instead of consuming it.
@@ -782,19 +983,113 @@ void Canvas::tabletEvent(QTabletEvent *e) {
     e->accept();
 }
 void Canvas::wheelEvent(QWheelEvent *e) {
+    transformDragging = false;
     setZoom(zoom * std::pow(1.0015, e->angleDelta().y()), e->position());
     e->accept();
 }
+void Canvas::endKeyboardNudge() {
+    ++nudgeGeneration;
+    nudgeKey = 0;
+    nudgeRevision = 0;
+}
+void Canvas::keyReleaseEvent(QKeyEvent *e) {
+    if (e->key() == nudgeKey) {
+        // X11 and other platforms can send synthetic releases between repeats.
+        if (!e->isAutoRepeat())
+            endKeyboardNudge();
+        e->accept();
+        return;
+    }
+    QWidget::keyReleaseEvent(e);
+}
 void Canvas::keyPressEvent(QKeyEvent *e) {
+    if (!keyboardDocument || document != keyboardDocument) {
+        endKeyboardNudge();
+        QWidget::keyPressEvent(e);
+        return;
+    }
+    if (transformActive) {
+        if (e->key() == Qt::Key_Return || e->key() == Qt::Key_Enter) {
+            applyTransform();
+            e->accept();
+            return;
+        }
+        if (e->key() == Qt::Key_Escape) {
+            cancelTransform();
+            e->accept();
+            return;
+        }
+        QPointF delta;
+        const qreal step = e->modifiers() & Qt::ShiftModifier ? 10 : 1;
+        if (e->key() == Qt::Key_Left)
+            delta.setX(-step);
+        else if (e->key() == Qt::Key_Right)
+            delta.setX(step);
+        else if (e->key() == Qt::Key_Up)
+            delta.setY(-step);
+        else if (e->key() == Qt::Key_Down)
+            delta.setY(step);
+        if (!delta.isNull()) {
+            transformDragging = false;
+            previewTransform(transformPreview * QTransform::fromTranslate(delta.x(), delta.y()));
+            e->accept();
+            return;
+        }
+    }
+    const bool arrow = e->key() == Qt::Key_Left || e->key() == Qt::Key_Right ||
+                       e->key() == Qt::Key_Up || e->key() == Qt::Key_Down;
+    const bool reserved = e->modifiers() & (Qt::ControlModifier | Qt::AltModifier | Qt::MetaModifier);
+    if (tool == Move && hasFocus() && arrow && !reserved) {
+        // Repeats without their original press are stale after a focus, target,
+        // tool, history or save transition. They must never adopt a new target.
+        if (!e->isAutoRepeat())
+            endKeyboardNudge();
+        if ((!e->isAutoRepeat() || nudgeKey == e->key()) && !dragging && !panning &&
+            !tabletActive && !applyingNudge && !document->isEditing()) {
+            const int step = e->modifiers() & Qt::ShiftModifier ? 10 : 1;
+            const QPoint delta = e->key() == Qt::Key_Left    ? QPoint(-step, 0)
+                                 : e->key() == Qt::Key_Right ? QPoint(step, 0)
+                                 : e->key() == Qt::Key_Up    ? QPoint(0, -step)
+                                                            : QPoint(0, step);
+            const QPointer<Canvas> self(this);
+            const QPointer<Document> target = keyboardDocument;
+            const int active = target->state.active;
+            const quint64 generation = nudgeGeneration;
+            nudgeUpdates = 0;
+            nudgeUpdateRevision = 0;
+            QString error;
+            nudgeKey = e->key(); // A synchronous real release must invalidate even the first press.
+            applyingNudge = true;
+            const bool moved = target->nudgeLayer(delta, nudgeRevision, &error);
+            // updated() is synchronous: a listener can close this tab, change
+            // focus/tool/target, or make another edit before the call returns.
+            if (!self)
+                return;
+            applyingNudge = false;
+            if (moved && target && document == target && generation == nudgeGeneration &&
+                nudgeUpdates == 1 && target->revision() == nudgeUpdateRevision &&
+                target->state.active == active && hasFocus() && tool == Move) {
+                nudgeKey = e->key();
+                nudgeRevision = nudgeUpdateRevision;
+            } else {
+                endKeyboardNudge();
+                if (!moved)
+                    emit toolHint(error);
+            }
+        }
+        e->accept();
+        return;
+    }
+    if (reserved || (e->key() != Qt::Key_Shift && !arrow))
+        endKeyboardNudge();
     if (polygonActive && (e->key() == Qt::Key_Return || e->key() == Qt::Key_Enter)) {
         completePolygon();
         e->accept();
         return;
     }
     if (e->key() == Qt::Key_Escape) {
-        if (polygonActive || (dragging && isSelectionTool())) {
+        if (polygonActive || (dragging && (isSelectionTool() || tool == Crop))) {
             polygonActive = dragging = false;
-            document->selection = selectionBefore;
             selectionBefore = {};
             selectionPoints.clear();
             document->changed();
@@ -806,14 +1101,22 @@ void Canvas::keyPressEvent(QKeyEvent *e) {
             document->cancelEdit();
             tabletActive = tabletEraser = false;
             inputPressure = lastInputPressure = 1;
+            e->accept();
+            return;
         }
-        document->selection = {};
+        document->deselect();
         update();
         return;
     }
     QWidget::keyPressEvent(e);
 }
 void Canvas::mouseDoubleClickEvent(QMouseEvent *e) {
+    if (transformActive && e->button() == Qt::LeftButton) {
+        if (transformBox().hitTest(e->position(), zoom, pan) == TransformHandles::Move)
+            applyTransform();
+        e->accept();
+        return;
+    }
     if (tool == PolygonLasso && e->button() == Qt::LeftButton) {
         hover = toImage(e->position());
         if (polygonActive && selectionPoints.size() < 16384 &&
@@ -826,7 +1129,13 @@ void Canvas::mouseDoubleClickEvent(QMouseEvent *e) {
     QWidget::mouseDoubleClickEvent(e);
 }
 void Canvas::focusOutEvent(QFocusEvent *event) {
-    finishPendingGesture();
+    if (transformActive) {
+        transformDragging = panning = false;
+        transformHandle = TransformHandles::None;
+        updateCursor();
+        update();
+    } else
+        finishPendingGesture();
     QWidget::focusOutEvent(event);
 }
 void Canvas::deleteSelection() {
@@ -852,4 +1161,357 @@ void Canvas::deleteSelection() {
     if (edited && !document->editingMask)
         l.text.clear();
     document->commit("Seçim silindi");
+}
+
+TransformHandles Canvas::transformBox() const {
+    if (!transformActive || transformLayer < 0 || transformLayer >= document->state.layers.size())
+        return {};
+    const Layer &layer = document->state.layers[transformLayer];
+    return {QSizeF(layer.pixels.size()), transformPreview, QPointF(layer.offset),
+            showRulers ? QRectF(rect().adjusted(24, 24, 0, 0)) : QRectF(rect())};
+}
+QPointF Canvas::transformHandlePosition(TransformHandles::Handle handle) const {
+    return transformBox().widgetPoint(handle, zoom, pan);
+}
+bool Canvas::beginTransform() {
+    const QPointer<Canvas> self(this);
+    const QPointer<Document> target = keyboardDocument; // This canvas's original document lifetime.
+    const quint64 previous = transformGeneration;
+    if (!target || document != target)
+        return false;
+    if (transformActive) {
+        setFocus();
+        return self && transformActive && transformGeneration == previous && transformSourceMatches();
+    }
+    finishPendingGesture();
+    if (!self || !target || document != target || transformGeneration != previous)
+        return false;
+    if (document->state.layers.isEmpty() || document->state.active < 0 ||
+        document->state.active >= document->state.layers.size())
+        return false;
+    const Layer &layer = document->state.layers[document->state.active];
+    if (document->isEditing() || layer.locked || !layer.visible || !layer.validGeometry()) {
+        emit toolHint("Dönüştürmek için görünür, kilidi açık bir katman seçin ve diğer düzenlemeyi bitirin.");
+        return false;
+    }
+    const quint64 generation = ++transformGeneration;
+    transformDocument = target;
+    transformLayer = document->state.active;
+    transformPreview = layer.geometry;
+    transformSource = layer;
+    transformSource.cache = {};
+    transformRevision = document->revision();
+    transformCanvasSize = document->state.size;
+    transformLayerCount = document->state.layers.size();
+    transformActive = true;
+    transformDragging = false;
+    transformHandle = TransformHandles::None;
+    transformInfo->setText("Köşe: oranı koru · Shift: serbest · Alt: merkez · Döndürürken Shift: 15°");
+    positionTransformControls();
+    transformControls->show();
+    transformControls->raise();
+    cacheDirty = true;
+    setFocus();
+    if (!self || transformGeneration != generation || !transformActive)
+        return false;
+    if (!transformSourceMatches()) {
+        cancelTransform();
+        return false;
+    }
+    updateCursor();
+    update();
+    emit toolHint("Tüm katmanı dönüştürün. Enter uygular, Esc iptal eder; kaynak ve maske korunur.");
+    if (!self || transformGeneration != generation || !transformActive)
+        return false;
+    if (!transformSourceMatches()) {
+        cancelTransform();
+        return false;
+    }
+    emit transformSessionChanged(true);
+    if (!self || transformGeneration != generation || !transformActive)
+        return false;
+    if (!transformSourceMatches()) {
+        cancelTransform();
+        return false;
+    }
+    return true;
+}
+void Canvas::endTransformSession() {
+    ++transformGeneration;
+    transformDocument.clear();
+    transformActive = transformDragging = false;
+    transformHandle = TransformHandles::None;
+    transformLayer = -1;
+    transformSource = {};
+    transformControls->hide();
+    cacheDirty = true;
+    updateCursor();
+    update();
+    emit transformSessionChanged(false);
+}
+bool Canvas::applyTransform() {
+    if (!transformActive)
+        return false;
+    const QPointer<Canvas> self(this);
+    const QPointer<Document> target = transformDocument;
+    const QTransform geometry = transformPreview;
+    const int layer = transformLayer;
+    const Layer source = transformSource;
+    const quint64 revision = transformRevision, ended = transformGeneration + 1;
+    const QSize canvasSize = transformCanvasSize;
+    const qsizetype layerCount = transformLayerCount;
+    const bool current = transformSourceMatches();
+    endTransformSession();
+    // Ending a session is synchronous: a listener may delete the canvas/target,
+    // retarget it, or begin (and even cancel) an entirely new preview.
+    if (!self || transformGeneration != ended)
+        return false;
+    if (!current || !target || document != target ||
+        !matchesTransformTarget(target, layer, revision, canvasSize, layerCount, source)) {
+        emit toolHint("Katman değiştiği için dönüşüm uygulanmadı.");
+        return false;
+    }
+    // Validate before opening the real transaction. setLayerTransform emits
+    // updated(), so calling it on the target would expose a half-finished edit
+    // to callbacks that can close the tab or start a different transaction.
+    Document candidate;
+    candidate.state = target->state;
+    QString error;
+    if (!candidate.setLayerTransform(geometry, &error)) {
+        emit toolHint(error);
+        return false;
+    }
+    target->beginEdit();
+    target->state.layers[layer].geometry = geometry;
+    target->commit("Tuvalde kaynak koruyan dönüşüm");
+    if (self && target && document == target && transformGeneration == ended)
+        emit toolHint("Dönüşüm uygulandı · Kaynak pikseller, metin ve maske korundu.");
+    return true;
+}
+void Canvas::cancelTransform() {
+    if (!transformActive)
+        return;
+    const QPointer<Canvas> self(this);
+    const quint64 ended = transformGeneration + 1;
+    endTransformSession();
+    if (self && transformGeneration == ended)
+        emit toolHint("Dönüşüm iptal edildi.");
+}
+bool Canvas::transformSourceMatches() const {
+    return transformDocument && document == transformDocument &&
+           matchesTransformTarget(transformDocument, transformLayer, transformRevision,
+                                  transformCanvasSize, transformLayerCount, transformSource);
+}
+bool Canvas::previewTransform(const QTransform &geometry) {
+    if (!transformActive)
+        return false;
+    Document candidate;
+    candidate.state = document->state;
+    candidate.state.active = transformLayer;
+    QString error;
+    if (!candidate.setLayerTransform(geometry, &error)) {
+        transformInfo->setText("Sınır aşıldı; son geçerli önizleme korunuyor. Daha küçük bir dönüşüm deneyin.");
+        emit toolHint(error);
+        return false;
+    }
+    transformInfo->setText("Köşe: oranı koru · Shift: serbest · Alt: merkez · Döndürürken Shift: 15°");
+    QTransform normalized = geometry;
+    bool unchanged = true;
+    const QSize sourceSize = transformSource.pixels.size();
+    for (QPointF point : {QPointF(), QPointF(sourceSize.width(), 0),
+                          QPointF(0, sourceSize.height()),
+                          QPointF(sourceSize.width(), sourceSize.height())})
+        unchanged &= QLineF(geometry.map(point), transformSource.geometry.map(point)).length() < 1e-7;
+    if (unchanged)
+        normalized = transformSource.geometry;
+    if (transformPreview == normalized)
+        return true;
+    transformPreview = normalized;
+    cacheDirty = true;
+    positionTransformControls();
+    update();
+    return true;
+}
+void Canvas::advanceTransform(QPointF position, Qt::KeyboardModifiers modifiers) {
+    if (transformActive && transformDragging && TransformHandles::finite(position))
+        previewTransform(transformGesture.dragged(transformHandle, transformPress, position, modifiers));
+}
+void Canvas::positionTransformControls() {
+    if (!transformActive)
+        return;
+    const int available = qMax(180, width() - 32);
+    const int controlsWidth = qMin(540, available);
+    const bool compact = controlsWidth < 390;
+    transformCaption->setVisible(!compact);
+    transformNumeric->setText(compact ? "123" : "Sayısal…");
+    transformCancel->setText(compact ? "×" : "İptal · Esc");
+    transformApply->setText(compact ? "✓" : "Uygula ↵");
+    const qreal top = showRulers ? 36 : 12;
+    const bool showInfo = controlsWidth >= 300 && height() >= top + 76 + 12;
+    transformInfo->setVisible(showInfo);
+    const QRectF viewport = showRulers ? QRectF(rect().adjusted(24, 24, 0, 0)) : QRectF(rect());
+    const TransformHandles box = transformBox();
+    QVector<QRectF> targets;
+    for (int i = TransformHandles::TopLeft; i <= TransformHandles::Move; ++i) {
+        const QPointF point = box.widgetPoint(TransformHandles::Handle(i), zoom, pan);
+        const QRectF target = QRectF(point - QPointF(9, 9), QSizeF(18, 18)).intersected(viewport);
+        if (!target.isEmpty())
+            targets.append(target);
+    }
+    struct Placement {
+        QPoint position;
+        int covered = std::numeric_limits<int>::max();
+        qreal distance = std::numeric_limits<qreal>::max();
+    };
+    const auto place = [&](int controlsHeight, int clearance) {
+        const QRectF bounds = box.polygon().boundingRect();
+        const qreal above = toWidget(bounds.topLeft()).y() - controlsHeight - 16;
+        const qreal below = toWidget(bounds.bottomRight()).y() + 16;
+        qreal y = height() - controlsHeight - 16;
+        if (below + controlsHeight <= height() - 12)
+            y = below;
+        else if (above >= top)
+            y = above;
+        const int minY = qRound(top), maxY = qMax(minY, height() - controlsHeight - 12);
+        const int maxX = width() - controlsWidth, centerX = maxX / 2;
+        const int preferredY = qBound(minY, qRound(y), maxY);
+        QVector<int> columns{centerX, qMin(16, maxX), qMax(0, maxX - 16), 0, maxX};
+        QVector<int> rows{preferredY, minY, maxY};
+        // Include every target edge, so a free placement between targets or at
+        // a viewport edge is found even when centered placement cannot fit.
+        for (const QRectF &target : targets) {
+            columns.append(qBound(0, qFloor(target.left()) - controlsWidth - clearance, maxX));
+            columns.append(qBound(0, qCeil(target.right()) + clearance, maxX));
+            rows.append(qBound(minY, qFloor(target.top()) - controlsHeight - clearance, maxY));
+            rows.append(qBound(minY, qCeil(target.bottom()) + clearance, maxY));
+        }
+        Placement best;
+        for (int x : columns)
+            for (int row : rows) {
+                const QRectF area = QRectF(x, row, controlsWidth, controlsHeight)
+                                        .adjusted(-clearance, -clearance, clearance, clearance);
+                int covered = 0;
+                for (const QRectF &target : targets)
+                    covered += area.intersects(target);
+                const qreal distance = qAbs(row - preferredY) + qAbs(x - centerX);
+                if (covered < best.covered || (covered == best.covered && distance < best.distance))
+                    best = {{x, row}, covered, distance};
+                if (!best.covered && best.distance == 0)
+                    return best;
+            }
+        return best;
+    };
+    const auto bestPlacement = [&](int controlsHeight) {
+        Placement result = place(controlsHeight, 3);
+        if (result.covered) {
+            const Placement snug = place(controlsHeight, 0);
+            if (snug.covered < result.covered)
+                result = snug;
+        }
+        return result;
+    };
+    int controlsHeight = qMax(showInfo ? 76 : 48, transformControls->minimumSizeHint().height());
+    Placement best = bestPlacement(controlsHeight);
+    if (showInfo && best.covered) {
+        // A short, wide viewport (for example Touch's bottom-dock layout) can
+        // fit the buttons below the handles, but not the two-row help panel.
+        // Keep the help whenever it fits without hiding a pointer target.
+        transformInfo->hide();
+        const int compactHeight = qMax(48, transformControls->minimumSizeHint().height());
+        const Placement compactPlacement = bestPlacement(compactHeight);
+        if (compactPlacement.covered < best.covered) {
+            controlsHeight = compactHeight;
+            best = compactPlacement;
+        } else
+            transformInfo->show();
+    }
+    transformControls->setGeometry(QRect(best.position, QSize(controlsWidth, controlsHeight)));
+    // Trying the help row can relayout a visible, compact panel before hiding
+    // it again. If the final frame size is unchanged, setGeometry does not
+    // resize it, so settle the invalidated layout now instead of leaving the
+    // buttons squeezed to their padding until the next event-loop turn.
+    transformControls->layout()->activate();
+}
+void Canvas::paintTransform(QPainter &p) {
+    if (!transformActive)
+        return;
+    const TransformHandles box = transformBox();
+    QPolygonF outline;
+    for (QPointF point : box.polygon())
+        outline.append(toWidget(point));
+    p.save();
+    p.setClipRect(showRulers ? rect().adjusted(24, 24, 0, 0) : rect());
+    p.setRenderHint(QPainter::Antialiasing);
+    p.setBrush(Qt::NoBrush);
+    p.setPen(QPen(QColor(0, 0, 0, 170), 3));
+    p.drawPolygon(outline);
+    p.setPen(QPen(accentColor, 1.2));
+    p.drawPolygon(outline);
+    const QPointF rotation = box.widgetPoint(TransformHandles::Rotate, zoom, pan);
+    p.drawLine(box.widgetPoint(TransformHandles::Top, zoom, pan), rotation);
+    for (int i = TransformHandles::TopLeft; i <= TransformHandles::Rotate; ++i) {
+        const auto handle = TransformHandles::Handle(i);
+        const QPointF at = box.widgetPoint(handle, zoom, pan);
+        p.setBrush(transformDragging && transformHandle == handle ? accentColor : rulerColor);
+        p.setPen(QPen(QColor(0, 0, 0, 150), 3));
+        if (handle == TransformHandles::Rotate)
+            p.drawEllipse(at, 5, 5);
+        else
+            p.drawRect(QRectF(at - QPointF(4, 4), QSizeF(8, 8)));
+        p.setPen(QPen(accentColor, 1.4));
+        if (handle == TransformHandles::Rotate)
+            p.drawEllipse(at, 5, 5);
+        else
+            p.drawRect(QRectF(at - QPointF(4, 4), QSizeF(8, 8)));
+    }
+    const QPointF center = box.widgetPoint(TransformHandles::Move, zoom, pan);
+    p.setPen(QPen(QColor(0, 0, 0, 170), 3));
+    p.drawLine(center - QPointF(5, 0), center + QPointF(5, 0));
+    p.drawLine(center - QPointF(0, 5), center + QPointF(0, 5));
+    p.setPen(QPen(accentColor, 1));
+    p.drawLine(center - QPointF(5, 0), center + QPointF(5, 0));
+    p.drawLine(center - QPointF(0, 5), center + QPointF(0, 5));
+    p.restore();
+}
+void Canvas::updateTransformCursor(QPointF position) {
+    const auto handle = transformDragging ? transformHandle : transformBox().hitTest(position, zoom, pan);
+    if (handle == TransformHandles::Move)
+        setCursor(transformDragging ? Qt::ClosedHandCursor : Qt::SizeAllCursor);
+    else if (handle == TransformHandles::Rotate)
+        setCursor(Qt::CrossCursor);
+    else if (handle >= TransformHandles::TopLeft && handle <= TransformHandles::Left) {
+        // Choose a screen-relative resize cursor, including on an already rotated layer.
+        const QPointF vector = transformBox().widgetPoint(handle, zoom, pan) -
+                               transformBox().widgetPoint(TransformHandles::Move, zoom, pan);
+        const qreal angle = qRadiansToDegrees(std::atan2(vector.y(), vector.x()));
+        const int sector = (qRound(angle / 45) % 4 + 4) % 4;
+        const Qt::CursorShape shapes[] = {Qt::SizeHorCursor, Qt::SizeFDiagCursor,
+                                         Qt::SizeVerCursor, Qt::SizeBDiagCursor};
+        setCursor(shapes[sector]);
+    } else
+        setCursor(Qt::ArrowCursor);
+}
+
+void Canvas::showNumericTransform() {
+    if (!transformActive)
+        return;
+    transformDragging = false;
+    Document previewDocument;
+    previewDocument.state = document->state;
+    previewDocument.state.active = transformLayer;
+    previewDocument.state.layers[transformLayer].geometry = transformPreview;
+    previewDocument.beginEdit();
+    const QTransform before = transformPreview;
+    connect(&previewDocument, &Document::updated, this, [this, &previewDocument] {
+        if (transformActive)
+            previewTransform(previewDocument.state.layers[previewDocument.state.active].geometry);
+    });
+    TransformDialog dialog(&previewDocument, window());
+    dialog.setWindowTitle("Dönüşüm önizlemesi · Sayısal ayarlar");
+    if (auto *buttons = dialog.findChild<QDialogButtonBox *>())
+        buttons->button(QDialogButtonBox::Ok)->setText("Önizlemeye uygula");
+    const bool accepted = dialog.exec() == QDialog::Accepted;
+    if (transformActive)
+        previewTransform(accepted ? dialog.transform() : before);
+    setFocus();
 }

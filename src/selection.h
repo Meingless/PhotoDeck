@@ -19,6 +19,17 @@ class Selection {
     bool contains(int x, int y) const { return !isEmpty() && valueAt({x, y}) > 0; }
     int valueAt(QPoint point) const;
     bool operator==(const QRect &rect) const { return coverage.isNull() && rectangle == rect; }
+    bool equivalent(const Selection &other, QSize canvas) const;
+    // The stored coverage is immutable to callers; copies share its QImage buffer.
+    const QImage &coverageImage() const { return coverage; }
+    void clearCache() { boundary = {}; }
+    static Selection fromMask(QImage mask);
+    Selection clipped(QSize canvas) const;
+    Selection cropped(QRect rectangle, QSize source) const;
+    Selection resized(QSize source, QSize target) const;
+    Selection translated(QPoint delta, QSize target) const;
+    Selection rotated(bool clockwise, QSize source) const;
+    Selection flipped(bool horizontal, QSize canvas) const;
     static Selection fromPath(const QPainterPath &path, QSize size);
     static Selection colorRange(const QImage &image, QPoint seed, int tolerance, bool contiguous);
     Selection combined(const Selection &other, Mode mode, QSize size) const;
@@ -38,5 +49,4 @@ class Selection {
     QImage coverage; // Grayscale8; null for a rectangular or unrestricted selection.
     mutable QImage boundary;
     bool nonzero = false;
-    static Selection fromMask(QImage mask);
 };

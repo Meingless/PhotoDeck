@@ -1,6 +1,22 @@
 # PhotoDeck özellik doğrulama kapsamı
 
-Bu denetim, uygulamada sunulan özellikleri kapsar. Henüz uygulanmayan Photoshop farkları [PHOTOSHOP-COMPARISON.md](PHOTOSHOP-COMPARISON.md) içinde açık hedefler olarak izlenir; testlerin geçmesi bunları kapatmaz.
+Bu denetim, **0.10.0-ea.1** kaynak adayının davranış ve test kapsamını gösterir. Test adı bulunması testin bu commit'te geçtiği anlamına gelmez; çalıştırılan kaynak, ortam ve sonuçlar [0.10 geliştirme notlarında](DEVELOPMENT-0.10.md) ayrı kaydedilir. Aşağıdaki 0.2–0.9.1 sonuçları tarihseldir; yeni dalın paket veya CI kanıtı değildir. Henüz uygulanmayan Photoshop farkları [PHOTOSHOP-COMPARISON.md](PHOTOSHOP-COMPARISON.md) içinde açık hedefler olarak izlenir; testlerin geçmesi bunları kapatmaz.
+
+## 0.10.0-ea.1 — güncel kapsam
+
+| Davranış | Kaynak testleri ve kullanım sınırları |
+|---|---|
+| Seçim geri alma/yeniden seçme ve açıkça adlandırılmış kayıtlı seçimler | `tests/test_selection_workflow.cpp`, `tests/test_ui_resilience.cpp`; [seçim ve biçim kılavuzu](SELECTION-WORKFLOW.md) |
+| Ctrl+T ile bütün etkin katmanda tuval üstü taşıma/ölçek/dönüş; Ctrl+Alt+T ile sayısal/perspektif ayarları | `tests/test_transforms.cpp`; [dönüşüm kılavuzu](ON-CANVAS-TRANSFORM.md). Seçili piksel parçası dönüşümü veya warp değildir. |
+| F2 ile satır içi katman adı; tıklanan satırı hedefleyen bağlam menüsü | `tests/test_layer_ops.cpp`: `inlineRenamePreservesSourcesAndIsOneUndo`, `layerContextMenuTargetsClickedRowAndCanCancel` |
+| Liste içinde tek katmanı sürükleyerek sıralama, görünür bırakma çizgisi, iç/dış kenar kaydırması ve güvenli iptal | `tests/test_layer_drag.cpp`, `tests/test_layer_ops.cpp`; [katman kılavuzu](LAYER-WORKFLOW.md). Çoklu seçim, dışarı taşıma veya belge arası bırakma değildir. |
+| Sayısal X/Y, tuval/seçim sınırına yatay-dikey hizalama; odaklı tuvalde Taşı aracıyla ok/Shift+ok = 1/10 belge pikseli | `tests/test_positioning.cpp`; [konumlandırma kılavuzu](LAYER-POSITIONING.md). Çoklu katman hizalama/dağıtım değildir. |
+| Geçmiş panelinde geri ve ileri adımlara fare/klavyeyle gezinme | `tests/test_history_navigation.cpp`; [geçmiş kılavuzu](HISTORY-NAVIGATION.md). Kalıcı geçmiş arşivi değildir. |
+| Arka planda kurtarma kodlama/yazımı; süreç genelinde en fazla bir değişmez anlık görüntü ve kodlayıcı | `tests/test_recovery.cpp`, `tests/test_recovery_files.cpp`, `tests/test_recovery_codec.cpp`; [kurtarma kılavuzu](RECOVERY.md). Normal Kaydet eşzamanlı kalır. |
+
+Normal proje kaydı, adlandırılmış seçim yoksa v5'tir. Adlandırılmış seçimler v6 gerektirir; yayımlanan 0.9.1 bunları açamaz. İlk v6 kaydında uyarı ve eski orijinali ayrı kopyayla koruyan akış vardır. Yalnız geçici seçim v6 yükseltmesi yapmaz; kurtarma bağlamının ayrı v6 kullanımı seçim kılavuzunda açıklanır. Kayıtlı seçimler genel amaçlı bir alfa Channels paneli değildir. PSD/RAW, CMYK/yüksek bit, gruplar, ayar katmanları ve gelişmiş Photoshop eşdeğerliği bu kapsamda eklenmedi.
+
+## Genel davranış regresyonları
 
 | Özellik | Davranış kanıtı |
 |---|---|
@@ -8,7 +24,7 @@ Bu denetim, uygulamada sunulan özellikleri kapsar. Henüz uygulanmayan Photosho
 | Proje kaydı / farklı kaydetme / tekrar açma | `nativeRoundTripAndExport`, `documentMenuFileWorkflow`, `transformedDocumentCanAlwaysReopen` |
 | Güvenli dosya kaydı, iptal, bozuk dosya | `projectFilenameSuffixRespectsOverwriteCancellation`, `coordinateBoundsFailWithoutChangingDocument`, `hostileFilesDoNotReplaceDocument`, `multiDocumentUiAndSaveGuard` |
 | Dış değişiklik / silinme / aynı boyut-zamanlı değişiklik / yol takma adları | `test_save_safety.cpp`: `independentEditorCannotBeSilentlyOverwritten`, `hashDetectsSameSizeSameTimestampInPlaceEdit`, `deletionNeedsExplicitOverwriteAndRecoveryKeepsConflict`, `canonicalAliasesCannotBypassConflict`, `symbolicAliasesAndRetargetingAreProtected`; UI: `externalConflictCancelThenExplicitOverwrite` |
-| v1–v4 orijinali koruyarak v5 kopya kaydetme | `legacyOriginalRequiresConsent`, `externalLegacyEditRequiresBothIndependentPermissions`; UI: `oldProjectsSaveAsCopy` |
+| v1–v4 orijinali koruyarak kopya kaydetme (adlandırılmış seçim yoksa v5) | `legacyOriginalRequiresConsent`, `externalLegacyEditRequiresBothIndependentPermissions`; UI: `oldProjectsSaveAsCopy` |
 | PNG/JPEG/BMP/WebP ve toplu işlem | `supportedRasterFormats`, `transparencyAndJpegBackground`, `batchPreservesSourcesAndExistingOutputs`, `batchResizeColorsAndNoUpscaling` |
 | Kopyala / yapıştır / seçim | `clipboardSelectionAndLayerCommands`, `allToolsRespectSelection`, `canvasSelectionShapeMoveAndCancel` |
 | Katman oluşturma / çoğaltma / sıralama / ad / silme | `layerLifecycleAndOpacity`, `clipboardSelectionAndLayerCommands` |
@@ -37,9 +53,9 @@ Testler gerçek QWidget fare/klavye girdileri, modal pencereler, piksel karşıl
 ## Rapor düzeltmelerinin sınırları
 
 - Kurtarma, tamamlanan düzenlemelerden yaklaşık 5 saniye sonra planlanır; 45 saniyelik periyodik kontrol yedektir. Devam eden çizim/taşıma hareketinde yazılmaz; ertelenen kontrol hareket tamamlandığında hemen yeniden denenir. Timer testleri gerçek 5/45 saniye beklemek yerine aralıkları ve hızlandırılmış timeout akışını doğrular. Bu davranış sıfır veri kaybı garantisi değildir.
-- Kurtarma ve normal kayıt eşzamanlı PNG kodlama/dosya yazma kullanmaya devam eder. Büyük projelerde arayüzün beklemesi hâlâ bir performans riskidir; küçük test süreleri düşük özellikli cihaz ölçümü değildir.
+- 0.10 geliştirme dalında kurtarma, değişmez anlık görüntüyü arka planda kodlayıp yazar; aynı süreçte tek anlık görüntü/kodlayıcı sınırı vardır. GUI'de yakalama ve son atomik yol yayımı kalır; bütün depolama gecikmelerinin yokluğu iddia edilmez. Normal Kaydet hâlâ eşzamanlı PNG kodlama/dosya yazımı kullanır. Yaşam döngüsü ve bellek sınırları [kurtarma kılavuzundadır](RECOVERY.md); küçük test süreleri düşük özellikli cihaz ölçümü değildir.
 - Dış değişiklikler dosya kimliği, boyut/zaman ve SHA-256 özetiyle kontrol edilir. UI iptal, ayrı kopya veya açıkça üzerine yazmayı sunar. Kontrol iyimseldir; kontrol ile atomik commit arasındaki yarış aralığı bütünüyle kapatılmış değildir.
-- Eski v1–v4 orijinali UI üzerinden yerinde yükseltilmez; uyarıdan sonra farklı bir v5 kopya seçilir. Modelin açık seçenekleri ile UI'nin kullanıcıya sunduğu kopya akışı ayrı test edilir.
+- Eski v1–v4 orijinali UI üzerinden yerinde yükseltilmez; uyarıdan sonra farklı bir kopya seçilir (adlandırılmış seçim yoksa v5, varsa v6). Modelin açık seçenekleri ile UI'nin kullanıcıya sunduğu kopya akışı ayrı test edilir.
 
 ## Sürekli doğrulama ve sınırları
 
@@ -49,7 +65,7 @@ Testler gerçek QWidget fare/klavye girdileri, modal pencereler, piksel karşıl
 - `.github/workflows/build.yml` etiket/manuel erken erişim paketleme akışı olarak korunur. Linux/Windows paketlerinde testler paketlenmiş Qt kütüphaneleriyle çalıştırılır; macOS'ta SDK testleri, `.app` açılışı ve ad-hoc imza bütünlüğü ayrı adımlardır. Ad-hoc imza kontrolü dağıtım sertifikası veya notarization değildir.
 - Yeni PR akışı ve parser testi için sonuç ancak çalıştırılan commit'e ait loglarla doğrulanabilir. İş tanımı veya tarihsel sürüm sonucu tek başına yeni dal için başarılı test kanıtı sayılmaz.
 
-## Bu çalışma için doğrulama durumu — 15 Ekim 2026
+## Tarihsel 0.9.1 doğrulama durumu — 15 Ekim 2026
 
 | Kontrol | Ortam / kapsam | Sonuç |
 |---|---|---|
@@ -65,9 +81,9 @@ Testler gerçek QWidget fare/klavye girdileri, modal pencereler, piksel karşıl
 
 [İkinci PR çalıştırmasında](https://github.com/Meingless/PhotoDeck/actions/runs/38737997410) (`0db4fd8`) Linux Release de 14/14 geçti; macOS Hakkında kontrolü, Qt’nin pencere başlığını yok sayması nedeniyle sürümün görünür içerikte eksik olduğunu ortaya çıkardı. Sürüm artık Hakkında gövdesinde de gösterilir ve içerik tüm platformlarda ayrı doğrulanır.
 
-Yerel sonuçlar bu dalda doğrulanan kaynak ağacına, GitHub sonuçları belirtilen run/commit’e aittir. Yeni yayımlanmış paket veya fiziksel cihaz kanıtı değildir.
+Yerel sonuçlar o tarihte doğrulanan kaynak ağacına, GitHub sonuçları belirtilen run/commit’e aittir. Yeni dal, yeni yayımlanmış paket veya fiziksel cihaz kanıtı değildir.
 
-## Yerel performans karşılaştırması
+## Tarihsel 0.9.1 yerel performans karşılaştırması — 15 Ekim 2026
 
 Üç eşleştirilmiş başlangıç/son çalıştırmada 4096×4096, üç katman ve 192 MiB kaynak görüntü kullanıldı. Aşağıdaki değerler her çalıştırmanın medyanlarının medyanıdır; hızlandırma iddiası yalnızca bu sentetik yerel senaryoya aittir.
 
@@ -76,9 +92,13 @@ Yerel sonuçlar bu dalda doğrulanan kaynak ağacına, GitHub sonuçları belirt
 | Değişmeyen içerikte yardımcı arayüz yenilemesi | 85,726 ms | 0,309 ms |
 | Zorlanan sentetik taşıma + tuval boyama + yardımcı yenileme | 122,446 ms | 42,727 ms |
 
-Son kompozisyon ve filmşeridi hash'leri eşleşti; değişmeyen simgeler 36/36 kontrolde yeniden kullanıldı. Yaklaşık 43 ms'lik ikinci yol 60 fps garantisi değildir. PNG kodlama/dosya yazımı eşzamanlı kalır; bu ölçüm kayıt/kurtarma beklemelerini ortadan kaldırdığını göstermez. Kaynak rapor: `artifacts/perf/report.md` (ayrı doğrulama tesliminin parçası).
+Son kompozisyon ve filmşeridi hash'leri eşleşti; değişmeyen simgeler 36/36 kontrolde yeniden kullanıldı. Yaklaşık 43 ms'lik ikinci yol 60 fps garantisi değildir. O tarihsel kaynakta PNG kodlama/dosya yazımı eşzamanlıydı; bu ölçüm kayıt/kurtarma beklemelerini ortadan kaldırdığını göstermez. 0.10'un arka plan kurtarma ölçümleri ve sınırları [geliştirme notlarında](DEVELOPMENT-0.10.md) ayrıdır. Kaynak rapor: `artifacts/perf/report.md` (ayrı doğrulama tesliminin parçası).
 
 Masaüstü bilgisayarların tüm sürümleri veya minimum donanım koşulları bu denetimle kanıtlanmaz. Gerçek cihaz uyumluluğu için ayrıca cihaz matrisi gerekir.
+
+## Tarihsel 0.3–0.9 ek denetimleri
+
+Bu bölüm, ilgili sürümün eklendiği zamanki kapsamı ve paket akışını kaydeder. Güncel 0.10 kaynak test envanteri ve sonuçları yukarıdaki geliştirme bağlantılarından ayrı izlenir.
 
 0.3 ek denetimleri: `test_tones.cpp` (ton/renk, v1/v2 uyumu, hostile veri, cancel/undo, TIFF/GIF), `test_selections.cpp` (alfa seçimleri, tüm piksel araçları, kopya/maskeler, gerçek pointer/modifier/klavye girdileri), `test_blending.cpp` (27 mod, alfa/offset/opacity, deterministic dissolve, proje round-trip). Her suite CMake ve qmake ile derlenebilir. Linux/Windows CI paket testleri beş suite'i paketlenen Qt ile çalıştırır; AppImage ayrıca açılış PNG'si üretir.
 
@@ -93,3 +113,7 @@ Masaüstü bilgisayarların tüm sürümleri veya minimum donanım koşulları b
 0.8: `test_brushes.cpp`, native Qt tablet basıncı ve eğimi, boyut/akış/tepki, basınç interpolasyonu ve hareketsiz basınç, eliptik uç, sürekli darbe aralığı/olay bölünmesi/alpha feather, bırakma noktası, kalem silgisi piksel/maske, fare bağımsızlığı, kilit/seçim/iptal/tek undo, bozuk sensör, boyama dışı tablet olaylarında Qt fare benzetiminin korunması ve ayar penceresi kabul/iptal. Test aygıtları fiziksel tablet kanıtı değildir. Linux/Windows paket testlerine onuncu suite eklenir.
 
 0.9: `test_presets.cpp`, tüm parametre/görsel maskenin .pdbrush round-trip'i, tip koyuluk/alfa/oran, katı alan/sürüm/bütçe/isim doğrulaması ve dosya koruması, renk-cache/dönüş/undo, klonun kapsam dışında piksel bırakmaması ve örneğin dönmemesi, görünmez darbede metin kimliği, gerçek preset kaydet/kullan/import/export/seçimden uç akışları, sekme ayrılığı, restart, dosya çakışması ve bozuk dosya yedeği, özel yüzey metninde kontrast. On UI presetinin gerçek masaüstü başlangıç görüntüleri ve menü/kütüphane/ayar diyalogu PNG'leri ayrıca kontrol edilir. Linux/Windows paketleri on bir suite'i çalıştırır.
+
+## 0.10.0-ea.1 — etkin katman konumu test ayrıntısı
+
+`test_positioning.cpp`: altı hizalama komutu × tuval/seçim hedefleri × dört geometri; sayısal X/Y, tek adımlı undo/redo, no-op yineleme koruması, tek sayılı/tuvalden büyük merkezleme, kilit/görünürlük/boş seçim/geçersiz sınır reddi, metin/maske/geometri ve seçim koruması, v5/v6 tekrar açma. Gerçek widget testleri menü hedeflerini, bekleyen hareketi, sayısal kabul/iptal/eski bağlamı ve on presette 900×620 yerleşimi kapsar. Sınırın geometrik anlamı ve çoklu katman/dağıtım kapsamı [LAYER-POSITIONING.md](LAYER-POSITIONING.md) içinde açıklanır.

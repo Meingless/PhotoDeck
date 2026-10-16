@@ -1,7 +1,13 @@
 #pragma once
 #include "brushpreset.h"
 #include "document.h"
+#include "transformhandles.h"
+#include <QPointer>
 #include <QWidget>
+
+class QFrame;
+class QLabel;
+class QToolButton;
 
 class Canvas : public QWidget {
     Q_OBJECT
@@ -46,12 +52,23 @@ class Canvas : public QWidget {
     QPointF toImage(QPointF point) const;
     QPointF toWidget(QPointF point) const;
     bool finishPendingGesture();
+    bool hasPendingGesture() const {
+        return dragging || panning || polygonActive || tabletActive || transformActive;
+    }
+    bool beginTransform();
+    bool applyTransform();
+    void cancelTransform();
+    void showNumericTransform();
+    bool isTransforming() const { return transformActive; }
+    QTransform transformGeometry() const { return transformPreview; }
+    QPointF transformHandlePosition(TransformHandles::Handle handle) const;
     void deleteSelection();
   signals:
     void toolHint(QString hint);
     void zoomChanged();
     void colorPicked(QColor color);
     void textRequested(QPoint point);
+    void transformSessionChanged(bool active);
 
   protected:
     void paintEvent(QPaintEvent *) override;
@@ -61,6 +78,7 @@ class Canvas : public QWidget {
     void mouseReleaseEvent(QMouseEvent *) override;
     void wheelEvent(QWheelEvent *) override;
     void keyPressEvent(QKeyEvent *) override;
+    void keyReleaseEvent(QKeyEvent *) override;
     void focusOutEvent(QFocusEvent *) override;
     void mouseDoubleClickEvent(QMouseEvent *) override;
     void tabletEvent(QTabletEvent *) override;
@@ -72,6 +90,7 @@ class Canvas : public QWidget {
     QPoint initialOffset, cloneAnchor;
     bool dragging = false, panning = false, hasClone = false;
     Selection selectionBefore;
+    quint64 selectionRevision = 0;
     Selection::Mode gestureSelectionMode = Selection::Replace;
     QVector<QPointF> selectionPoints;
     bool polygonActive = false;
@@ -99,4 +118,32 @@ class Canvas : public QWidget {
     void drawShape();
     void applyGradient();
     void updateCursor();
+    QPointer<Document> keyboardDocument;
+    int nudgeKey = 0;
+    quint64 nudgeRevision = 0, nudgeGeneration = 0, nudgeUpdateRevision = 0;
+    int nudgeUpdates = 0;
+    bool applyingNudge = false;
+    void endKeyboardNudge();
+    bool transformActive = false, transformDragging = false;
+    int transformLayer = -1;
+    QTransform transformPreview;
+    Layer transformSource;
+    QPointer<Document> transformDocument;
+    quint64 transformRevision = 0, transformGeneration = 0;
+    QSize transformCanvasSize;
+    qsizetype transformLayerCount = 0;
+    TransformHandles transformGesture;
+    TransformHandles::Handle transformHandle = TransformHandles::None;
+    QPointF transformPress;
+    QFrame *transformControls;
+    QLabel *transformCaption, *transformInfo;
+    QToolButton *transformApply, *transformCancel, *transformNumeric;
+    TransformHandles transformBox() const;
+    bool previewTransform(const QTransform &geometry);
+    bool transformSourceMatches() const;
+    void advanceTransform(QPointF position, Qt::KeyboardModifiers modifiers);
+    void endTransformSession();
+    void positionTransformControls();
+    void paintTransform(QPainter &painter);
+    void updateTransformCursor(QPointF widgetPosition);
 };

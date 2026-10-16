@@ -14,12 +14,21 @@ def test_executables(inventory, expected_count):
     executables = []
     for test in tests:
         command = test.get('command', [])
-        if len(command) != 1:
+        if len(command) not in {1, 5}:
             raise ValueError(f'Unsupported CTest command for {test.get("name", "unknown")}')
         executable = Path(command[0])
         name = executable.name.removesuffix('.exe')
         if not re.fullmatch(r'photodeck-[a-z-]+', name) or not executable.is_file():
             raise ValueError(f'Missing or unexpected test executable: {executable}')
+        if len(command) == 5:
+            xml = Path(command[2].removesuffix(',junitxml'))
+            text = Path(command[4].removesuffix(',txt'))
+            allowed_parents = {executable.parent, executable.parent.parent}
+            if (command[1] != '-o' or command[3] != '-o' or
+                    not command[2].endswith(',junitxml') or not command[4].endswith(',txt') or
+                    xml.name != name + '-native.xml' or text.name != name + '-native.txt' or
+                    xml.parent != text.parent or xml.parent not in allowed_parents):
+                raise ValueError(f'Unsupported CTest command for {test.get("name", "unknown")}')
         if name in executables:
             raise ValueError(f'Duplicate test executable: {name}')
         executables.append(name)

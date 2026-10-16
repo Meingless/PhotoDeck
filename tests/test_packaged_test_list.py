@@ -35,6 +35,31 @@ class PackagedInventoryTests(unittest.TestCase):
         inventory = self.inventory([self.executable('photodeck-save-safety-tests.exe')])
         self.assertEqual(module.test_executables(inventory, 1), ['photodeck-save-safety-tests'])
 
+    def test_native_output_arguments_keep_the_same_inventory(self):
+        binary = self.executable('photodeck-tests')
+        command = [binary, '-o', str(self.root/'photodeck-tests-native.xml')+',junitxml',
+                   '-o', str(self.root/'photodeck-tests-native.txt')+',txt']
+        self.assertEqual(module.test_executables(self.inventory(command), 1), ['photodeck-tests'])
+        release = self.root/'Release'
+        release.mkdir()
+        executable = release/'photodeck-tests.exe'
+        executable.touch()
+        command[0] = str(executable)
+        self.assertEqual(module.test_executables(self.inventory(command), 1), ['photodeck-tests'])
+
+    def test_arbitrary_output_arguments_are_rejected(self):
+        command = [self.executable('photodeck-tests'), '-o',
+                   str(self.root/'photodeck-tests-native.xml')+',junitxml',
+                   '-o', str(self.root/'photodeck-tests-native.txt')+',txt']
+        for index, value in [(1, '--other'), (2, str(self.root/'other.xml')+',junitxml'),
+                             (2, str(self.root/'photodeck-tests-native.xml')+',xml'),
+                             (3, '--other'), (4, str(self.root/'other.txt')+',txt'),
+                             (4, str(self.root/'photodeck-tests-native.txt')+',xml')]:
+            altered = command.copy()
+            altered[index] = value
+            with self.subTest(index=index, value=value), self.assertRaisesRegex(ValueError, 'Unsupported'):
+                module.test_executables(self.inventory(altered), 1)
+
     def test_count_drift_is_an_error(self):
         with self.assertRaisesRegex(ValueError, 'Expected 14 CTest suites, found 0'):
             module.test_executables({'tests': []}, 14)

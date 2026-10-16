@@ -1,8 +1,12 @@
-# PhotoDeck 0.9.1 Early Access
+# PhotoDeck 0.10.0-ea.1
 
 AI içermeyen, tamamen yerel, C++/Qt 6 ile geliştirilen fotoğraf ve katman düzenleyici. Linux, Windows ve macOS için ortak kaynak kullanır. Tarayıcı motoru, Python çalışma zamanı, bulut hesabı, abonelik veya ağ servisi gerekmez.
 
-## 0.9.1 erken erişim güncellemesi
+## Geliştirme dalı
+
+Bu dal 0.10.0-ea.1 erken erişim sürümünü hazırlar. Seçim geçmişi/adlandırılmış seçimler, tuval üstü dönüşüm tutamaçları, hassas katman konumlandırma ve ok tuşlarıyla taşıma, liste içinde sürükleyerek katman sıralama, etkileşimli geçmiş paneli ve arka planda kurtarma kaydı içerir. Paketler yalnızca son PR ve main kaynağının dört platform doğrulaması ile Linux sanitizer işi başarılı olduktan sonra yayımlanır. Çalıştırılan kaynak, CI bağlantıları ve paket SHA-256 değerleri [sürüm kaydında](https://github.com/Meingless/PhotoDeck/releases/tag/v0.10.0-ea.1) ve RELEASE-PROOF.json dosyasında bulunur. Güncel kapsam ve yerel ölçüm sınırları [geliştirme notlarında](docs/DEVELOPMENT-0.10.md).
+
+## Önceki 0.9.1 erken erişim yayımı
 
 Odak çalışma alanı, dosya çakışması/legacy kopya kaydı, daha erken kurtarma ve macOS Hakkında sürüm görünümü bu sürümde iyileştirildi. .pdeck v5 biçimi değişmedi. Ayrıntılar ve kalan sınırlar [sürüm notlarında](docs/releases/0.9.1-ea.1.md).
 
@@ -19,18 +23,20 @@ Varsayılan görünüm **Odak**: solda araçlar, ortada panellerin kapatmadığ�
 ## Araçlar
 
 - Aynı pencerede birden fazla belge, sürükleyerek dosya açma ve panodan görüntü katmanı ekleme.
-- Piksel ve düzenlenebilir metin katmanları; taşıma, adlandırma, çoğaltma, sıralama, görünürlük ve kilit.
+- Piksel ve düzenlenebilir metin katmanları; taşıma, adlandırma, çoğaltma, sıralama, görünürlük ve kilit. [Katman sıralama kılavuzu](docs/LAYER-WORKFLOW.md).
+- Tuval odaklıyken Taşı aracında ok tuşları katmanı 1, Shift+ok 10 belge pikseli taşır. Basılı tutulan tek hareket bir geri alma adımıdır; kaynak piksel, metin ve maske korunur. Sayısal X/Y ve tuval/seçim sınırına hizalama için [konumlandırma kılavuzu](docs/LAYER-POSITIONING.md).
 - Katman opaklığı ve 27 harmanlama modu: normal, çarp, ekran, kaplama, yakma/soldurma, ışık, fark, hue/saturation/color/luminosity dahil.
 - Alt katmana kırpma maskesi (Ctrl+Alt+G): ardışık kırpılan katmanlar temel katmanın alfa/maskesini kullanır; temel görünürlük ve opaklık tüm zincire uygulanır. Katman listesinde ↳ işareti gösterilir.
 - Ctrl+J seçim yoksa tüm katmanı, seçim varsa etkin katmanın seçimini yeni katmana kopyalar. Ctrl+Alt+J aynı seçim komutunu açar; Ctrl+Shift+J seçimi keser. Maskeler/renk ayarları/dönüşüm kopya piksellere uygulanır; kesmede kaynak katman da rasterleştirilir. Kesme kilitli veya kırpma zinciri içindeki katmanlarda reddedilir; ilişkiyi kaldırıp işlemi tekrar yapabilirsiniz.
 - Ctrl+E alta birleştirir; işlem önce/sonra görünümü karşılaştırır. Görünümü değiştirecek bağımlı harmanlama/kırpma zincirleri reddedilir; görünür katmanları birleştirme alternatifi vardır.
+- Ctrl+Shift+E dışa aktarım penceresini açar; Ctrl+Alt+Shift+E görünür katmanları birleştirir.
 - Beyazın gösterip siyahın gizlediği katman maskeleri. Seçimden maske oluşturma, maskeyi ters çevirme veya kaldırma.
 - Fırça, kalem, silgi, aynı katmandan klon damgası, bağlı alana boya kovası, iki renkli degrade, dikdörtgen, elips ve damlalık.
 - Ctrl+Alt+B fırça/tablet ayarları: uç açısı, yuvarlaklık, çap yüzdesiyle darbe aralığı; basınçla boyut/akış, minimum boyut ve tepki eğrisi; kalem eğimiyle açı/yuvarlaklık. Qt tablet girdisi ve kalemin silgi ucu aynı seçim/maske/geri alma akışını kullanır. Fare tam basınçta çalışır.
 - Düzenle → Fırça kütüphanesi veya Ctrl+Alt+Shift+B: bütün uç/tablet değerlerini isimli preset olarak kaydetme, yeniden seçme, silme, .pdbrush ile içe/dışa aktarma ve sonraki açılışta saklama. Görselden veya görünür kompozisyonun seçiminden özel uç oluşturma: koyu alanlar boyar, beyaz/saydam alanlar gizlenir; oran korunarak en uzun kenar 512 px'e sığdırılır.
 - Dikdörtgen/eliptik seçim, serbest/çokgen kement ve toleranslı sihirli değnek. Yeni/ekle/çıkar/kesiştir; ters çevirme, kenar yumuşatma ve büyütme/küçültme. Seçim alfası çizim, silme, kopyalama ve maske oluşturma işlemlerinde korunur.
 - Seçili piksel silme, kırpma, oranı koruyan yeniden boyutlandırma, 90° dönüş ve aynalama.
-- Ctrl+T ile kaynak koruyan katman dönüşümü: ölçek, keyfi açı, eğme, aynalama ve dört köşeli perspektif. Kaynak piksel, metin ve maske korunur; önizleme iptal edilebilir ve tek adımda geri alınır.
+- Ctrl+T ile tuval üstünde kaynak koruyan katman dönüşümü: taşıma, sekiz ölçek tutamacı ve ayrı döndürme tutamacı. Köşeler oranı korur; Shift serbest ölçekler, Alt merkezden ölçekler, dönüşte Shift 15° adımlara sabitler. Enter / Uygula kabul eder, Esc / İptal geri döner; bütün sürüklemeler tek geri alma adımıdır. Ctrl+Alt+T sayısal ölçek, açı, eğme, aynalama ve dört köşeli perspektif penceresini açar. Kaynak piksel, metin ve maske korunur.
 - Dokuz sabitleme noktasıyla tuval boyutu; tuval dışındaki kaynak pikselleri silmez. Görünür katmanları birleştirme tuval dışındaki alanları ve gizli katmanları korur. Tuvale düzleştirme saydamlığı koruyup gizli katmanları ve tuval dışını kaldırır.
 - Kaynak pikselleri koruyan parlaklık, kontrast, doygunluk, siyah beyaz ve kutu bulanıklığı.
 - Kaynak koruyan Gaussian, unsharp keskinleştirme (miktar/yarıçap/eşik), high-pass, tekrarlanabilir tek renkli/renkli gren ve pikselleştirme. Canlı önizleme kapatılabilir; kabul tek geri alma adımı, iptal tam geri dönüş sağlar.
@@ -43,17 +49,17 @@ Varsayılan görünüm **Odak**: solda araçlar, ortada panellerin kapatmadığ�
 - A4, Letter veya görüntünün fiziksel boyutunda tek sayfalı PDF; yatay/dikey sayfa ve kenar boşlukları. Dosya → Yazdır native yazıcı penceresini açar; şeffaflık beyaz kağıda uygulanır.
 - Orijinalleri değiştirmeyen toplu boyutlandırma, renk ayarı ve biçim dönüşümü. Çıktı adlarında `_photodeck` eki kullanılır; mevcut çıktılar için sayı eklenir.
 - Atomik `.pdeck` proje kaydı; katman, maske, metin, konum, harmanlama ve renk/filtre parametreleri korunur. Diskte dışarıdan değiştirilen veya silinen açık proje için iptal, ayrı kopya ve açıkça üzerine yazma seçenekleri sunulur.
-- Tamamlanan düzenlemelerden yaklaşık 5 saniye sonra kurtarma kopyası; ayrıca 45 saniyelik periyodik kontrol. Süren çizim/taşıma hareketi sırasında yazma ertelenir, hareket tamamlandığında hemen yeniden denenir. Sonraki açılışta kurtarma önerisi, normal kapatmada kaydet/at/iptal seçimi vardır.
+- Tamamlanan düzenlemelerden yaklaşık 5 saniye sonra kurtarma kopyası; ayrıca 45 saniyelik periyodik kontrol. Süren çizim/taşıma hareketi sırasında yazma ertelenir, hareket tamamlandığında hemen yeniden denenir. Görüntü kodlama ve büyük dosya yazımı arka planda yapılır; aynı anda tek değişmez kurtarma anlık görüntüsü tutulur. Sonraki açılışta kurtarma önerisi, normal kapatmada kaydet/at/iptal seçimi vardır. [Kurtarma kılavuzu](docs/RECOVERY.md) yaşam döngüsü, bellek ve kapanış sınırlarını açıklar.
 
 Kısayollar: V taşı, M seç, C kırp, B fırça, P kalem, E silgi, S klon, F kova, G degrade, T metin, U dikdörtgen, O elips, I damlalık, H el, X renk değiştir. Klon kaynağı Alt+tıklama. Kırpmayı Ctrl+Shift+X ile uygula. Ctrl/Cmd+Z geri alır; Ctrl/Cmd+0 sığdırır; Ctrl/Cmd+1 gerçek boyutu gösterir. Tekerlek yakınlaştırır, orta tuş tuvali kaydırır. Bazı özel kısayollar platformdan bağımsız Ctrl olarak tanımlanmıştır; macOS'ta standart Dosya/Düzenle kısayolları Cmd kullanır.
 
-Shift+M eliptik seçim, L kement, Shift+L çokgen kement, W sihirli değnek. Çokgen kement Enter/çift tıklamayla tamamlanır, Esc iptal eder. Seçim sırasında Shift ekler, Alt çıkarır, Shift+Alt kesiştirir; araç seçeneklerinden aynı modlar seçilebilir. Ctrl+Shift+I seçimi ters çevirir. Seçimler bu sürümde geçicidir; proje veya belge geçmişine kaydedilmez.
+Shift+M eliptik seçim, L kement, Shift+L çokgen kement, W sihirli değnek. Çokgen kement Enter/çift tıklamayla tamamlanır, Esc iptal eder. Seçim sırasında Shift ekler, Alt çıkarır, Shift+Alt kesiştirir; araç seçeneklerinden aynı modlar seçilebilir. Ctrl+Shift+I seçimi ters çevirir. Seçim işlemleri geri alınabilir. Ctrl+D seçimi kaldırır, Ctrl+Shift+D yeniden seçer. Etkin seçim normal proje kaydında geçicidir; Seçim menüsündeki Seçimi kaydet / Kayıtlı seçimi yükle ile adlandırılan kapsamlar projede saklanır. [Seçim kılavuzu](docs/SELECTION-WORKFLOW.md) kayıt ve kurtarma ayrımını açıklar.
 
-0.9 projeleri `.pdeck` sürüm 5 olarak kaydedilir; eski sürüm 1/2/3/4 projeleri açılabilir. Eski uygulamalar sürüm 5 dosyalarını açamaz. v1–v4 orijinalinin üzerine kaydetmek isteyen arayüz işlemi uyarı verir ve farklı adla v5 kopya kaydetmeye yönlendirir; eski orijinal korunur. v2/v3/v4 uyumluluk örnekleri yayımlanmış 0.3/0.4/0.5 AppImage'larıyla oluşturuldu.
+Adlandırılmış seçim içermeyen projeler `.pdeck` v5 olarak kaydedilir; v1–v5 projeler açılabilir. Adlandırılmış seçim varsa v6 gerekir ve yayımlanan PhotoDeck 0.9.1 bu dosyayı açamaz. İlk v6 kaydında uyarı verilir; v5 özgün proje farklı adlı kopyayla korunur. Son kayıtlı seçim silindiğinde normal kayıt yeniden v5 olur. Yalnız etkin seçim değişiklikleri v6 yükseltmesine veya kaydedilmemiş içerik işaretine yol açmaz. v1–v4 orijinalinin üzerine kaydetmek isteyen arayüz işlemi uyarı verir ve farklı adla v5 kopya kaydetmeye yönlendirir; eski orijinal korunur. v2/v3/v4 uyumluluk örnekleri yayımlanmış 0.3/0.4/0.5 AppImage'larıyla oluşturuldu.
 
 Kırpma zinciri katman sırasına bağlıdır. Temel katmanı silmek çocukların kırpmasını kaldırır; sıralama/yeni katman yerleştirme hangi temel katmana kırpıldığını değiştirebilir. Gizli temelli gruplar görünür birleştirmede korunur. Görünür temeli ve gizli kırpılan çocuğu olan gruplar birleştirilmeden önce ayrılmalı veya görünür yapılmalıdır; ilişkiler sessizce kaybedilmez. Feather ile kesme, kısmi alfa sınırlarında iki ayrı katman oluşturduğu için sert seçim gibi piksel piksel aynı görünümü garanti etmez.
 
-Dönüşmüş katmanda piksel boyamak/silmek için Katman → Görünümü rasterleştir kullanın. Bu açık adım dönüşümü, maskeyi ve renk ayarlarını kaynak piksellere uygular; metin düzenlenebilirliği kaldırılır, görünür sonuç ve geri alma korunur. Tüm görüntüye boyutlandırma/90° dönüş/aynalama uygulanması da dönüştürülmüş katmanları önce rasterleştirir. Serbest dönüşüm şu an sayısal bir pencereyle yapılır; tuval üstü tutamaçlar ve warp henüz yoktur.
+Dönüşmüş katmanda piksel boyamak/silmek için Katman → Görünümü rasterleştir kullanın. Bu açık adım dönüşümü, maskeyi ve renk ayarlarını kaynak piksellere uygular; metin düzenlenebilirliği kaldırılır, görünür sonuç ve geri alma korunur. Tüm görüntüye boyutlandırma/90° dönüş/aynalama uygulanması da dönüştürülmüş katmanları önce rasterleştirir. Tuval üstü dönüşüm bütün etkin katmana uygulanır; seçim piksellerini ayrı dönüştürmez. Aynalama/eğme/perspektif sayısal pencerede sunulur; warp henüz yoktur. [Tuval üstü dönüşüm kılavuzu](docs/ON-CANVAS-TRANSFORM.md).
 
 Açılıştaki Horizon kompozisyonu PhotoDeck için kodla çizilmiş özgün bir örnektir. `examples/Horizon.pdeck` dosyası dört ayrı düzenlenebilir katman içerir.
 
@@ -61,7 +67,7 @@ Açılıştaki Horizon kompozisyonu PhotoDeck için kodla çizilmiş özgün bir
 
 Tuval en fazla 16 megapiksel, her kenar en fazla 16384 piksel. En fazla 64 katman ve 256 MiB kaynak piksel/maske verisi; katmanların toplam dönüşmüş görünüm alanı da 256 MiB ile sınırlıdır. Geçmiş en fazla 30 durum ve canlı belgeden ayrı toplam 128 MiB benzersiz piksel verisi saklar; büyük belgelerde eski adımlar daha erken atılır. Paylaşılan görüntü tamponları gereksiz kopyaları azaltır; filtre sonuçları önbelleğe alınır. Değişmeyen katman/filmşeridi küçük resimleri yeniden kullanılır, canlı hareket sırasında yardımcı önizleme yenilemesi ertelenir. Bu sınırlar toplam süreç RAM'inin üst sınırı değildir: tuval önizlemesi, filtre/dönüşüm tamponları, Qt ve dosya kodlama ek bellek kullanır.
 
-Bozuk proje okumaları geçici belge üzerinde doğrulanır ve açık belgeyi değiştirmez. Uzunluk, boyut, katman sayısı, maske boyutu ve sayısal parametreler sınırlanır. Proje dosyalarında komut, betik veya harici kaynak çalıştırılmaz. Başarısız kayıt açık belgenin kaydedilmiş durumunu değiştirmez. Proje/geçmiş ayrıdır: undo geçmişi dosyaya yazılmaz. Kurtarma sıfır veri kaybı garantisi değildir: henüz tamamlanmamış hareket, yazma öncesi kapanma veya disk hatası son değişiklikleri kaybettirebilir. PNG kodlama ve dosya yazma hâlâ arayüz iş parçacığında eşzamanlıdır; büyük belgelerde bekleme riski sürer. Dış değişiklik kontrolü dosya kimliği, boyut/zaman ve SHA-256 özetiyle iyimser doğrulama yapar; kontrol ile atomik kayıt arasındaki çok dar yarış aralığını bütünüyle kaldırmaz.
+Bozuk proje okumaları geçici belge üzerinde doğrulanır ve açık belgeyi değiştirmez. Uzunluk, boyut, katman sayısı, maske boyutu ve sayısal parametreler sınırlanır. Proje dosyalarında komut, betik veya harici kaynak çalıştırılmaz. Başarısız kayıt açık belgenin kaydedilmiş durumunu değiştirmez. Proje/geçmiş ayrıdır: undo geçmişi dosyaya yazılmaz. Kurtarma sıfır veri kaybı garantisi değildir: henüz tamamlanmamış hareket, yazma öncesi kapanma veya disk hatası son değişiklikleri kaybettirebilir. Normal Kaydet ve dışa aktarımın görüntü kodlaması/dosya yazımı hâlâ arayüz iş parçacığında eşzamanlıdır; büyük belgelerde bekleme riski sürer. Kurtarma kopyasında büyük kodlama/yazma arka plandadır; anlık görüntü yakalama ve son atomik yol yayımı arayüzde kalır. Dış değişiklik kontrolü dosya kimliği, boyut/zaman ve SHA-256 özetiyle iyimser doğrulama yapar; kontrol ile atomik kayıt arasındaki çok dar yarış aralığını bütünüyle kaldırmaz.
 
 ## Linux / Windows / macOS derleme
 
@@ -77,7 +83,7 @@ Linux için `./scripts/build.sh` CMake varsa onu, yoksa qmake6 + make kullanır 
 
 Windows'ta Qt MSVC veya MinGW kitiyle derleyin; `windeployqt` Qt DLL'lerini ve eklentilerini uygulamanın yanına koyar. MSVC/CMake çıktısı `build-cmake/Release/photodeck.exe` olur. macOS'ta çıktı `build-cmake/photodeck.app`; `macdeployqt` bağımlılıkları `.app` içine yerleştirir. Dağıtım için Windows imzalama ve macOS imzalama/notarization ayrıca gerekir.
 
-`.github/workflows/validate.yml` her pull request ve `main` push'unda Qt 6.8.3 ile Linux x86_64, Windows x64, macOS Intel ve Apple Silicon hedeflerinde CMake derlemesi ve 14 CTest grubunu çalıştıracak şekilde tanımlıdır. Test raporları ve CTest günlükleri iş artifacts bölümüne yüklenir. Bu dört hedefin CI kapsamı, tüm işletim sistemi sürümleri veya fiziksel cihazlar için uyumluluk garantisi değildir. Yeni akışın eklenmesi başarılı bir run kanıtı sayılmaz; ilk GitHub run sonucu ayrıca kontrol edilmelidir.
+`.github/workflows/validate.yml` her pull request ve `main` push'unda Qt 6.8.3 ile Linux x86_64, Windows x64, macOS Intel ve Apple Silicon hedeflerinde CMake derlemesi ve 21 CTest grubunu çalıştıracak şekilde tanımlıdır. Test raporları ve CTest günlükleri iş artifacts bölümüne yüklenir. Bu dört hedefin CI kapsamı, tüm işletim sistemi sürümleri veya fiziksel cihazlar için uyumluluk garantisi değildir. Yeni akışın eklenmesi başarılı bir run kanıtı sayılmaz; ilk GitHub run sonucu ayrıca kontrol edilmelidir.
 
 Ayrı Linux işi uygulama ve test kodunu Clang AddressSanitizer/UndefinedBehaviorSanitizer ile derler; hata ilk bulguda işi durdurur. Küçük, tekrarlanabilir `.pdeck`/`.pdbrush` kesme ve byte mutasyonu corpus'u da bu işte çalışır. Bu bir kapsam güdümlü fuzzing altyapısı veya güvenlik sertifikası değildir. Önceden derlenmiş Qt SDK'sı instrument edilmez; süreç sonu leak detection kapalıdır. Aynı kontrolü Linux'ta Qt yolu tanımlı ortamda çalıştırmak için:
 
@@ -92,7 +98,7 @@ QT_QPA_PLATFORM=offscreen ASAN_OPTIONS=detect_leaks=0:halt_on_error=1 \
   ctest --test-dir build-sanitizers -C Debug --output-on-failure --timeout 120
 ```
 
-`.github/workflows/build.yml` etiket (`v*`) veya manuel çalıştırmayla erken erişim paketlerini hazırlar; PR doğrulama akışından ayrıdır. Linux x86_64, Windows x64 ve macOS Intel/Apple Silicon için paketler ve açılış görüntüleri bu akıştadır. Linux/Windows paket denetimleri CTest envanterinden bulunan 14 grubun tümünü paketlenmiş Qt ile çalıştırır; legacy proje fixture'ları test için eklenir, ardından test araçlarıyla birlikte kaldırılır. Paketler önce Actions artifacts olarak hazırlanır; GitHub Release yayımlaması ayrı adımdır. Windows yayıncı sertifikası ve macOS Developer ID/noter onayı yoktur; macOS ad hoc imza denetimi yayıncı kimliğini doğrulamaz.
+`.github/workflows/build.yml` etiket (`v*`) veya manuel çalıştırmayla erken erişim paketlerini hazırlar; PR doğrulama akışından ayrıdır. Linux x86_64, Windows x64 ve macOS Intel/Apple Silicon için paketler ve açılış görüntüleri bu akıştadır. Linux/Windows paket denetimleri CTest envanterinden bulunan 21 grubun tümünü paketlenmiş Qt ile çalıştırır; legacy proje fixture'ları test için eklenir, ardından test araçlarıyla birlikte kaldırılır. Paketler önce Actions artifacts olarak hazırlanır; GitHub Release yayımlaması ayrı adımdır. Windows yayıncı sertifikası ve macOS Developer ID/noter onayı yoktur; macOS ad hoc imza denetimi yayıncı kimliğini doğrulamaz.
 
 Linux paketleme: `./scripts/package-linux.sh` sistem Qt kullanan küçük geliştirici paketini hazırlar. Erken erişim CI paketi `scripts/package-linux-portable.py` ile gerekli Qt kütüphanelerini, Wayland bileşenlerini ve uyumlu font yapılandırmasını içerir.
 
@@ -100,12 +106,12 @@ Dağıtılmış Linux paketini tek dosyalık AppImage olarak hazırlamak için `
 
 ```sh
 python3 scripts/package-appimage.py \
-  --package dist/PhotoDeck-0.9.1-ea.1-linux-x86_64 \
+  --package dist/PhotoDeck-0.10.0-ea.1-linux-x86_64 \
   --appimagetool /path/to/appimagetool \
-  --output dist/PhotoDeck-0.9.1-ea.1-x86_64.AppImage
+  --output dist/PhotoDeck-0.10.0-ea.1-x86_64.AppImage
 ```
 
-AppImage'a çalıştırma izni verip açın: `chmod +x PhotoDeck-0.9.1-ea.1-x86_64.AppImage`. FUSE bulunmayan sistemlerde `APPIMAGE_EXTRACT_AND_RUN=1 ./PhotoDeck-0.9.1-ea.1-x86_64.AppImage` kullanılabilir. Windows taşınabilir paketindeki `PhotoDeck.exe`, yanındaki DLL ve eklenti klasörleriyle birlikte taşınmalıdır. macOS paketindeki `.app` tüm içeriğiyle korunmalıdır.
+AppImage'a çalıştırma izni verip açın: `chmod +x PhotoDeck-0.10.0-ea.1-x86_64.AppImage`. FUSE bulunmayan sistemlerde `APPIMAGE_EXTRACT_AND_RUN=1 ./PhotoDeck-0.10.0-ea.1-x86_64.AppImage` kullanılabilir. Windows taşınabilir paketindeki `PhotoDeck.exe`, yanındaki DLL ve eklenti klasörleriyle birlikte taşınmalıdır. macOS paketindeki `.app` tüm içeriğiyle korunmalıdır.
 
 ## Mevcut kapsam
 

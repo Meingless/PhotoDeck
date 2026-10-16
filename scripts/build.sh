@@ -12,13 +12,21 @@ if command -v cmake >/dev/null 2>&1; then
 else
     photodeck_qmake=$(command -v qmake6 || command -v qmake)
     (cd "$photodeck_build" && "$photodeck_qmake" "$photodeck_root/PhotoDeck.pro" && make -j4)
-    mkdir -p "$photodeck_root/build-tests"
-    (cd "$photodeck_root/build-tests" && "$photodeck_qmake" "$photodeck_root/tests/tests.pro" && make -j4 && QT_QPA_PLATFORM=offscreen ./photodeck-tests)
-    mkdir -p "$photodeck_root/build-audit"
-    (cd "$photodeck_root/build-audit" && "$photodeck_qmake" "$photodeck_root/tests/features.pro" && make -j4 && QT_QPA_PLATFORM=offscreen ./photodeck-feature-audit)
-    for photodeck_suite in tones selections blending transforms layer-ops effects output brushes presets; do
-        mkdir -p "$photodeck_root/build-$photodeck_suite"
-        (cd "$photodeck_root/build-$photodeck_suite" && "$photodeck_qmake" "$photodeck_root/tests/$photodeck_suite.pro" && make -j4 && QT_QPA_PLATFORM=offscreen "./photodeck-$photodeck_suite-tests")
+    for photodeck_project in "$photodeck_root"/tests/*.pro; do
+        photodeck_suite=${photodeck_project##*/}
+        photodeck_suite=${photodeck_suite%.pro}
+        photodeck_test_build="$photodeck_root/build-$photodeck_suite"
+        photodeck_test_binary="photodeck-$photodeck_suite-tests"
+        # The original two test projects predate the suite naming convention.
+        case "$photodeck_suite" in
+            tests) photodeck_test_binary=photodeck-tests ;;
+            features)
+                photodeck_test_build="$photodeck_root/build-audit"
+                photodeck_test_binary=photodeck-feature-audit
+                ;;
+        esac
+        mkdir -p "$photodeck_test_build"
+        (cd "$photodeck_test_build" && "$photodeck_qmake" "$photodeck_project" && make -j4 && QT_QPA_PLATFORM=offscreen "./$photodeck_test_binary")
     done
     mkdir -p "$photodeck_root/bin"
     cp "$photodeck_build/bin/photodeck" "$photodeck_root/bin/photodeck"

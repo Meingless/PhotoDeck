@@ -5,6 +5,17 @@
 #include <QDialogButtonBox>
 #include <QDoubleSpinBox>
 #include <QFile>
+#include <QDir>
+#include <QFileDialog>
+#include <QFocusEvent>
+#include <QTabBar>
+#include <QLabel>
+#include <QLayout>
+#include <QMessageBox>
+#include <QPointingDevice>
+#include <QPlainTextEdit>
+#include <QTabletEvent>
+#include <QSlider>
 #include <QPushButton>
 #include <QSpinBox>
 #include <QStandardPaths>
@@ -34,6 +45,83 @@ QImage reference(const Layer &l, QSize canvas, QTransform matrix) {
     p.drawImage(QPoint(), l.pixels);
     p.end();
     return image;
+}
+void transformFixture(Document &d) {
+    QVERIFY(d.create({360, 260}));
+    d.beginEdit();
+    Layer &layer = d.state.layers[0];
+    layer.pixels = QImage(120, 80, QImage::Format_ARGB32_Premultiplied);
+    layer.pixels.fill(QColor("#e8b18a"));
+    QPainter painter(&layer.pixels);
+    painter.fillRect(60, 0, 60, 80, QColor("#59c9b4"));
+    painter.end();
+    layer.mask = QImage(layer.pixels.size(), QImage::Format_ARGB32_Premultiplied);
+    layer.mask.fill(QColor(210, 210, 210));
+    layer.offset = {110, 90};
+    d.commit("Transform fixture");
+    d.markSaved();
+}
+void prepare(Canvas &canvas) {
+    canvas.resize(760, 580);
+    canvas.show();
+    canvas.fit();
+    canvas.actualSize();
+    QTest::qWait(10);
+}
+// Only the part of a handle's nine-pixel pointer target inside the canvas
+// can be reached. Off-screen handles must not force controls over visible ones.
+QVector<QRectF> visibleTransformTargets(const Canvas &canvas) {
+    const QRectF viewport = canvas.showRulers ? QRectF(canvas.rect().adjusted(24, 24, 0, 0))
+                                             : QRectF(canvas.rect());
+    QVector<QRectF> targets;
+    for (int i = TransformHandles::TopLeft; i <= TransformHandles::Move; ++i) {
+        const QPointF point = canvas.transformHandlePosition(TransformHandles::Handle(i));
+        const QRectF target = QRectF(point - QPointF(9, 9), QSizeF(18, 18)).intersected(viewport);
+        if (!target.isEmpty())
+            targets.append(target);
+    }
+    return targets;
+}
+QSize compactTransformControlsSize(const QWidget &controls) {
+    const auto margins = controls.layout()->contentsMargins();
+    const auto frame = controls.contentsMargins();
+    const int rowHeight = controls.layout()->itemAt(0)->minimumSize().height();
+    const int height = rowHeight + margins.top() + margins.bottom() + frame.top() + frame.bottom();
+    return {controls.width(), qMax(48, height)};
+}
+bool controlsCanAvoidTargets(const Canvas &canvas, const QVector<QRectF> &targets,
+                            QSize controlsSize) {
+    // Independent rectangle-edge search: if an empty placement exists, an edge
+    // of that placement can touch the viewport or one of the target rectangles.
+    const int top = canvas.showRulers ? 36 : 12;
+    const int right = canvas.width() - controlsSize.width();
+    const int bottom = canvas.height() - controlsSize.height() - 12;
+    if (right < 0 || bottom < top)
+        return false;
+    QVector<int> columns{0, right}, rows{top, bottom};
+    for (const auto &target : targets) {
+        columns.append(qFloor(target.left() - controlsSize.width()));
+        columns.append(qCeil(target.right()));
+        rows.append(qFloor(target.top() - controlsSize.height()));
+        rows.append(qCeil(target.bottom()));
+    }
+    for (int x : columns)
+        for (int y : rows) {
+            if (x < 0 || x > right || y < top || y > bottom)
+                continue;
+            const QRectF candidate(QPointF(x, y), controlsSize);
+            bool clear = true;
+            for (const auto &target : targets)
+                clear &= !candidate.intersects(target);
+            if (clear)
+                return true;
+        }
+    return false;
+}
+void drag(Canvas &canvas, QPoint from, QPoint to, Qt::KeyboardModifiers modifiers = {}) {
+    QTest::mousePress(&canvas, Qt::LeftButton, modifiers, from);
+    QTest::mouseMove(&canvas, to);
+    QTest::mouseRelease(&canvas, Qt::LeftButton, modifiers, to);
 }
 } // namespace
 class TransformTests : public QObject {
@@ -349,7 +437,7 @@ class TransformTests : public QObject {
         d->create({60, 40});
         pattern(*d);
         w.addDocument(d);
-        QAction *action = w.findChild<QAction *>("transform");
+        QAction *action = w.findChild<QAction *>("transformAdvanced");
         QVERIFY(action);
         QImage before = d->composite();
         bool handled = false, changed = false;
@@ -436,6 +524,1123 @@ class TransformTests : public QObject {
         d->undo();
         w.close();
     }
+    void handleGeometryHonorsConstraintsAndViewCoordinates() {
+        TransformHandles box{{120, 80}, {}, {50, 30}};
+        for (qreal zoom : {.25, .5, 1.0, 3.0, 8.0}) {
+            const QPointF pan(71, 93);
+            for (int i = TransformHandles::TopLeft; i <= TransformHandles::Rotate; ++i) {
+                auto handle = TransformHandles::Handle(i);
+                QCOMPARE(box.hitTest(box.widgetPoint(handle, zoom, pan), zoom, pan), handle);
+            }
+            QCOMPARE(QLineF(box.widgetPoint(TransformHandles::Top, zoom, pan),
+                            box.widgetPoint(TransformHandles::Rotate, zoom, pan)).length(), 28.0);
+        }
+        const auto corner = TransformHandles::BottomRight;
+        const QPointF press = box.point(corner);
+        QTransform uniform = box.dragged(corner, press, press + QPointF(60, 40), {});
+        QCOMPARE(uniform.map(QPointF(120, 80)), QPointF(180, 120));
+        QCOMPARE(uniform.map(QPointF()), QPointF());
+        QTransform free = box.dragged(corner, press, press + QPointF(60, 20), Qt::ShiftModifier);
+        QCOMPARE(free.map(QPointF(120, 80)), QPointF(180, 100));
+        QTransform centered = box.dragged(corner, press, press + QPointF(30, 20), Qt::AltModifier);
+        QCOMPARE(centered.map(QPointF(60, 40)), QPointF(60, 40));
+        QCOMPARE(centered.map(QPointF()), QPointF(-30, -20));
+        QTransform edge = box.dragged(TransformHandles::Right, box.point(TransformHandles::Right),
+                                     box.point(TransformHandles::Right) + QPointF(60, 20), {});
+        QCOMPARE(edge.map(QPointF(120, 80)), QPointF(180, 80));
+        QTransform constrained = box.dragged(TransformHandles::Move, {0, 0}, {10, 3}, Qt::ShiftModifier);
+        QCOMPARE(constrained.map(QPointF()), QPointF(10, 0));
+        QTransform crossed = box.dragged(corner, press, {0, 0}, {});
+        QVERIFY(crossed.determinant() > 0);
+        QTransform rotated;
+        rotated.translate(20, 30);
+        rotated.rotate(30);
+        box.geometry = rotated;
+        QTransform scaled = box.dragged(corner, box.point(corner),
+                                       box.offset + rotated.map(QPointF(180, 120)), {});
+        QVERIFY(QLineF(scaled.map(QPointF()), rotated.map(QPointF())).length() < 1e-8);
+        QVERIFY(QLineF(scaled.map(QPointF(120, 80)), rotated.map(QPointF(180, 120))).length() < 1e-8);
+        QCOMPARE(box.dragged(corner, press,
+                             {std::numeric_limits<double>::quiet_NaN(), 0}, {}), box.geometry);
+    }
+    void onCanvasMultipleDragsApplyAsOneSourcePreservingUndo() {
+        Document d;
+        transformFixture(d);
+        const Layer source = d.state.layers[0];
+        const QImage before = d.composite();
+        const int history = d.historyLabels().size();
+        Canvas c(&d);
+        prepare(c);
+        QVERIFY(c.beginTransform());
+        const QPoint center = c.transformHandlePosition(TransformHandles::Move).toPoint();
+        drag(c, center, center + QPoint(20, 15));
+        QVERIFY(c.isTransforming());
+        QCOMPARE(d.state.layers[0].geometry, source.geometry);
+        QCOMPARE(d.historyLabels().size(), history);
+        QVERIFY(!d.isEditing());
+        QVERIFY(!d.dirty);
+        QVERIFY(c.transformGeometry() != source.geometry);
+        const QPoint handle = c.transformHandlePosition(TransformHandles::BottomRight).toPoint();
+        drag(c, handle, handle + QPoint(30, 20));
+        const QTransform result = c.transformGeometry();
+        QVERIFY(c.isTransforming());
+        QTest::keyClick(&c, Qt::Key_Return);
+        QVERIFY(!c.isTransforming());
+        QCOMPARE(d.historyLabels().size(), history + 1);
+        QCOMPARE(d.state.layers[0].geometry, result);
+        QCOMPARE(d.state.layers[0].pixels, source.pixels);
+        QCOMPARE(d.state.layers[0].mask, source.mask);
+        QCOMPARE(d.state.layers[0].offset, source.offset);
+        QCOMPARE(d.state.layers[0].text, source.text);
+        QVERIFY(d.composite() != before);
+        const QImage after = d.composite();
+        d.undo();
+        QCOMPARE(d.composite(), before);
+        d.redo();
+        QCOMPARE(d.composite(), after);
+    }
+    void onCanvasNoOpCancelAndLayerGuardsDoNotTouchHistory() {
+        Document d;
+        transformFixture(d);
+        const Layer source = d.state.layers[0];
+        const int history = d.historyLabels().size();
+        d.selection = {5, 6, 7, 8};
+        const Selection selection = d.selection;
+        Canvas c(&d);
+        prepare(c);
+        QVERIFY(c.beginTransform());
+        const QPoint handle = c.transformHandlePosition(TransformHandles::BottomRight).toPoint();
+        QTest::mouseClick(&c, Qt::LeftButton, {}, handle);
+        QTest::keyClick(&c, Qt::Key_Return);
+        QCOMPARE(d.historyLabels().size(), history);
+        QVERIFY(!d.dirty);
+        QVERIFY(c.beginTransform());
+        QTest::keyClick(&c, Qt::Key_Right);
+        QTest::keyClick(&c, Qt::Key_Down, Qt::ShiftModifier);
+        QTest::keyClick(&c, Qt::Key_Escape);
+        QVERIFY(!c.isTransforming());
+        QCOMPARE(d.state.layers[0].geometry, source.geometry);
+        QCOMPARE(d.selection.bounds(), selection.bounds());
+        QCOMPARE(d.historyLabels().size(), history);
+        QVERIFY(!d.dirty);
+        d.state.layers[0].locked = true;
+        QVERIFY(!c.beginTransform());
+        d.state.layers[0].locked = false;
+        d.state.layers[0].visible = false;
+        QVERIFY(!c.beginTransform());
+        d.state.layers[0].visible = true;
+        QVERIFY(c.beginTransform());
+        QTest::keyClick(&c, Qt::Key_Right);
+        d.state.layers[0].locked = true;
+        d.changed();
+        QVERIFY(!c.isTransforming());
+        QCOMPARE(d.state.layers[0].geometry, source.geometry);
+        QCOMPARE(d.historyLabels().size(), history);
+    }
+    void onCanvasApplyRevalidatesTargetAfterSessionEnd_data() {
+        QTest::addColumn<QString>("change");
+        for (const auto *change : {"document", "active-layer", "source", "revision", "new-preview",
+                                   "new-preview-canceled", "deleted-document"})
+            QTest::newRow(change) << QString(change);
+    }
+    void onCanvasApplyRevalidatesTargetAfterSessionEnd() {
+        QFETCH(QString, change);
+        QPointer<Document> target = new Document;
+        transformFixture(*target);
+        QString error;
+        QVERIFY(target->addLayer("Second", &error));
+        target->state.active = 0;
+        target->markSaved();
+        Document other;
+        transformFixture(other);
+        const int history = target->historyLabels().size();
+        const int otherHistory = other.historyLabels().size();
+        Canvas canvas(target);
+        QVERIFY(canvas.beginTransform());
+        QTest::keyClick(&canvas, Qt::Key_Right);
+        QTransform replacement;
+        bool handled = false;
+        connect(&canvas, &Canvas::transformSessionChanged, &canvas, [&](bool active) {
+            if (active || handled)
+                return;
+            handled = true;
+            if (change == "document")
+                canvas.document = &other;
+            else if (change == "active-layer")
+                target->state.active = 1;
+            else if (change == "source")
+                target->state.layers[0].offset += QPoint(1, 0);
+            else if (change == "revision") {
+                target->beginEdit();
+                target->state.layers[0].name = "Changed synchronously";
+                target->commit("External edit");
+            } else if (change == "deleted-document")
+                delete target.data();
+            else {
+                QVERIFY(canvas.beginTransform());
+                QTest::keyClick(&canvas, Qt::Key_Down);
+                replacement = canvas.transformGeometry();
+                if (change == "new-preview-canceled")
+                    canvas.cancelTransform();
+            }
+        });
+        QVERIFY(!canvas.finishPendingGesture());
+        QVERIFY(handled);
+        QCOMPARE(canvas.isTransforming(), change == "new-preview");
+        if (canvas.isTransforming())
+            QCOMPARE(canvas.transformGeometry(), replacement);
+        if (target) {
+            QCOMPARE(target->state.layers[0].geometry, QTransform());
+            QCOMPARE(target->state.layers[1].geometry, QTransform());
+            QCOMPARE(target->historyLabels().size(), history + (change == "revision" ? 1 : 0));
+            QVERIFY(!target->isEditing());
+        }
+        QCOMPARE(other.state.layers[0].geometry, QTransform());
+        QCOMPARE(other.historyLabels().size(), otherHistory);
+        canvas.document = target;
+        delete target.data();
+    }
+    void onCanvasSessionEndDeletionDoesNotResumeCaller_data() {
+        QTest::addColumn<QString>("operation");
+        for (const auto *operation : {"apply", "finish", "cancel", "set-tool", "invalidate"})
+            QTest::newRow(operation) << QString(operation);
+    }
+    void onCanvasSessionEndDeletionDoesNotResumeCaller() {
+        QFETCH(QString, operation);
+        Document target;
+        transformFixture(target);
+        const int history = target.historyLabels().size();
+        QPointer<Canvas> canvas = new Canvas(&target);
+        QVERIFY(canvas->beginTransform());
+        QTest::keyClick(canvas, Qt::Key_Right);
+        connect(canvas, &Canvas::transformSessionChanged, &target, [&](bool active) {
+            if (!active)
+                delete canvas.data();
+        });
+        if (operation == "apply")
+            QVERIFY(!canvas->applyTransform());
+        else if (operation == "finish")
+            QVERIFY(!canvas->finishPendingGesture());
+        else if (operation == "cancel")
+            canvas->cancelTransform();
+        else if (operation == "set-tool")
+            canvas->setTool(Canvas::Brush);
+        else {
+            target.beginEdit();
+            target.state.layers[0].offset += QPoint(1, 0);
+            target.changed();
+            target.cancelEdit();
+        }
+        QVERIFY(!canvas);
+        QCOMPARE(target.state.layers[0].geometry, QTransform());
+        QCOMPARE(target.historyLabels().size(), history);
+        QVERIFY(!target.isEditing());
+    }
+    void onCanvasBeginSignalsRespectLifetimeAndSessionOwnership_data() {
+        QTest::addColumn<QString>("boundary");
+        QTest::addColumn<QString>("action");
+        for (const auto *boundary : {"hint", "session"})
+            for (const auto *action : {"delete", "cancel", "replace", "retarget"})
+                QTest::newRow(qPrintable(QString("%1-%2").arg(boundary, action)))
+                    << QString(boundary) << QString(action);
+    }
+    void onCanvasBeginSignalsRespectLifetimeAndSessionOwnership() {
+        QFETCH(QString, boundary);
+        QFETCH(QString, action);
+        Document target;
+        transformFixture(target);
+        const int history = target.historyLabels().size();
+        Document other;
+        transformFixture(other);
+        QPointer<Canvas> canvas = new Canvas(&target);
+        QSignalSpy sessions(canvas, &Canvas::transformSessionChanged);
+        bool handled = false;
+        QTransform replacement;
+        const auto interrupt = [&] {
+            if (handled)
+                return;
+            handled = true;
+            if (action == "delete")
+                delete canvas.data();
+            else if (action == "retarget")
+                canvas->document = &other;
+            else {
+                canvas->cancelTransform();
+                if (action == "replace") {
+                    QVERIFY(canvas->beginTransform());
+                    QTest::keyClick(canvas, Qt::Key_Down);
+                    replacement = canvas->transformGeometry();
+                }
+            }
+        };
+        if (boundary == "hint")
+            connect(canvas, &Canvas::toolHint, &target, [&](QString) { interrupt(); });
+        else
+            connect(canvas, &Canvas::transformSessionChanged, &target, [&](bool active) {
+                if (active)
+                    interrupt();
+            });
+        QVERIFY(!canvas->beginTransform());
+        QVERIFY(handled);
+        if (canvas) {
+            QCOMPARE(canvas->isTransforming(), action == "replace");
+            if (action == "replace")
+                QCOMPARE(canvas->transformGeometry(), replacement);
+        }
+        if (boundary == "hint" && action != "replace")
+            for (const auto &arguments : sessions)
+                QVERIFY(!arguments.first().toBool());
+        QCOMPARE(target.historyLabels().size(), history);
+        QCOMPARE(target.state.layers[0].geometry, QTransform());
+        delete canvas.data();
+    }
+    void onCanvasCancelKeepsReplacementSession_data() {
+        QTest::addColumn<bool>("invalidate");
+        QTest::newRow("cancel") << false;
+        QTest::newRow("external-change") << true;
+    }
+    void onCanvasCancelKeepsReplacementSession() {
+        QFETCH(bool, invalidate);
+        Document target;
+        transformFixture(target);
+        const int history = target.historyLabels().size();
+        Canvas canvas(&target);
+        QVERIFY(canvas.beginTransform());
+        QTest::keyClick(&canvas, Qt::Key_Right);
+        QSignalSpy hints(&canvas, &Canvas::toolHint);
+        bool handled = false;
+        QTransform replacement;
+        connect(&canvas, &Canvas::transformSessionChanged, &canvas, [&](bool active) {
+            if (active || handled)
+                return;
+            handled = true;
+            QVERIFY(canvas.beginTransform());
+            QTest::keyClick(&canvas, Qt::Key_Down);
+            replacement = canvas.transformGeometry();
+        });
+        if (invalidate) {
+            target.state.layers[0].offset += QPoint(1, 0);
+            target.changed();
+        } else
+            canvas.cancelTransform();
+        QVERIFY(handled);
+        QVERIFY(canvas.isTransforming());
+        QCOMPARE(canvas.transformGeometry(), replacement);
+        QCOMPARE(hints.size(), 1);
+        QVERIFY(hints.first().first().toString().startsWith("Tüm katmanı"));
+        QCOMPARE(target.state.layers[0].geometry, QTransform());
+        QCOMPARE(target.historyLabels().size(), history);
+    }
+    void onCanvasCommitSignalRespectsLifetimeAndNewPreview_data() {
+        QTest::addColumn<QString>("action");
+        for (const auto *action : {"delete-canvas", "delete-document", "delete-both", "new-preview"})
+            QTest::newRow(action) << QString(action);
+    }
+    void onCanvasCommitSignalRespectsLifetimeAndNewPreview() {
+        QFETCH(QString, action);
+        QPointer<Document> target = new Document;
+        transformFixture(*target);
+        const int history = target->historyLabels().size();
+        QPointer<Canvas> canvas = new Canvas(target);
+        QVERIFY(canvas->beginTransform());
+        QTest::keyClick(canvas, Qt::Key_Right);
+        const QTransform applied = canvas->transformGeometry();
+        QSignalSpy hints(canvas, &Canvas::toolHint);
+        bool handled = false;
+        QTransform replacement;
+        connect(target, &Document::updated, this, [&] {
+            if (handled)
+                return;
+            handled = true;
+            // Apply publishes only its completed transaction, so callbacks can
+            // immediately start a new preview without inheriting an open edit.
+            QVERIFY(!target->isEditing());
+            QCOMPARE(target->historyLabels().size(), history + 1);
+            if (action == "new-preview") {
+                QVERIFY(canvas->beginTransform());
+                QTest::keyClick(canvas, Qt::Key_Down);
+                replacement = canvas->transformGeometry();
+            } else {
+                if (action != "delete-document")
+                    delete canvas.data();
+                if (action != "delete-canvas")
+                    delete target.data();
+            }
+        });
+        QVERIFY(canvas->applyTransform());
+        QVERIFY(handled);
+        if (action == "new-preview") {
+            QVERIFY(canvas->isTransforming());
+            QCOMPARE(canvas->transformGeometry(), replacement);
+        }
+        if (target) {
+            QCOMPARE(target->state.layers[0].geometry, applied);
+            QCOMPARE(target->historyLabels().size(), history + 1);
+            QVERIFY(!target->isEditing());
+            target->undo();
+            QCOMPARE(target->state.layers[0].geometry, QTransform());
+        }
+        if (action == "new-preview") {
+            // Undo invalidates the replacement above; before it did, Apply
+            // must not have emitted an old success hint over that new session.
+            QVERIFY(replacement != applied);
+            for (const auto &arguments : hints)
+                QVERIFY(!arguments.first().toString().startsWith("Dönüşüm uygulandı"));
+        }
+        delete canvas.data();
+        delete target.data();
+    }
+    void actionSettlementDoesNotResumeOnReplacementTarget_data() {
+        QTest::addColumn<QString>("change");
+        for (const auto *change : {"delete-window", "change-tab", "new-preview", "change-layer"})
+            QTest::newRow(change) << QString(change);
+    }
+    void actionSettlementDoesNotResumeOnReplacementTarget() {
+        QFETCH(QString, change);
+        QPointer<MainWindow> window = new MainWindow(false, false);
+        QPointer<Document> target = new Document;
+        transformFixture(*target);
+        QString error;
+        QVERIFY(target->addLayer("Second", &error));
+        target->state.active = 0;
+        window->addDocument(target);
+        QPointer<Canvas> canvas = window->currentCanvas();
+        auto *other = new Document;
+        transformFixture(*other);
+        window->addDocument(other);
+        Canvas *otherCanvas = window->currentCanvas();
+        auto *tabs = window->findChild<QTabWidget *>("documents");
+        tabs->setCurrentWidget(canvas);
+        QVERIFY(canvas->beginTransform());
+        QTest::keyClick(canvas, Qt::Key_Right);
+        const int history = target->historyLabels().size();
+        const int otherHistory = other->historyLabels().size();
+        bool handled = false;
+        QTransform replacement;
+        connect(canvas, &Canvas::transformSessionChanged, this, [&](bool active) {
+            if (active || handled)
+                return;
+            handled = true;
+            if (change == "delete-window")
+                delete window.data();
+            else if (change == "change-tab")
+                tabs->setCurrentWidget(otherCanvas);
+            else if (change == "change-layer")
+                target->state.active = 1;
+            else {
+                QVERIFY(canvas->beginTransform());
+                QTest::keyClick(canvas, Qt::Key_Down);
+                replacement = canvas->transformGeometry();
+            }
+        });
+        // This command must never duplicate a different tab/layer or run
+        // underneath a new preview opened while the old one is being settled.
+        window->findChild<QAction *>("duplicateWhole")->trigger();
+        QVERIFY(handled);
+        if (!window) {
+            QVERIFY(!canvas);
+            QVERIFY(!target);
+            return;
+        }
+        QCOMPARE(target->state.layers.size(), 2);
+        QCOMPARE(other->state.layers.size(), 1);
+        QCOMPARE(other->historyLabels().size(), otherHistory);
+        QCOMPARE(target->historyLabels().size(), history + (change == "change-tab" ? 1 : 0));
+        QVERIFY(!target->isEditing());
+        if (change == "new-preview") {
+            QVERIFY(canvas->isTransforming());
+            QCOMPARE(canvas->transformGeometry(), replacement);
+        }
+        delete window.data();
+    }
+    void onCanvasDragHitTestingRemainsCorrectAfterZoomAndPan_data() {
+        QTest::addColumn<qreal>("zoom");
+        for (qreal zoom : {.5, 1.0, 2.5})
+            QTest::newRow(qPrintable(QString::number(zoom))) << zoom;
+    }
+    void onCanvasDragHitTestingRemainsCorrectAfterZoomAndPan() {
+        QFETCH(qreal, zoom);
+        Document d;
+        transformFixture(d);
+        Canvas c(&d);
+        prepare(c);
+        c.setZoom(zoom);
+        QTest::mousePress(&c, Qt::MiddleButton, {}, {60, 60});
+        QTest::mouseMove(&c, {101, 83});
+        QTest::mouseRelease(&c, Qt::MiddleButton, {}, {101, 83});
+        QVERIFY(c.beginTransform());
+        const QPoint center = c.transformHandlePosition(TransformHandles::Move).toPoint();
+        drag(c, center, center + QPoint(40, 20));
+        const QPointF actual = c.transformGeometry().map(QPointF());
+        QVERIFY(QLineF(actual, QPointF(40 / zoom, 20 / zoom)).length() < 1e-7);
+        c.cancelTransform();
+        QVERIFY(c.beginTransform());
+        const QPoint corner = c.transformHandlePosition(TransformHandles::BottomRight).toPoint();
+        drag(c, corner, corner + QPoint(qRound(60 * zoom), qRound(40 * zoom)));
+        const QTransform geometry = c.transformGeometry();
+        QVERIFY(qAbs(geometry.m11() - 1.5) < .02);
+        QVERIFY(qAbs(geometry.m22() - 1.5) < .02);
+        QVERIFY(c.applyTransform());
+        QCOMPARE(d.state.layers[0].pixels.size(), QSize(120, 80));
+    }
+    void onCanvasRotateSnapAndInvalidDragRetainLastValidPreview() {
+        Document d;
+        transformFixture(d);
+        Canvas c(&d);
+        prepare(c);
+        QVERIFY(c.beginTransform());
+        const QPointF center = c.transformHandlePosition(TransformHandles::Move);
+        const QPoint rotation = c.transformHandlePosition(TransformHandles::Rotate).toPoint();
+        const qreal radius = QLineF(center, rotation).length();
+        const QPoint target = (center + QPointF(radius, 0)).toPoint();
+        drag(c, rotation, target, Qt::ShiftModifier);
+        const QTransform rotated = c.transformGeometry();
+        QVERIFY(qAbs(rotated.m11()) < 1e-7);
+        QVERIFY(qAbs(rotated.m12() - 1) < 1e-7);
+        const QPoint corner = c.transformHandlePosition(TransformHandles::BottomRight).toPoint();
+        drag(c, corner, {1000000000, 1000000000});
+        QCOMPARE(c.transformGeometry(), rotated);
+        QVERIFY(c.findChild<QLabel *>("transformInfo")->text().contains("son geçerli"));
+        QVERIFY(c.applyTransform());
+        QVERIFY(d.state.layers[0].validGeometry());
+    }
+    void onCanvasRefreshAndFocusPreservePreviewButExternalEditInvalidatesIt() {
+        MainWindow w(false, false);
+        w.show();
+        auto *d = new Document;
+        transformFixture(*d);
+        w.addDocument(d);
+        QTest::qWait(30);
+        Canvas *c = w.currentCanvas();
+        w.findChild<QAction *>("transform")->trigger();
+        QVERIFY(c->isTransforming());
+        QTest::keyClick(c, Qt::Key_Right);
+        const QTransform preview = c->transformGeometry();
+        auto *opacity = w.findChild<QSlider *>("layerOpacity");
+        opacity->setFocus();
+        QTest::qWait(40);
+        d->changed(); // A redraw notification is not a real edit.
+        QTest::qWait(40);
+        QVERIFY(c->isTransforming());
+        QCOMPARE(c->transformGeometry(), preview);
+        d->beginEdit();
+        d->state.layers[0].offset += QPoint(1, 0);
+        d->changed();
+        QVERIFY(!c->isTransforming());
+        d->commit("External edit");
+        QCOMPARE(d->state.layers[0].geometry, QTransform());
+        d->undo();
+        w.close();
+    }
+    void onCanvasActionUndoCancelsPreviewAndPropertyEditsStaySeparate() {
+        MainWindow w(false, false);
+        w.show();
+        auto *d = new Document;
+        transformFixture(*d);
+        w.addDocument(d);
+        QTest::qWait(30);
+        Canvas *c = w.currentCanvas();
+        const int history = d->historyLabels().size();
+        w.findChild<QAction *>("transform")->trigger();
+        QTest::keyClick(c, Qt::Key_Right);
+        QVERIFY(w.findChild<QAction *>("undo")->isEnabled());
+        QVERIFY(w.findChild<QAction *>("undo")->text().contains("önizlemesini iptal"));
+        w.findChild<QAction *>("undo")->trigger();
+        QVERIFY(!c->isTransforming());
+        QCOMPARE(d->historyLabels().size(), history);
+        QCOMPARE(d->state.layers[0].geometry, QTransform());
+        w.findChild<QAction *>("transform")->trigger();
+        QTest::keyClick(c, Qt::Key_Right);
+        w.findChild<QSlider *>("layerOpacity")->setValue(70);
+        QVERIFY(!c->isTransforming());
+        QCOMPARE(d->historyLabels().size(), history + 2);
+        QCOMPARE(d->state.layers[0].geometry, QTransform::fromTranslate(1, 0));
+        QCOMPARE(d->state.layers[0].opacity, .7);
+        d->undo();
+        QCOMPARE(d->state.layers[0].opacity, 1.0);
+        QCOMPARE(d->state.layers[0].geometry, QTransform::fromTranslate(1, 0));
+        d->undo();
+        QCOMPARE(d->state.layers[0].geometry, QTransform());
+        w.close();
+    }
+    void onCanvasColorResetPreservesPendingTransformAndSeparateUndo_data() {
+        QTest::addColumn<bool>("adjusted");
+        QTest::newRow("changed-color") << true;
+        QTest::newRow("already-neutral") << false;
+    }
+    void onCanvasColorResetPreservesPendingTransformAndSeparateUndo() {
+        QFETCH(bool, adjusted);
+        MainWindow w(false, false);
+        auto *d = new Document;
+        transformFixture(*d);
+        d->beginEdit();
+        d->adjust(adjusted ? 20 : 0, adjusted ? -10 : 0, adjusted ? 15 : 0);
+        ToneSettings tones;
+        tones.exposure = adjusted ? .5 : 0;
+        QVERIFY(d->adjustTones(tones));
+        d->commit("Color fixture");
+        d->markSaved();
+        const Layer source = d->state.layers[0];
+        const quint64 clean = d->revision();
+        const int history = d->historyLabels().size();
+        w.addDocument(d);
+        w.applyUiPreset("graphite", false);
+        w.show();
+        QTest::qWait(40);
+        auto *canvas = w.currentCanvas();
+        QVERIFY(canvas->beginTransform());
+        QTest::keyClick(canvas, Qt::Key_Right);
+        const QTransform preview = canvas->transformGeometry();
+        QVERIFY(preview != source.geometry);
+        auto *reset = w.findChild<QPushButton *>("resetColorAdjustments");
+        QVERIFY(reset && reset->isVisible());
+        QTest::mouseClick(reset, Qt::LeftButton);
+        QVERIFY(!canvas->isTransforming());
+        QCOMPARE(d->state.layers[0].geometry, preview);
+        QCOMPARE(d->state.layers[0].brightness, 0);
+        QCOMPARE(d->state.layers[0].contrast, 0);
+        QCOMPARE(d->state.layers[0].saturation, 0);
+        QVERIFY(d->state.layers[0].tones.isIdentity());
+        QCOMPARE(d->state.layers[0].pixels, source.pixels);
+        QCOMPARE(d->state.layers[0].mask, source.mask);
+        QCOMPARE(d->historyLabels().size(), history + 1 + int(adjusted));
+        if (adjusted) {
+            d->undo();
+            QCOMPARE(d->state.layers[0].geometry, preview);
+            QCOMPARE(d->state.layers[0].brightness, 20);
+            QCOMPARE(d->state.layers[0].contrast, -10);
+            QCOMPARE(d->state.layers[0].saturation, 15);
+            QVERIFY(d->state.layers[0].tones == tones);
+        }
+        d->undo();
+        QCOMPARE(d->revision(), clean);
+        QCOMPARE(d->state.layers[0].geometry, source.geometry);
+        QVERIFY(!d->dirty);
+        d->redo();
+        if (adjusted)
+            d->redo();
+        QCOMPARE(d->state.layers[0].geometry, preview);
+        QVERIFY(d->state.layers[0].tones.isIdentity());
+        d->markSaved();
+        w.close();
+    }
+    void onCanvasTextLayerDoubleClickFinishesPreviewBeforeDialog_data() {
+        QTest::addColumn<bool>("accept");
+        QTest::newRow("accept-text") << true;
+        QTest::newRow("cancel-text") << false;
+    }
+    void onCanvasTextLayerDoubleClickFinishesPreviewBeforeDialog() {
+        QFETCH(bool, accept);
+        MainWindow w(false, false);
+        auto *d = new Document;
+        QVERIFY(d->create({400, 300}));
+        QFont font("Sans");
+        font.setPixelSize(24);
+        QString error;
+        QVERIFY(d->addText("Original", font, Qt::black, {50, 50}, &error));
+        QVERIFY(d->addMask(&error));
+        d->markSaved();
+        const int active = d->state.active;
+        const Layer original = d->state.layers[active];
+        const int history = d->historyLabels().size();
+        const quint64 clean = d->revision();
+        w.addDocument(d);
+        w.show();
+        QTest::qWait(40);
+        auto *canvas = w.currentCanvas();
+        QVERIFY(canvas->beginTransform());
+        QTest::keyClick(canvas, Qt::Key_Right);
+        const QTransform preview = canvas->transformGeometry();
+        auto *list = w.findChild<QListWidget *>("layers");
+        QVERIFY(list && list->currentItem());
+        const QPoint point = list->visualItemRect(list->currentItem()).center();
+        QTest::mouseClick(list->viewport(), Qt::LeftButton, {}, point);
+        QVERIFY(canvas->isTransforming()); // The active row did not trigger row-change finalization.
+        bool handled = false, appliedBeforeDialog = false;
+        QTimer driver, timeout;
+        driver.setInterval(10);
+        timeout.setSingleShot(true);
+        connect(&driver, &QTimer::timeout, [&] {
+            auto *dialog = qobject_cast<QDialog *>(QApplication::activeModalWidget());
+            auto *text = dialog ? dialog->findChild<QPlainTextEdit *>() : nullptr;
+            if (!text || handled)
+                return;
+            handled = true;
+            appliedBeforeDialog = !canvas->isTransforming() &&
+                                  d->state.layers[active].geometry == preview;
+            text->setPlainText("Edited");
+            if (accept)
+                dialog->accept();
+            else
+                dialog->reject();
+        });
+        connect(&timeout, &QTimer::timeout, [&] {
+            if (auto *dialog = qobject_cast<QDialog *>(QApplication::activeModalWidget()))
+                dialog->reject();
+        });
+        driver.start();
+        timeout.start(5000);
+        QTest::mouseDClick(list->viewport(), Qt::LeftButton, {}, point);
+        driver.stop();
+        timeout.stop();
+        QVERIFY(handled);
+        QVERIFY(appliedBeforeDialog);
+        QCOMPARE(d->state.layers[active].geometry, preview);
+        QCOMPARE(d->state.layers[active].text, accept ? QString("Edited") : original.text);
+        QCOMPARE(d->historyLabels().size(), history + 1 + int(accept));
+        if (accept) {
+            d->undo();
+            QCOMPARE(d->state.layers[active].geometry, preview);
+            QCOMPARE(d->state.layers[active].text, original.text);
+            QCOMPARE(d->state.layers[active].pixels, original.pixels);
+            QCOMPARE(d->state.layers[active].mask, original.mask);
+        }
+        d->undo();
+        QCOMPARE(d->revision(), clean);
+        QCOMPARE(d->state.layers[active].geometry, original.geometry);
+        QVERIFY(!d->dirty);
+        d->redo();
+        if (accept)
+            d->redo();
+        QCOMPARE(d->state.layers[active].geometry, preview);
+        d->markSaved();
+        w.close();
+    }
+    void onCanvasTabsAndLayerSwitchCannotRetargetPendingTransform() {
+        MainWindow w(false, false);
+        w.show();
+        auto *first = new Document;
+        transformFixture(*first);
+        QVERIFY(first->addLayer("Other"));
+        first->state.active = 0;
+        first->markSaved();
+        w.addDocument(first);
+        QTest::qWait(30);
+        Canvas *c = w.currentCanvas();
+        QVERIFY(c->beginTransform());
+        QTest::keyClick(c, Qt::Key_Right);
+        auto *second = new Document;
+        transformFixture(*second);
+        w.addDocument(second);
+        QVERIFY(c->isTransforming());
+        const QTransform firstPreview = c->transformGeometry();
+        QCOMPARE(first->state.layers[0].geometry, QTransform());
+        Canvas *secondCanvas = w.currentCanvas();
+        QVERIFY(secondCanvas->beginTransform());
+        QTest::keyClick(secondCanvas, Qt::Key_Down);
+        w.findChild<QAction *>("undo")->trigger();
+        QVERIFY(!secondCanvas->isTransforming());
+        QVERIFY(c->isTransforming());
+        QCOMPARE(c->transformGeometry(), firstPreview);
+        QCOMPARE(second->state.layers[0].geometry, QTransform());
+        auto *documentTabs = w.findChild<QTabWidget *>("documents");
+        if (!documentTabs)
+            documentTabs = w.findChild<QTabWidget *>();
+        QVERIFY(documentTabs);
+        documentTabs->setCurrentWidget(c);
+        QTest::qWait(40);
+        QVERIFY(c->isTransforming());
+        QCOMPARE(w.currentDocument(), first);
+        w.findChild<QListWidget *>("layers")->setCurrentRow(0);
+        QVERIFY(!c->isTransforming());
+        QCOMPARE(first->state.active, 1);
+        QCOMPARE(first->state.layers[0].geometry, QTransform::fromTranslate(1, 0));
+        QCOMPARE(first->state.layers[1].geometry, QTransform());
+        first->undo();
+        first->markSaved();
+        w.close();
+    }
+    void onCanvasNumericDialogAcceptCancelShareThePendingUndo() {
+        Document d;
+        transformFixture(d);
+        Canvas c(&d);
+        prepare(c);
+        const int history = d.historyLabels().size();
+        QVERIFY(c.beginTransform());
+        QTest::keyClick(&c, Qt::Key_Right);
+        const QTransform moved = c.transformGeometry();
+        bool handled = false;
+        QTimer timer;
+        timer.setInterval(10);
+        connect(&timer, &QTimer::timeout, [&] {
+            auto *dialog = qobject_cast<TransformDialog *>(QApplication::activeModalWidget());
+            if (!dialog)
+                return;
+            dialog->findChild<QDoubleSpinBox *>("scaleX")->setValue(50);
+            handled = c.transformGeometry() != moved;
+            dialog->reject();
+        });
+        timer.start();
+        QTest::mouseClick(c.findChild<QToolButton *>("transformNumeric"), Qt::LeftButton);
+        timer.stop();
+        QVERIFY(handled);
+        QVERIFY(c.isTransforming());
+        QCOMPARE(c.transformGeometry(), moved);
+        QCOMPARE(d.historyLabels().size(), history);
+        disconnect(&timer, nullptr, nullptr, nullptr);
+        handled = false;
+        connect(&timer, &QTimer::timeout, [&] {
+            auto *dialog = qobject_cast<TransformDialog *>(QApplication::activeModalWidget());
+            if (!dialog)
+                return;
+            dialog->findChild<QDoubleSpinBox *>("scaleX")->setValue(50);
+            dialog->accept();
+            handled = true;
+        });
+        timer.start();
+        QTest::mouseClick(c.findChild<QToolButton *>("transformNumeric"), Qt::LeftButton);
+        timer.stop();
+        QVERIFY(handled);
+        QVERIFY(c.transformGeometry() != moved);
+        QCOMPARE(d.historyLabels().size(), history);
+        QVERIFY(c.applyTransform());
+        QCOMPARE(d.historyLabels().size(), history + 1);
+        d.undo();
+        QCOMPARE(d.state.layers[0].geometry, QTransform());
+    }
+    void onCanvasSaveAndCanceledCloseKeepAppliedTransform() {
+        MainWindow w(false, false);
+        w.show();
+        auto *d = new Document;
+        transformFixture(*d);
+        QTemporaryDir dir;
+        QString error;
+        const QString file = dir.filePath("transform.pdeck");
+        QVERIFY(d->save(file, &error));
+        w.addDocument(d);
+        QTest::qWait(30);
+        Canvas *c = w.currentCanvas();
+        QVERIFY(c->beginTransform());
+        QTest::keyClick(c, Qt::Key_Right);
+        w.findChild<QAction *>("save")->trigger();
+        QVERIFY(!c->isTransforming());
+        QVERIFY(!d->dirty);
+        Document loaded;
+        QVERIFY(loaded.load(file, &error));
+        QCOMPARE(loaded.state.layers[0].geometry, QTransform::fromTranslate(1, 0));
+        QVERIFY(c->beginTransform());
+        QTest::keyClick(c, Qt::Key_Right);
+        bool canceled = false;
+        QTimer timer;
+        timer.setInterval(10);
+        connect(&timer, &QTimer::timeout, [&] {
+            auto *question = qobject_cast<QMessageBox *>(QApplication::activeModalWidget());
+            if (!question)
+                return;
+            question->button(QMessageBox::Cancel)->click();
+            canceled = true;
+        });
+        timer.start();
+        w.close();
+        timer.stop();
+        QVERIFY(canceled);
+        QVERIFY(w.isVisible());
+        QVERIFY(!c->isTransforming());
+        QCOMPARE(d->state.layers[0].geometry, QTransform::fromTranslate(2, 0));
+        QVERIFY(d->dirty);
+        d->undo();
+        QCOMPARE(d->state.layers[0].geometry, QTransform::fromTranslate(1, 0));
+        QVERIFY(!d->dirty);
+        w.close();
+    }
+    void onCanvasExistingGeometryKeepsEditableTextAndMask() {
+        Document d;
+        QVERIFY(d.create({480, 320}));
+        QString error;
+        QVERIFY(d.addText("PhotoDeck", QFont("Sans", 24), QColor("#59c9b4"), {130, 130}, &error));
+        QVERIFY(d.addMask(&error));
+        d.beginEdit();
+        QTransform original;
+        original.rotate(-12);
+        original.shear(.1, 0);
+        QVERIFY(d.setLayerTransform(original, &error));
+        d.commit("Initial geometry");
+        d.markSaved();
+        const Layer source = d.state.layers[d.state.active];
+        const int history = d.historyLabels().size();
+        Canvas c(&d);
+        prepare(c);
+        QVERIFY(c.beginTransform());
+        const QPoint corner = c.transformHandlePosition(TransformHandles::BottomRight).toPoint();
+        const QPointF expected = c.toWidget(source.offset +
+                                            original.map(QPointF(source.pixels.width() * 1.25,
+                                                                 source.pixels.height() * 1.25)));
+        drag(c, corner, expected.toPoint());
+        QVERIFY(c.applyTransform());
+        const Layer result = d.state.layers[d.state.active];
+        QCOMPARE(result.pixels, source.pixels);
+        QCOMPARE(result.mask, source.mask);
+        QCOMPARE(result.text, source.text);
+        QCOMPARE(result.font, source.font);
+        QCOMPARE(d.historyLabels().size(), history + 1);
+        const QPointF actual = c.toWidget(result.offset + result.geometry.map(
+                                                           QPointF(source.pixels.width(),
+                                                                   source.pixels.height())));
+        QVERIFY(QLineF(actual, expected).length() < 2);
+        QVERIFY(d.editText("Still editable", source.font, source.color, &error));
+        QCOMPARE(d.state.layers[d.state.active].geometry, result.geometry);
+        QVERIFY(!d.state.layers[d.state.active].mask.isNull());
+        d.undo();
+        QCOMPARE(d.state.layers[d.state.active].text, source.text);
+        d.undo();
+        QCOMPARE(d.state.layers[d.state.active].geometry, original);
+        const int noOpHistory = d.historyLabels().size();
+        QVERIFY(c.beginTransform());
+        QTest::keyClick(&c, Qt::Key_Right);
+        QTest::keyClick(&c, Qt::Key_Left);
+        QVERIFY(c.applyTransform());
+        QCOMPARE(d.historyLabels().size(), noOpHistory);
+        QCOMPARE(d.state.layers[d.state.active].geometry, original);
+        QVERIFY(!d.dirty);
+    }
+    void onCanvasCloseTabAndSaveAsCancellationDoNotLoseWork() {
+        MainWindow w(false, false);
+        w.show();
+        auto *d = new Document;
+        transformFixture(*d);
+        w.addDocument(d);
+        QTest::qWait(30);
+        Canvas *c = w.currentCanvas();
+        QVERIFY(c->beginTransform());
+        QTest::keyClick(c, Qt::Key_Right);
+        bool canceled = false;
+        QTimer timer;
+        timer.setInterval(10);
+        connect(&timer, &QTimer::timeout, [&] {
+            if (auto *dialog = qobject_cast<QFileDialog *>(QApplication::activeModalWidget())) {
+                dialog->reject();
+                canceled = true;
+            }
+        });
+        timer.start();
+        w.findChild<QAction *>("saveAs")->trigger();
+        timer.stop();
+        QVERIFY(canceled);
+        QVERIFY(!c->isTransforming());
+        QCOMPARE(d->state.layers[0].geometry, QTransform::fromTranslate(1, 0));
+        QVERIFY(d->dirty);
+        QVERIFY(c->beginTransform());
+        QTest::keyClick(c, Qt::Key_Right);
+        disconnect(&timer, nullptr, nullptr, nullptr);
+        canceled = false;
+        connect(&timer, &QTimer::timeout, [&] {
+            if (auto *dialog = qobject_cast<QMessageBox *>(QApplication::activeModalWidget())) {
+                dialog->button(QMessageBox::Cancel)->click();
+                canceled = true;
+            }
+        });
+        auto *tabs = w.findChild<QTabWidget *>("documents");
+        QWidget *close = tabs->tabBar()->tabButton(0, QTabBar::RightSide);
+        if (!close)
+            close = tabs->tabBar()->tabButton(0, QTabBar::LeftSide);
+        QVERIFY(close);
+        timer.start();
+        QTest::mouseClick(close, Qt::LeftButton);
+        timer.stop();
+        QVERIFY(canceled);
+        QCOMPARE(tabs->count(), 1);
+        QCOMPARE(w.currentCanvas(), c);
+        QVERIFY(!c->isTransforming());
+        QCOMPARE(d->state.layers[0].geometry, QTransform::fromTranslate(2, 0));
+        d->undo();
+        d->undo();
+        QVERIFY(!d->dirty);
+        w.close();
+    }
+    void onCanvasEveryToolUsesTransformMouseAndTabletHandlers_data() {
+        QTest::addColumn<int>("tool");
+        QTest::addColumn<bool>("eraser");
+        for (int tool = 0; tool < Canvas::ToolCount; ++tool)
+            for (bool eraser : {false, true})
+                QTest::newRow(qPrintable(QString("tool-%1-%2").arg(tool).arg(eraser ? "eraser" : "pen")))
+                    << tool << eraser;
+    }
+    void onCanvasEveryToolUsesTransformMouseAndTabletHandlers() {
+        QFETCH(int, tool);
+        QFETCH(bool, eraser);
+        Document d;
+        transformFixture(d);
+        const QImage pixels = d.state.layers[0].pixels, mask = d.state.layers[0].mask;
+        const int history = d.historyLabels().size();
+        Canvas c(&d);
+        prepare(c);
+        c.setTool(Canvas::Tool(tool));
+        const QPointF origin = c.toWidget(QPointF());
+        QVERIFY(c.beginTransform());
+        const QPoint center = c.transformHandlePosition(TransformHandles::Move).toPoint();
+        drag(c, center, center + QPoint(20, 10));
+        QCOMPARE(c.toWidget(QPointF()), origin); // Hand must move the layer, never pan this gesture.
+        QCOMPARE(c.transformGeometry(), QTransform::fromTranslate(20, 10));
+        c.cancelTransform();
+        QVERIFY(c.beginTransform());
+        QPointingDevice device("transform test pen", eraser ? 53 : 52,
+                               QInputDevice::DeviceType::Stylus,
+                               eraser ? QPointingDevice::PointerType::Eraser
+                                      : QPointingDevice::PointerType::Pen,
+                               QInputDevice::Capability::Position | QInputDevice::Capability::Pressure,
+                               1, 3);
+        const QPointF start = c.transformHandlePosition(TransformHandles::Move);
+        auto tablet = [&](QEvent::Type type, QPointF at, qreal pressure) {
+            QTabletEvent event(type, &device, at, c.mapToGlobal(at.toPoint()), pressure, 0, 0,
+                               0, 0, 0, {}, type == QEvent::TabletMove ? Qt::NoButton : Qt::LeftButton,
+                               type == QEvent::TabletRelease ? Qt::NoButton : Qt::LeftButton);
+            QApplication::sendEvent(&c, &event);
+            QVERIFY(event.isAccepted());
+        };
+        tablet(QEvent::TabletPress, start, .5);
+        tablet(QEvent::TabletMove, start + QPointF(15, 8), .7);
+        tablet(QEvent::TabletRelease, start + QPointF(15, 8), 0);
+        QVERIFY(c.isTransforming());
+        QCOMPARE(c.transformGeometry(), QTransform::fromTranslate(15, 8));
+        QCOMPARE(d.state.layers[0].pixels, pixels);
+        QCOMPARE(d.state.layers[0].mask, mask);
+        QCOMPARE(d.historyLabels().size(), history);
+        QVERIFY(!d.isEditing());
+        QVERIFY(c.applyTransform());
+        QCOMPARE(d.historyLabels().size(), history + 1);
+        QCOMPARE(d.state.layers[0].pixels, pixels);
+        QCOMPARE(d.state.layers[0].mask, mask);
+    }
+    void onCanvasViewActionsRepeatedTransformAndNumericShortcutKeepPreview() {
+        MainWindow w(false, false);
+        w.show();
+        auto *d = new Document;
+        transformFixture(*d);
+        w.addDocument(d);
+        QTest::qWait(30);
+        Canvas *c = w.currentCanvas();
+        const int history = d->historyLabels().size();
+        for (auto tool : {Canvas::Fill, Canvas::Wand, Canvas::Brush, Canvas::Hand}) {
+            w.findChild<QAction *>("tool" + QString::number(tool))->trigger();
+            w.findChild<QAction *>("transform")->trigger();
+            QTest::keyClick(c, Qt::Key_Right);
+            const QTransform preview = c->transformGeometry();
+            for (const auto *action : {"fit", "actual", "zoomIn", "zoomOut", "transform"}) {
+                w.findChild<QAction *>(action)->trigger();
+                QVERIFY(c->isTransforming());
+                QCOMPARE(c->transformGeometry(), preview);
+                QCOMPARE(d->state.layers[0].geometry, QTransform());
+                QCOMPARE(d->historyLabels().size(), history);
+            }
+            d->changed();
+            QTest::qWait(40);
+            for (const auto *name : {"brushControls", "flowControls", "selectionMode",
+                                     "selectionTolerance", "contiguousSelection"})
+                QVERIFY2(!w.findChild<QWidget *>(name)->isVisible(), name);
+            c->cancelTransform();
+        }
+        QVERIFY(c->beginTransform());
+        QTest::keyClick(c, Qt::Key_Right);
+        const QTransform preview = c->transformGeometry();
+        bool handled = false;
+        QTimer timer;
+        timer.setInterval(10);
+        connect(&timer, &QTimer::timeout, [&] {
+            auto *dialog = qobject_cast<TransformDialog *>(QApplication::activeModalWidget());
+            if (!dialog)
+                return;
+            dialog->findChild<QDoubleSpinBox *>("scaleX")->setValue(60);
+            handled = c->isTransforming() && c->transformGeometry() != preview;
+            dialog->reject();
+        });
+        timer.start();
+        c->setFocus();
+        QTest::keyClick(c, Qt::Key_T, Qt::ControlModifier);
+        QVERIFY(c->isTransforming());
+        QCOMPARE(c->transformGeometry(), preview);
+        // Exercise the actual keyboard route to Numeric while a session is pending.
+        QTest::keyClick(c, Qt::Key_T, Qt::ControlModifier | Qt::AltModifier);
+        timer.stop();
+        QVERIFY(handled);
+        QVERIFY(c->isTransforming());
+        QCOMPARE(c->transformGeometry(), preview);
+        QCOMPARE(d->historyLabels().size(), history);
+        c->cancelTransform();
+        w.close();
+    }
+    void onCanvasFullLayerFitKeepsHandlesClearOfControlsAndRulers() {
+        Document d;
+        QVERIFY(d.create({360, 260}, true));
+        Canvas c(&d);
+        prepare(c);
+        c.fit();
+        QVERIFY(c.beginTransform());
+        QWidget *controls = c.findChild<QWidget *>("transformControls");
+        for (int i = TransformHandles::TopLeft; i <= TransformHandles::Rotate; ++i) {
+            const QPointF at = c.transformHandlePosition(TransformHandles::Handle(i));
+            QVERIFY2(!QRectF(controls->geometry()).adjusted(-9, -9, 9, 9).contains(at),
+                     qPrintable(QString::number(i)));
+        }
+        const QPointF rotation = c.transformHandlePosition(TransformHandles::Rotate);
+        QVERIFY(QRectF(c.rect().adjusted(33, 33, -9, -9)).contains(rotation));
+        const QPointF before = c.toWidget(QPointF());
+        QTest::mousePress(&c, Qt::MiddleButton, {}, {60, 60});
+        QFocusEvent focusOut(QEvent::FocusOut);
+        QApplication::sendEvent(&c, &focusOut);
+        QTest::mouseMove(&c, {90, 90});
+        QTest::mouseRelease(&c, Qt::MiddleButton, {}, {90, 90});
+        QCOMPARE(c.toWidget(QPointF()), before);
+        QVERIFY(c.isTransforming());
+        c.cancelTransform();
+    }
+    void onCanvasControlsRenderAndAdapt() {
+        Document d;
+        transformFixture(d);
+        Canvas c(&d);
+        prepare(c);
+        QVERIFY(c.beginTransform());
+        for (QSize size : {QSize(760, 580), QSize(360, 320), QSize(220, 220)}) {
+            c.resize(size);
+            c.fit();
+            QTest::qWait(10);
+            QWidget *controls = c.findChild<QWidget *>("transformControls");
+            QVERIFY(controls->isVisible());
+            QVERIFY(c.rect().contains(controls->geometry()));
+            for (const auto *id : {"transformNumeric", "transformCancel", "transformApply"}) {
+                auto *button = c.findChild<QToolButton *>(id);
+                QVERIFY(button->isVisible());
+                const QPoint inControls = button->mapTo(controls, QPoint());
+                QVERIFY(controls->rect().contains(QRect(inControls, button->size())));
+                QVERIFY(!button->accessibleName().isEmpty());
+            }
+        }
+        c.cancelTransform();
+        const QString directory = qEnvironmentVariable("PHOTODECK_TRANSFORM_SCREENSHOTS");
+        if (directory.isEmpty())
+            return;
+        QVERIFY(QDir().mkpath(directory));
+        MainWindow w(false, false);
+        w.resize(1280, 800);
+        auto *demo = new Document;
+        demo->makeDemo();
+        demo->state.active = 2;
+        w.addDocument(demo);
+        w.show();
+        QTest::qWait(50);
+        Canvas *canvas = w.currentCanvas();
+        canvas->fit();
+        QVERIFY(canvas->beginTransform());
+        const QPointF center = canvas->transformHandlePosition(TransformHandles::Move);
+        const QPoint handle = canvas->transformHandlePosition(TransformHandles::Rotate).toPoint();
+        const QPointF fromCenter = handle - center;
+        const qreal angle = qDegreesToRadians(-12.0);
+        const QPoint target = (center + QPointF(fromCenter.x() * std::cos(angle) -
+                                                fromCenter.y() * std::sin(angle),
+                                                fromCenter.x() * std::sin(angle) +
+                                                fromCenter.y() * std::cos(angle))).toPoint();
+        drag(*canvas, handle, target);
+        QTest::qWait(50);
+        QVERIFY(w.grab().save(directory + "/transform-text-preview-1280.png"));
+        w.resize(900, 620);
+        canvas->fit();
+        QTest::qWait(50);
+        QVERIFY(w.grab().save(directory + "/transform-text-preview-900.png"));
+        QVERIFY(canvas->applyTransform());
+        QTest::qWait(50);
+        QVERIFY(w.grab().save(directory + "/transform-text-applied-900.png"));
+        demo->markSaved();
+        w.close();
+    }
     void perspectiveTabStartsFromLastPreview() {
         Document d;
         d.create({60, 40});
@@ -454,6 +1659,201 @@ class TransformTests : public QObject {
         dialog.reject();
         d.cancelEdit();
         QVERIFY(d.state.layers[0].geometry.isIdentity());
+    }
+    void onCanvasMinimumWindowViewportContainsControls_data() {
+        QTest::addColumn<QString>("preset");
+        QTest::addColumn<bool>("largeUi");
+        QTest::addColumn<bool>("squeezeDock");
+        for (const auto &preset : uiPresets()) {
+            QTest::newRow(qPrintable(preset.id)) << preset.id << false << false;
+            QTest::newRow(qPrintable(preset.id + "-large-ui")) << preset.id << true << false;
+        }
+        QTest::newRow("graphite-wide-dock") << QString("graphite") << false << true;
+        QTest::newRow("touch-wide-dock") << QString("touch") << false << true;
+        QTest::newRow("touch-large-ui-wide-dock") << QString("touch") << true << true;
+    }
+    void onCanvasMinimumWindowViewportContainsControls() {
+        QFETCH(QString, preset);
+        QFETCH(bool, largeUi);
+        QFETCH(bool, squeezeDock);
+        MainWindow w(false, false);
+        auto *d = new Document;
+        d->makeDemo();
+        d->state.active = 2;
+        w.addDocument(d);
+        UiSettings settings = UiSettings::forPreset(preset);
+        if (largeUi) {
+            settings.panelWidth = 440;
+            settings.toolLabels = true;
+            settings.fontSize = 20;
+            settings.iconSize = 36;
+        }
+        w.applyUiSettings(settings, true, false);
+        w.resize(900, 620);
+        w.show();
+        QTest::qWait(30);
+        QCOMPARE(w.size(), QSize(900, 620));
+        if (squeezeDock) {
+            w.resizeDocks({w.findChild<QDockWidget *>("layersDock")}, {800}, Qt::Horizontal);
+            QTest::qWait(20);
+        }
+        Canvas *canvas = w.currentCanvas();
+        canvas->fit();
+        QVERIFY(canvas->beginTransform());
+        QWidget *controls = canvas->findChild<QWidget *>("transformControls");
+        QVERIFY(controls);
+        const auto verifyViewport = [&] {
+            QVERIFY(controls->isVisible());
+            QVERIFY(canvas->rect().contains(controls->geometry()));
+            for (QWidget *ancestor = canvas->parentWidget(); ancestor;
+                 ancestor = ancestor->parentWidget()) {
+                const QRect canvasBounds(canvas->mapTo(ancestor, QPoint()), canvas->size());
+                QVERIFY2(ancestor->rect().contains(canvasBounds),
+                         qPrintable(preset + " canvas extends beyond " +
+                                    ancestor->metaObject()->className()));
+                const QRect controlsBounds(controls->mapTo(ancestor, QPoint()), controls->size());
+                QVERIFY2(ancestor->rect().contains(controlsBounds),
+                         qPrintable(preset + " controls extend beyond " +
+                                    ancestor->metaObject()->className()));
+            }
+            for (const auto *id : {"transformNumeric", "transformCancel", "transformApply"}) {
+                auto *button = canvas->findChild<QToolButton *>(id);
+                QVERIFY(button->isVisible());
+                QVERIFY(controls->rect().contains(
+                    QRect(button->mapTo(controls, QPoint()), button->size())));
+                // Visibility/containment alone also pass for a button reduced
+                // to its padding, with no room left to paint the label.
+                const QSize hint = button->sizeHint();
+                QVERIFY2(button->width() >= hint.width() && button->height() >= hint.height(),
+                         qPrintable(QString("%1 %2 text=%3 actual=%4x%5 hint=%6x%7")
+                                        .arg(preset, id, button->text())
+                                        .arg(button->width()).arg(button->height())
+                                        .arg(hint.width()).arg(hint.height())));
+            }
+        };
+        verifyViewport();
+        const auto verifyReachableTargets = [&] {
+            const auto targets = visibleTransformTargets(*canvas);
+            // A one-row fallback can preserve all pointer targets in this viewport.
+            if (!controlsCanAvoidTargets(*canvas, targets, compactTransformControlsSize(*controls)))
+                return;
+            for (int i = 0; i < targets.size(); ++i)
+                QVERIFY2(!QRectF(controls->geometry()).intersects(targets[i]),
+                         qPrintable(QString("%1 largeUi=%2 canvas=%3x%4 controls=%5,%6 %7x%8 target=%9")
+                                        .arg(preset).arg(largeUi).arg(canvas->width())
+                                        .arg(canvas->height())
+                                        .arg(controls->x()).arg(controls->y()).arg(controls->width())
+                                        .arg(controls->height()).arg(i)));
+        };
+        verifyReachableTargets();
+        // Check synchronously after real input as well as after layout events.
+        // Touch's short viewport hides the help row to keep handles clear. A
+        // temporary show/hide during placement must not leave 12 px buttons
+        // until the next event-loop turn, even when the frame size is unchanged.
+        for (const auto handle :
+             {TransformHandles::Move, TransformHandles::BottomRight, TransformHandles::Rotate}) {
+            const QPoint point = canvas->transformHandlePosition(handle).toPoint();
+            if (!canvas->rect().contains(point) || canvas->childAt(point))
+                continue;
+            const QTransform before = canvas->transformGeometry();
+            const QPoint delta = handle == TransformHandles::Rotate ? QPoint(14, 2) : QPoint(12, 7);
+            drag(*canvas, point, point + delta);
+            QVERIFY(canvas->transformGeometry() != before);
+            verifyViewport();
+            verifyReachableTargets();
+            QTest::qWait(20);
+            verifyViewport();
+        }
+        canvas->cancelTransform();
+        QVERIFY(canvas->beginTransform());
+        verifyViewport();
+        verifyReachableTargets();
+        if (preset == "touch" && !largeUi && !squeezeDock) {
+            QCOMPARE(controls->size(), compactTransformControlsSize(*controls));
+            QVERIFY(!canvas->findChild<QLabel *>("transformInfo")->isVisible());
+            const QPoint handle =
+                canvas->transformHandlePosition(TransformHandles::BottomRight).toPoint();
+            QVERIFY(!canvas->childAt(handle));
+            const QTransform before = canvas->transformGeometry();
+            drag(*canvas, handle, handle + QPoint(10, 5));
+            QVERIFY(canvas->transformGeometry() != before);
+            verifyViewport();
+            canvas->cancelTransform();
+            QVERIFY(canvas->beginTransform());
+            verifyReachableTargets();
+        }
+        // Fitted geometry must use the same visible extent as the controls.
+        const QRectF imageBounds(canvas->toWidget(QPointF()), QSizeF(d->state.size) * canvas->zoom);
+        QVERIFY(QRectF(canvas->rect()).contains(imageBounds));
+        const QString directory = qEnvironmentVariable("PHOTODECK_VIEWPORT_SCREENSHOTS");
+        if (!directory.isEmpty() && !largeUi && !squeezeDock) {
+            QVERIFY(QDir().mkpath(directory));
+            QVERIFY(w.grab().save(directory + "/transform-window-" + preset + ".png"));
+        }
+        // Resizing a fitted view and an explicitly zoomed view must keep every
+        // button reachable without committing or replacing the transform preview.
+        QTest::keyClick(canvas, Qt::Key_Right);
+        const QTransform preview = canvas->transformGeometry();
+        for (const QSize size : {QSize(1280, 800), QSize(900, 620)}) {
+            w.resize(size);
+            QTest::qWait(20);
+            verifyViewport();
+            for (qreal zoom : {.15, 1.0, 4.0}) {
+                canvas->setZoom(zoom);
+                verifyViewport();
+                verifyReachableTargets();
+                QCOMPARE(canvas->transformGeometry(), preview);
+                QCOMPARE(d->state.layers[d->state.active].geometry, QTransform());
+            }
+            w.resize(size + QSize(40, 40));
+            QTest::qWait(10);
+            verifyViewport();
+            QCOMPARE(canvas->zoom, 4.0);
+            w.resize(size);
+            QTest::qWait(10);
+            verifyViewport();
+            QCOMPARE(canvas->zoom, 4.0);
+            QCOMPARE(canvas->transformGeometry(), preview);
+            canvas->fit();
+            verifyViewport();
+            verifyReachableTargets();
+            if (!largeUi && !squeezeDock &&
+                (preset == "touch" || (preset == "focus" && size == QSize(1280, 800))))
+                QCOMPARE(canvas->findChild<QLabel *>("transformInfo")->isVisible(),
+                         size == QSize(1280, 800));
+        }
+        canvas->cancelTransform();
+        w.close();
+    }
+    void onCanvasCompactControlsFitSmallUsableViewport() {
+        Document d;
+        transformFixture(d);
+        Canvas canvas(&d);
+        canvas.show();
+        for (bool rulers : {false, true}) {
+            canvas.showRulers = rulers;
+            for (const QSize size :
+                 {QSize(180, 100), QSize(360, 100), QSize(220, 160), QSize(601, 185)}) {
+                canvas.resize(size);
+                canvas.fit();
+                QVERIFY(canvas.beginTransform());
+                QTest::qWait(10);
+                QCOMPARE(canvas.size(), size);
+                QWidget *controls = canvas.findChild<QWidget *>("transformControls");
+                QVERIFY(canvas.rect().contains(controls->geometry()));
+                for (const auto *id : {"transformNumeric", "transformCancel", "transformApply"}) {
+                    auto *button = canvas.findChild<QToolButton *>(id);
+                    QVERIFY(button->isVisible());
+                    QVERIFY(controls->rect().contains(
+                        QRect(button->mapTo(controls, QPoint()), button->size())));
+                }
+                const auto targets = visibleTransformTargets(canvas);
+                if (controlsCanAvoidTargets(canvas, targets, compactTransformControlsSize(*controls)))
+                    for (const auto &target : targets)
+                        QVERIFY(!QRectF(controls->geometry()).intersects(target));
+                canvas.cancelTransform();
+            }
+        }
     }
 };
 QTEST_MAIN(TransformTests)

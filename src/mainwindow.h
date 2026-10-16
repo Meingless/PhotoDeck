@@ -9,6 +9,7 @@
 #include <QListWidget>
 #include <QMainWindow>
 #include <QMenu>
+#include <QPointer>
 #include <QSettings>
 #include <QSet>
 #include <QSlider>
@@ -17,6 +18,7 @@
 #include <QTimer>
 #include <QToolBar>
 #include <QToolButton>
+class RecoveryManager;
 class QCheckBox;
 class QGridLayout;
 class QScrollArea;
@@ -101,7 +103,10 @@ class MainWindow : public QMainWindow {
     QDockWidget *createDock(const QString &, const QString &, QWidget *);
     void queueUiSave();
     void syncPanelActions();
-    QListWidget *layers, *history;
+    QListWidget *layers, *history = nullptr;
+    QPointer<Document> historyDocument;
+    void refreshHistory();
+    bool navigateHistory(Document *document, quint64 revision);
     QComboBox *blend;
     QSlider *opacity, *brightness, *contrast, *saturation;
     QSpinBox *sizeInput, *hardnessInput, *brushOpacityInput;
@@ -123,8 +128,7 @@ class MainWindow : public QMainWindow {
     QSet<Document *> deferredRecovery;
     void scheduleRecovery(Document *document);
     bool refreshing = false;
-    QHash<Document *, QString> recoveryFiles;
-    QHash<Document *, QString> recoveryStates;
+    RecoveryManager *recoveryManager = nullptr;
     QHash<QString, QAction *> actions;
     void buildMenus();
     void buildTools();
@@ -147,8 +151,13 @@ class MainWindow : public QMainWindow {
     void resizeDocument();
     void changeCanvasSize();
     void transformLayer();
+    void transformLayerNumerically();
+    void positionLayer();
+    void alignLayer(Document::LayerAlignment alignment, Document::AlignmentTarget target);
     void textDialog(QPoint point, bool edit = false);
     void renameLayer();
+    void finishLayerRename();
+    void showLayerMenu(const QPoint &position);
     void chooseColor();
     void batch();
     void recover();

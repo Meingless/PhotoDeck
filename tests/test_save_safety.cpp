@@ -54,7 +54,7 @@ class SaveSafetyTests : public QObject {
         edit(d);
         QVERIFY2(d.save(file, &error), qPrintable(error));
         QCOMPARE(d.lastSaveStatus(), Document::SaveStatus::Success);
-        QCOMPARE(d.sourceVersion(), Document::NativeProjectVersion);
+        QCOMPARE(d.sourceVersion(), d.projectSaveVersion());
         QCOMPARE(storedVersion(file), 5);
         QVERIFY(!d.dirty);
         QVERIFY(!d.requiresFormatUpgrade(file));

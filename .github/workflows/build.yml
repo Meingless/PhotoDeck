@@ -1,5 +1,6 @@
 name: Early access packages
 on:
+  pull_request:
   workflow_dispatch:
   workflow_call:
     inputs:
@@ -37,7 +38,8 @@ jobs:
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     env:
-      PHOTO_VERSION: 0.9.1-ea.1
+      PHOTO_VERSION: 0.10.0-ea.1
+      PHOTO_TEST_SUITES: 21
       QT_QPA_PLATFORM: offscreen
     steps:
       - uses: actions/checkout@v4
@@ -63,6 +65,9 @@ jobs:
               assert os.environ['GITHUB_REF_NAME'] == 'v' + version, 'Release tag/version mismatch'
           PYTHON
           python3 -m unittest discover -s tests -p 'test_packaged_test_list.py' -v
+      - name: Linux build helper regression tests
+        if: runner.os == 'Linux'
+        run: python3 -m unittest discover -s tests -p 'test_build_script.py' -v
       - name: Linux runtime libraries
         if: runner.os == 'Linux'
         run: |
@@ -89,8 +94,8 @@ jobs:
       - name: Record all packaged test suites
         shell: bash
         run: |
-          python3 scripts/packaged-test-list.py --build-dir build-release --config Release --expected-count 14 > packaged-test-list.txt
-          python3 -c "from pathlib import Path; names=Path('packaged-test-list.txt').read_text().splitlines(); assert len(names)==14; Path('packaged-test-count.txt').write_text(str(len(names))+'\n')"
+          python3 scripts/packaged-test-list.py --build-dir build-release --config Release --expected-count "$PHOTO_TEST_SUITES" > packaged-test-list.txt
+          python3 -c "import os; from pathlib import Path; names=Path('packaged-test-list.txt').read_text().splitlines(); assert len(names)==int(os.environ['PHOTO_TEST_SUITES']); Path('packaged-test-count.txt').write_text(str(len(names))+'\n')"
       - name: Windows portable package
         env:
           QT_QPA_PLATFORM: windows
@@ -111,23 +116,50 @@ jobs:
           Copy-Item -Recurse docs "$folder/docs"
           Copy-Item packaging/THIRD-PARTY.md $folder/
           Copy-Item -Recurse packaging/licenses,examples $folder/
-          $process = Start-Process -FilePath (Resolve-Path "$folder/PhotoDeck.exe") -ArgumentList '--no-settings','--preset','focus','--screenshot',"$PWD/windows-startup.png" -Wait -PassThru -RedirectStandardOutput windows-startup.log -RedirectStandardError windows-startup-error.log
-          if ($process.ExitCode -ne 0 -or !(Test-Path windows-startup.png)) { Get-Content windows-startup-error.log; throw "Windows package startup failed with exit $($process.ExitCode)" }
+          Set-Content "$folder/qt.conf" "[Paths]`nPrefix=.`nPlugins=.`n" -Encoding utf8NoBOM
           Copy-Item "$env:QT_ROOT_DIR/plugins/platforms/qoffscreen.dll" "$folder/platforms/"
-          Copy-Item "$env:QT_ROOT_DIR/bin/Qt6Test.dll" "$folder/"
-          $env:QT_QPA_PLATFORM = 'offscreen'
-          Copy-Item -Recurse tests/fixtures "$folder/fixtures"
+          $proofRoot = (Get-Location).Path
+          $packageRoot = (Resolve-Path $folder).Path
+          $audit = Join-Path $packageRoot 'bin'
+          New-Item -ItemType Directory $audit | Out-Null
+          Set-Content "$audit/qt.conf" "[Paths]`nPrefix=..`nPlugins=.`n" -Encoding utf8NoBOM
+          Copy-Item "$env:QT_ROOT_DIR/bin/Qt6Test.dll" "$audit/"
+          Copy-Item -Recurse tests/fixtures "$audit/fixtures"
           $tests = @(Get-Content packaged-test-list.txt)
-          if ($tests.Count -ne 14) { throw "Expected 14 packaged test suites" }
-          foreach ($test in $tests) {
-            Copy-Item "build-release/Release/$test.exe" "$folder/$test.exe"
-            & "$folder/$test.exe" -o "$PWD/$test-packaged.xml,junitxml" -o "$PWD/$test-packaged.txt,txt"
-            if ($LASTEXITCODE -ne 0) { throw "Packaged runtime audit failed: $test" }
-            Remove-Item "$folder/$test.exe"
+          if ($tests.Count -ne [int]$env:PHOTO_TEST_SUITES) { throw "Expected $env:PHOTO_TEST_SUITES packaged test suites" }
+          $backup = Join-Path $env:RUNNER_TEMP ("photodeck-package-source-" + [guid]::NewGuid().ToString('N'))
+          New-Item -ItemType Directory $backup | Out-Null
+          $savedPath = $env:PATH
+          $savedPlugins = $env:QT_PLUGIN_PATH
+          $savedPlatformPlugins = $env:QT_QPA_PLATFORM_PLUGIN_PATH
+          $savedPlatform = $env:QT_QPA_PLATFORM
+          try {
+            Move-Item "$proofRoot/tests" "$backup/tests"
+            Move-Item "$proofRoot/examples" "$backup/examples"
+            $env:PATH = "$packageRoot;$env:SystemRoot\System32;$env:SystemRoot"
+            $env:QT_PLUGIN_PATH = $packageRoot
+            $env:QT_QPA_PLATFORM_PLUGIN_PATH = Join-Path $packageRoot 'platforms'
+            $process = Start-Process -FilePath "$packageRoot/PhotoDeck.exe" -ArgumentList '--no-settings','--preset','focus','--screenshot',"`"$proofRoot/windows-startup.png`"" -Wait -PassThru -RedirectStandardOutput "$proofRoot/windows-startup.log" -RedirectStandardError "$proofRoot/windows-startup-error.log"
+            if ($process.ExitCode -ne 0 -or !(Test-Path "$proofRoot/windows-startup.png")) { Get-Content "$proofRoot/windows-startup-error.log"; throw "Windows package startup failed with exit $($process.ExitCode)" }
+            $env:QT_QPA_PLATFORM = 'offscreen'
+            foreach ($test in $tests) {
+              Copy-Item "$proofRoot/build-release/Release/$test.exe" "$audit/$test.exe"
+              & "$audit/$test.exe" -v1 -o "$proofRoot/$test-packaged.xml,junitxml" -o "$proofRoot/$test-packaged.txt,txt"
+              if ($LASTEXITCODE -ne 0) { throw "Packaged runtime audit failed: $test" }
+              Remove-Item "$audit/$test.exe"
+            }
+          } finally {
+            $env:PATH = $savedPath
+            $env:QT_PLUGIN_PATH = $savedPlugins
+            $env:QT_QPA_PLATFORM_PLUGIN_PATH = $savedPlatformPlugins
+            $env:QT_QPA_PLATFORM = $savedPlatform
+            foreach ($source in 'tests','examples') {
+              if (Test-Path "$backup/$source") { Move-Item "$backup/$source" "$proofRoot/$source" }
+            }
+            Remove-Item $backup
+            Remove-Item -Recurse $audit
           }
-          Remove-Item "$folder/Qt6Test.dll"
-          Remove-Item -Recurse "$folder/fixtures"
-          if (Test-Path "$folder/fixtures") { throw "Packaged test fixtures were not removed" }
+          if (Test-Path $audit) { throw "Packaged test tools and fixtures were not removed" }
           Compress-Archive -Path $folder -DestinationPath "$folder.zip"
       - name: macOS application package
         env:
@@ -153,15 +185,52 @@ jobs:
           "dist/PhotoDeck-$PHOTO_VERSION-linux-x86_64/launch.sh" --no-settings --preset focus --screenshot linux-startup.png
           test -s linux-startup.png
           package="dist/PhotoDeck-$PHOTO_VERSION-linux-x86_64"
+          proof_root="$PWD"
+          package_root="$PWD/$package"
           cp "$QT_ROOT_DIR/lib/libQt6Test.so.6" "$package/lib/"
           cp -R tests/fixtures "$package/bin/fixtures"
           while IFS= read -r test; do
             cp "build-release/$test" "$package/bin/$test"
-            LD_LIBRARY_PATH="$PWD/$package/lib" QT_PLUGIN_PATH="$PWD/$package/plugins" "$package/bin/$test" -o "$PWD/$test-packaged.xml,junitxml" -o "$PWD/$test-packaged.txt,txt"
-            rm "$package/bin/$test"
           done < packaged-test-list.txt
-          rm "$package/lib/libQt6Test.so.6"
-          rm -rf "$package/bin/fixtures"
+          source_backup=$(mktemp -d "$RUNNER_TEMP/photodeck-package-source.XXXXXX")
+          restore_package_audit() {
+            local status=$?
+            trap - EXIT
+            for source in tests examples; do
+              if [ -d "$source_backup/$source" ]; then
+                mv "$source_backup/$source" "$proof_root/$source" || status=1
+              fi
+            done
+            while IFS= read -r test; do
+              rm -f "$package_root/bin/$test" || status=1
+            done < "$proof_root/packaged-test-list.txt"
+            rm -f "$package_root/lib/libQt6Test.so.6" || status=1
+            rm -rf "$package_root/bin/fixtures" || status=1
+            rmdir "$source_backup" || status=1
+            return "$status"
+          }
+          trap restore_package_audit EXIT
+          mv tests "$source_backup/tests"
+          mv examples "$source_backup/examples"
+          python3 - "$package_root" "$proof_root/packaged-test-list.txt" <<'PYTHON'
+          import os, pathlib, re, subprocess, sys
+          package = pathlib.Path(sys.argv[1]).resolve()
+          names = pathlib.Path(sys.argv[2]).read_text().splitlines()
+          env = dict(os.environ, LD_LIBRARY_PATH=str(package/'lib'), LC_ALL='C')
+          for name in ['photodeck', *names]:
+              result = subprocess.run(['ldd', str(package/'bin'/name)], env=env,
+                                      capture_output=True, text=True, check=True)
+              pathlib.Path(name+'-packaged-ldd.txt').write_text(result.stdout, encoding='utf-8')
+              assert 'not found' not in result.stdout, (name, result.stdout)
+              qt_paths = re.findall(r'^\s*libQt6\S+\s+=>\s+(\S+)', result.stdout, re.MULTILINE)
+              assert qt_paths, f'No Qt dependencies found for {name}'
+              for path in qt_paths:
+                  assert pathlib.Path(path).resolve().is_relative_to(package/'lib'), (name, path)
+          PYTHON
+          while IFS= read -r test; do
+            LD_LIBRARY_PATH="$package_root/lib" QT_PLUGIN_PATH="$package_root/plugins" QT_QPA_PLATFORM_PLUGIN_PATH="$package_root/plugins/platforms" "$package_root/bin/$test" -v1 -o "$proof_root/$test-packaged.xml,junitxml" -o "$proof_root/$test-packaged.txt,txt"
+          done < "$proof_root/packaged-test-list.txt"
+          restore_package_audit
           test ! -e "$package/bin/fixtures"
       - name: Linux AppImage
         if: runner.os == 'Linux'
@@ -195,6 +264,12 @@ jobs:
               binary = pathlib.Path(f'dist/PhotoDeck-{version}-linux-x86_64/launch.sh')
           env = dict(os.environ, QT_COMMAND_LINE_PARSER_NO_GUI_MESSAGE_BOXES='1')
           env['QT_QPA_PLATFORM'] = 'cocoa' if platform == 'macOS' else 'offscreen'
+          if platform == 'Windows':
+              package = binary.resolve().parent
+              system = pathlib.Path(os.environ['SystemRoot'])
+              env['PATH'] = os.pathsep.join(map(str, [package, system/'System32', system]))
+              env['QT_PLUGIN_PATH'] = str(package)
+              env['QT_QPA_PLATFORM_PLUGIN_PATH'] = str(package/'platforms')
           result = subprocess.run([str(binary.resolve()), '--version'], env=env,
                                   capture_output=True, text=True, check=True, timeout=60)
           actual = result.stdout.strip()
@@ -220,15 +295,19 @@ jobs:
             dist/*.AppImage
             dist/SHA256SUMS.txt
             build-release/tests.xml
+            build-release/*-native.xml
+            build-release/*-native.txt
             build-release/Testing/Temporary/
             packaged-test-list.txt
             packaged-test-count.txt
             package-version.txt
             release-source.json
-            docs/releases/0.9.1-ea.1.md
+            docs/releases/0.10.0-ea.1.md
+            docs/DEVELOPMENT-0.10.md
             *-startup.png
             *-startup*.log
             *-packaged.xml
             *-packaged.txt
+            *-packaged-ldd.txt
           if-no-files-found: warn
           retention-days: 30
