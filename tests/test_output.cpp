@@ -280,7 +280,7 @@ class OutputTests : public QObject {
         QVERIFY(action);
         QSize cancelledSize;
         QVERIFY(modal(action, [&](QDialog *dialog) {
-            auto *output = qobject_cast<RasterOutputDialog *>(dialog);
+            auto *output = qobject_cast<ExportDialog *>(dialog);
             if (!output)
                 return false;
             output->findChild<QSpinBox *>("outputWidth")->setValue(20);
@@ -289,22 +289,20 @@ class OutputTests : public QObject {
             return true;
         }));
         QCOMPARE(cancelledSize, QSize(20, 10));
+        QVERIFY(!QFile::exists(path));
+        QCOMPARE(d->state.size, QSize(40, 20));
         int stage = 0;
         QVERIFY(modal(action, [&](QDialog *dialog) {
-            if (auto *output = qobject_cast<RasterOutputDialog *>(dialog)) {
+            if (auto *output = qobject_cast<ExportDialog *>(dialog)) {
                 output->findChild<QSpinBox *>("outputWidth")->setValue(20);
+                output->findChild<QLineEdit *>("exportPath")->setText(path);
                 output->accept();
-                ++stage;
-                return true;
-            }
-            if (auto *file = qobject_cast<QFileDialog *>(dialog)) {
-                choose(file, path);
                 ++stage;
                 return true;
             }
             return false;
         }));
-        QCOMPARE(stage, 2);
+        QCOMPARE(stage, 1);
         QCOMPARE(QImage(path).size(), QSize(20, 10));
         QVERIFY(!d->dirty);
         w.close();

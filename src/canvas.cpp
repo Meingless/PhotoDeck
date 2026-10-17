@@ -57,6 +57,7 @@ bool matchesTransformTarget(const Document *target, int layer, quint64 revision,
         return false;
     const Layer &a = target->state.layers[layer], &b = source;
     return a.pixels.cacheKey() == b.pixels.cacheKey() && a.mask.cacheKey() == b.mask.cacheKey() &&
+           a.smartObjectId == b.smartObjectId && a.smartObjectSize == b.smartObjectSize &&
            a.geometry == b.geometry && a.offset == b.offset && a.visible == b.visible &&
            a.locked == b.locked && a.clipped == b.clipped && a.opacity == b.opacity &&
            a.blend == b.blend && a.brightness == b.brightness && a.contrast == b.contrast &&
@@ -501,6 +502,8 @@ const QImage &Canvas::coloredTip(QColor color) {
     return tipCache;
 }
 void Canvas::stamp(QPointF position, qreal pressure) {
+    if (document->state.layers[document->state.active].isSmartObject() && !document->editingMask)
+        return;
     if (tabletActive && pressure <= 0)
         return;
     auto &l = document->state.layers[document->state.active];
@@ -626,6 +629,8 @@ void Canvas::stroke(QPointF from, QPointF to, bool final) {
 }
 void Canvas::fillAt(QPoint docPoint) {
     auto &l = document->state.layers[document->state.active];
+    if (l.isSmartObject() && !document->editingMask)
+        return;
     QPoint seed = docPoint - l.offset;
     QImage &im = target();
     QRect bounds = im.rect();
@@ -793,6 +798,11 @@ void Canvas::mousePressEvent(QMouseEvent *e) {
         emit toolHint("Düzenlemek için görünür, kilidi açık bir katman seçin.");
         return;
     }
+    if (l.isSmartObject() && !document->editingMask && tool != Move) {
+        emit toolHint("Akıllı nesnenin gömülü kaynağı korunur. İçeriği değiştir kullanın veya yeni boş katmana boyayın. "
+                      "Görünümü rasterleştir, gömülü kaynak korumasını kaldırır.");
+        return;
+    }
     if (!l.geometry.isIdentity() && tool != Move) {
         emit toolHint(
             "Bu katmanın dönüşümü kaynak korur. Boyamak için Katman → Görünümü rasterleştir kullanın.");
@@ -896,6 +906,8 @@ void Canvas::drawShape() {
     if (r.width() < 1 || r.height() < 1)
         return;
     auto &l = document->state.layers[document->state.active];
+    if (l.isSmartObject() && !document->editingMask)
+        return;
     bool edited = document->selection.paint(target(), l.offset, [&](QPainter &p) {
         p.setRenderHint(QPainter::Antialiasing);
         QColor c = foreground;
@@ -919,6 +931,8 @@ void Canvas::applyGradient() {
     if (QLineF(press, last).length() < 1)
         return;
     auto &l = document->state.layers[document->state.active];
+    if (l.isSmartObject() && !document->editingMask)
+        return;
     bool edited = document->selection.paint(target(), l.offset, [&](QPainter &p) {
         QLinearGradient g(press - l.offset, last - l.offset);
         g.setColorAt(0, foreground);
@@ -1262,8 +1276,10 @@ void Canvas::deleteSelection() {
     auto &l = document->state.layers[document->state.active];
     if (l.locked)
         return;
-    if (!l.geometry.isIdentity()) {
-        emit toolHint("Silmek için önce Katman → Görünümü rasterleştir kullanın.");
+    if ((l.isSmartObject() && !document->editingMask) || !l.geometry.isIdentity()) {
+        emit toolHint(l.isSmartObject() && !document->editingMask
+                          ? "Akıllı nesnenin gömülü kaynağı silinemez. Görünümü rasterleştir kaynak korumasını kaldırır; Geri al geri yükler."
+                          : "Silmek için önce Katman → Görünümü rasterleştir kullanın.");
         return;
     }
     document->beginEdit();
@@ -1319,7 +1335,7 @@ void Canvas::paintMoveTarget(QPainter &p) {
     const QRect viewport = showRulers ? rect().adjusted(24, 24, 0, 0) : rect();
     p.setClipRect(viewport);
     if (layerBoundsVisible && layer.visible && layer.validGeometry()) {
-        TransformHandles box{QSizeF(layer.pixels.size()), layer.geometry, QPointF(layer.offset), {}};
+        TransformHandles box{QSizeF(layer.sourceSize()), layer.geometry, QPointF(layer.offset), {}};
         QPolygonF outline;
         for (QPointF point : box.polygon())
             outline.append(toWidget(point));
@@ -1354,7 +1370,8 @@ const Layer *Canvas::previewLayer() const {
         return &transformSource;
     }
     const int active = document->state.active;
-    return active >= 0 && active < document->state.layers.size() ? &document->state.layers[active] : nullptr;
+    // Read-only access must not detach a layer list shared with a preview snapshot.
+    return active >= 0 && active < document->state.layers.size() ? &document->state.layers.at(active) : nullptr;
 }
 State Canvas::previewState() const {
     State state = document->state;
@@ -1372,7 +1389,7 @@ State Canvas::pendingTransformState() const {
 }
 QSize Canvas::activeLayerSourceSize() const {
     const Layer *layer = previewLayer();
-    return layer ? layer->pixels.size() : QSize();
+    return layer ? layer->sourceSize() : QSize();
 }
 QRect Canvas::activeLayerDisplayBounds() const {
     const Layer *layer = previewLayer();
@@ -1449,10 +1466,12 @@ void Canvas::updateTransformContext(int availableWidth) {
     const qreal sx = 100 * std::hypot(top.x(), top.y()) / qMax(1, source.width());
     const qreal sy = 100 * std::hypot(left.x(), left.y()) / qMax(1, source.height());
     const qreal angle = qRadiansToDegrees(std::atan2(top.y(), top.x()));
+    const Layer *sourceLayer = previewLayer();
+    const QString sourceLabel = sourceLayer && sourceLayer->isSmartObject() ? "Sabit çerçeve" : "Kaynak";
     transformMetrics->setText(
-        QString("Kaynak: %1 × %2 px · Görünüm (AABB): %3 × %4 px\nX: %5 · Y: %6 · Kenar ölçeği: %7% / %8% · Açı: %9°")
+        QString("%10: %1 × %2 px · Görünüm (AABB): %3 × %4 px\nX: %5 · Y: %6 · Kenar ölçeği: %7% / %8% · Açı: %9°")
             .arg(source.width()).arg(source.height()).arg(bounds.width()).arg(bounds.height())
-            .arg(bounds.x()).arg(bounds.y()).arg(sx, 0, 'f', 1).arg(sy, 0, 'f', 1).arg(angle, 0, 'f', 1));
+            .arg(bounds.x()).arg(bounds.y()).arg(sx, 0, 'f', 1).arg(sy, 0, 'f', 1).arg(angle, 0, 'f', 1).arg(sourceLabel));
     transformMetrics->setToolTip("Görünüm: belge eksenlerine hizalı, dışa yuvarlanan sınır (AABB). Ölçek: üst ve sol kenarın kaynak boyutuna oranı; açı: üst kenarın yönü. Perspektif/eğmede yerel genişlik ve yükseklik değildir.");
     transformInfo->setText(QString("Görünüm (AABB): %1 × %2 px · Kenar: %3% / %4% · Açı: %5°")
                               .arg(bounds.width()).arg(bounds.height())
@@ -1465,7 +1484,7 @@ TransformHandles Canvas::transformBox() const {
     if (!transformActive || transformLayer < 0 || transformLayer >= document->state.layers.size())
         return {};
     const Layer &layer = *previewLayer();
-    return {QSizeF(layer.pixels.size()), transformPreview, QPointF(layer.offset),
+    return {QSizeF(layer.sourceSize()), transformPreview, QPointF(layer.offset),
             showRulers ? QRectF(rect().adjusted(24, 24, 0, 0)) : QRectF(rect())};
 }
 QPointF Canvas::transformHandlePosition(TransformHandles::Handle handle) const {
@@ -1643,7 +1662,7 @@ bool Canvas::previewTransform(const QTransform &geometry) {
     QTransform normalized = geometry;
     bool unchanged = true;
     const Layer &source = *previewLayer();
-    const QSize sourceSize = source.pixels.size();
+    const QSize sourceSize = source.sourceSize();
     for (QPointF point : {QPointF(), QPointF(sourceSize.width(), 0),
                           QPointF(0, sourceSize.height()),
                           QPointF(sourceSize.width(), sourceSize.height())})

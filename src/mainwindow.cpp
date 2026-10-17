@@ -527,7 +527,8 @@ QString chooseSaveTarget(QWidget *parent, const QString &title, const QString &i
 QByteArray layerPreviewKey(const Layer &layer) {
     QByteArray key;
     QDataStream out(&key, QIODevice::WriteOnly);
-    out << layer.pixels.cacheKey() << layer.mask.cacheKey() << layer.geometry
+    out << layer.pixels.cacheKey() << layer.mask.cacheKey() << layer.smartObjectId
+        << layer.smartObjectSize << layer.geometry
         << layer.brightness << layer.contrast << layer.saturation << layer.blur;
     layer.tones.write(out);
     layer.filters.write(out);
@@ -1029,7 +1030,8 @@ QAction *MainWindow::action(const QString &id, const QString &text, const QKeySe
         const QByteArray expectedStack = wasTransforming ? layerStackKey(expected) : QByteArray{};
         // These commands own a chooser/confirmation. Their cancellation must not
         // apply a pending transform, so settle only after the user accepts.
-        if (canvas && id != "import" && id != "rasterize") {
+        if (canvas && id != "import" && id != "rasterize" && id != "replaceSmartObjectContents" &&
+            id != "export" && id != "advancedRaster") {
             if ((id == "undo" || id == "redo") && canvas->isTransforming()) {
                 canvas->cancelTransform();
                 return;
@@ -1429,6 +1431,13 @@ void MainWindow::buildMenus() {
             }
         }
     }));
+    auto *smartObjects = layer->addMenu("Akıllı nesne");
+    smartObjects->setObjectName("smartObjectMenu");
+    smartObjects->setToolTipsVisible(true);
+    smartObjects->addAction(action("convertSmartObject", "Akıllı nesneye dönüştür", {},
+                                   [this] { convertSmartObject(); }));
+    smartObjects->addAction(action("replaceSmartObjectContents", "İçeriği değiştir…", {},
+                                   [this] { replaceSmartObjectContents(); }));
     layer->addAction(action("rasterize", "Görünümü rasterleştir…", {}, [this] { rasterizeLayer(); }));
     layer->addAction(action("newPaintLayer", "Yeni boş katmana boya", {}, [this] { newPaintLayer(); }));
     actions["newPaintLayer"]->setToolTip(
@@ -1596,10 +1605,13 @@ void MainWindow::buildMenus() {
             "seçime uyar.\nCtrl+D seçimi kaldırır; Ctrl+Shift+D yeniden seçer. Seçim işlemleri geri alınabilir.\n"
             "Seçim menüsü: tümünü seç, kaldır, yeniden seç, ters çevir, yumuşat ve büyüt/küçült.\n"
             "Seçim → Seçimi kaydet / Kayıtlı seçimi yükle, adlandırılmış seçimleri projede saklar.\n"
-            "Yalnızca kayıtlı seçim içeren normal projeler v6 kullanır; yayımlanan 0.9.1 bunları açamaz.\n"
+            "Kayıtlı seçim içeren normal projeler v6, akıllı nesne içeren projeler v7 kullanır.\n"
+            "Katman → Akıllı nesne → Akıllı nesneye dönüştür; İçeriği değiştir kaynak görüntüyü "
+            "yenilerken çerçeveyi ve dönüşümü korur. Yeni görüntü özgün çözünürlüğünde gömülür; "
+            "farklı en-boy oranı sabit çerçeveyi dolduracak şekilde esnetilir. Önceki EA2 v7 projeleri açamaz.\n"
             "Tekerlek: işaretçinin çevresinde yakınlaştırma. Orta tuş: gezinme.\n\n.pdeck "
             "proje dosyası katmanları, maskeleri ve renk ayarlarını korur.\nPNG/WebP saydamlığı korur; "
-            "JPEG beyaz arka planla düzleştirilir.\nCtrl+Shift+E dışa aktarım penceresini açar. "
+            "JPEG beyaz arka planla düzleştirilir.\nCtrl+Shift+E konum, biçim, kalite ve boyut seçeneklerini tek dışa aktarım penceresinde açar. "
             "Ctrl+E alta, Ctrl+Alt+Shift+E görünür katmanları birleştirir.\n"
             "Ctrl+T katman dönüşümü, metni ve kaynak pikselleri korur. Enter dönüşümü uygular, "
             "Esc iptal eder. Ctrl+Alt+T sayısal dönüşüm ve perspektif ayarlarını açar. "
@@ -2490,6 +2502,11 @@ void MainWindow::updatePaintAvailability() {
         else if (!layer.visible)
             reason = QString("“%1” gizli. Boyamak için katmanı görünür yapın veya yeni boş katmana geçin.")
                          .arg(layer.name);
+        else if (layer.isSmartObject() && !document->editingMask)
+            reason = QString("“%1” bir akıllı nesne. Gömülü kaynağı korumak için İçeriği değiştir kullanın "
+                             "veya yeni boş katmana boyayın. Görünümü rasterleştir, gömülü kaynak "
+                             "korumasını ve akıllı nesne düzenlenebilirliğini kaldırır; Geri al geri yükler.")
+                         .arg(layer.name);
         else if (!layer.geometry.isIdentity())
             reason = QString("“%1” kaynak koruyan dönüşüm içeriyor. Piksel veya maske boyamak için "
                              "görünümü rasterleştirin ya da yeni boş katmana geçin.")
@@ -2508,15 +2525,28 @@ void MainWindow::updateLayerDetails() {
     const auto *document = currentDocument();
     if (!canvas || !document || document->state.layers.isEmpty())
         return;
-    const auto &active = document->state.layers[document->state.active];
+    // Copy only the displayed layer. Sharing the complete live layer list here can
+    // detach it during downstream UI reads and invalidate refresh() references.
+    const Layer active = [canvas, document] {
+        if (canvas->isTransforming()) {
+            const State displayed = canvas->pendingTransformState();
+            return displayed.layers.at(displayed.active);
+        }
+        return document->state.layers.at(document->state.active);
+    }();
     const QSize source = canvas->activeLayerSourceSize();
     const QRect bounds = canvas->activeLayerDisplayBounds();
-    QString description = QString("Hedef: %1\nKaynak: %2 × %3 px\n"
+    QString description = QString("Hedef: %1\n%8: %2 × %3 px\n"
                                   "Görünüm: %4 × %5 px (tuvale hizalı sınır)\nKonum: %6, %7")
                               .arg(canvas->activeLayerTargetName())
                               .arg(source.width()).arg(source.height())
                               .arg(bounds.width()).arg(bounds.height())
-                              .arg(bounds.x()).arg(bounds.y());
+                              .arg(bounds.x()).arg(bounds.y())
+                              .arg(active.isSmartObject() ? "Sabit çerçeve" : "Kaynak");
+    if (active.isSmartObject())
+        description += QString("\nAKILLI NESNE · Gömülü kaynak: %1 × %2 px\n"
+                               "İçeriği değiştir: yeni görüntü sabit çerçeveyi dolduracak şekilde esnetilir.")
+                           .arg(active.pixels.width()).arg(active.pixels.height());
     if (document->editingMask)
         description += "\nMASKE · Beyaz gösterir, siyah gizler. X: renkleri değiştir.";
     else if (!active.text.isEmpty() && !canvas->isTransforming())
@@ -2557,8 +2587,10 @@ void MainWindow::addDocument(Document *d) {
         updateLayerDetails();
     });
     connect(canvas, &Canvas::transformPreviewChanged, this, [this, canvas] {
-        if (currentCanvas() == canvas)
+        if (currentCanvas() == canvas) {
+            updateActionAvailability();
             updateLayerDetails();
+        }
     });
     connect(canvas, &Canvas::colorPicked, this, [this, canvas](QColor c) {
         canvas->foreground = c;
@@ -2691,6 +2723,38 @@ void MainWindow::updateActionAvailability() {
                 : transformReason);
         actions[id]->setStatusTip(actions[id]->toolTip());
     }
+    const Layer *activeLayer = activePresent ? &d->state.layers[d->state.active] : nullptr;
+    QString smartReason;
+    if (!activeLayer)
+        smartReason = "Önce bir belge açın veya oluşturun.";
+    else if (activeLayer->locked)
+        smartReason = "Önce katmanın kilidini açın.";
+    else if (!activeLayer->visible)
+        smartReason = "Önce katmanı görünür yapın.";
+    QString convertReason = smartReason;
+    if (convertReason.isEmpty() && activeLayer->isSmartObject())
+        convertReason = "Bu katman zaten bir akıllı nesne.";
+    else if (convertReason.isEmpty() && !activeLayer->text.isEmpty())
+        convertReason = "Yalnızca piksel katmanları akıllı nesneye dönüştürülebilir. Metin için önce görünümü rasterleştirin.";
+    actions["convertSmartObject"]->setEnabled(convertReason.isEmpty());
+    actions["convertSmartObject"]->setToolTip(convertReason.isEmpty()
+        ? "Piksel kaynağını projeye gömer; çerçeve, maske ve dönüşüm korunur. Kaynağa doğrudan boyanmaz."
+        : convertReason);
+    QString replaceReason = smartReason;
+    if (replaceReason.isEmpty() && !activeLayer->isSmartObject())
+        replaceReason = "Önce piksel katmanını akıllı nesneye dönüştürün.";
+    if (replaceReason.isEmpty() && transforming) {
+        const State pending = currentCanvas()->pendingTransformState();
+        if (pending.active < 0 || pending.active >= pending.layers.size() ||
+            !pending.layers[pending.active].isSmartObject())
+            replaceReason = "Seçim kopyası bir piksel katmanıdır. İçeriği değiştir yalnızca akıllı nesne hedefinde kullanılabilir. Esc özgün katmana döner.";
+    }
+    actions["replaceSmartObjectContents"]->setEnabled(replaceReason.isEmpty());
+    actions["replaceSmartObjectContents"]->setToolTip(replaceReason.isEmpty()
+        ? "Yeni görüntüyü özgün çözünürlüğünde gömer; sabit çerçeveyi dolduracak şekilde esnetir. Konum, dönüşüm, maske ve efektler korunur."
+        : replaceReason);
+    for (const auto &id : {"convertSmartObject", "replaceSmartObjectContents"})
+        actions[id]->setStatusTip(actions[id]->toolTip());
     for (const auto &id : {"resetTransform", "rasterize"})
         actions[id]->setEnabled(activePresent && !d->state.layers[d->state.active].locked &&
                                 d->state.layers[d->state.active].visible);
@@ -2698,7 +2762,9 @@ void MainWindow::updateActionAvailability() {
         !activePresent ? "Önce bir belge açın veya oluşturun."
         : d->state.layers[d->state.active].locked ? "Önce katmanın kilidini açın."
         : !d->state.layers[d->state.active].visible ? "Önce katmanı görünür yapın."
-        : "Görünümü piksele çevirir: dönüşüm, maske, renk ve filtre ayarları piksellere işlenir; metin düzenlenebilirliği kalkar. Önce onayınız istenir.");
+        : d->state.layers[d->state.active].isSmartObject()
+            ? "Görünümü piksele çevirir; akıllı nesne kimliği, gömülü kaynak ve içeriği değiştirme olanağı kaldırılır. Geri al geri yükler. Önce onayınız istenir."
+            : "Görünümü piksele çevirir: dönüşüm, maske, renk ve filtre ayarları piksellere işlenir; metin düzenlenebilirliği kalkar. Önce onayınız istenir.");
     actions["import"]->setEnabled(true);
     actions["import"]->setToolTip(
         present
@@ -2864,7 +2930,7 @@ void MainWindow::refresh() {
         auto *item = row < layers->count() ? layers->item(row) : new QListWidgetItem(layers);
         if (item->icon().cacheKey() != previews.layerThumbnails[i].cacheKey())
             item->setIcon(previews.layerThumbnails[i]);
-        QStringList details{l.text.isEmpty() ? "Piksel" : "Metin"};
+        QStringList details{l.isSmartObject() ? "Akıllı nesne" : l.text.isEmpty() ? "Piksel" : "Metin"};
         if (!l.mask.isNull())
             details << (d->editingMask && i == d->state.active ? "Maske düzenleniyor" : "Maske");
         if (l.locked)
@@ -2884,6 +2950,11 @@ void MainWindow::refresh() {
                                         : "Çift tık: yeniden adlandır";
         QString hint = l.name + "\n" + description + "\n" + doubleClick +
                        " · Sürükle: sırala · F2: yeniden adlandır · Sağ tık: katman işlemleri";
+        if (l.isSmartObject())
+            hint += QString("\nGömülü kaynak: %1 × %2 px · Sabit çerçeve: %3 × %4 px. "
+                            "İçeriği değiştir, konumu ve dönüşümü korur.")
+                        .arg(l.pixels.width()).arg(l.pixels.height())
+                        .arg(l.sourceSize().width()).arg(l.sourceSize().height());
         if (l.locked)
             hint += "\nKilit, piksel/metin/maske düzenlemesini engeller. Ad ve görünürlük değişebilir; sıra da değiştirilebilir.";
         if (l.clipped)
@@ -3089,6 +3160,110 @@ void MainWindow::importLayer() {
         showLayerImportHelp();
 }
 
+void MainWindow::convertSmartObject() {
+    const QPointer<MainWindow> self(this);
+    const QPointer<Document> document = currentDocument();
+    if (!document)
+        return;
+    QString message;
+    const bool converted = document->convertToSmartObject(&message);
+    if (!self)
+        return;
+    if (!converted) {
+        error(message);
+        return;
+    }
+    refresh();
+    if (self)
+        status->setText("Akıllı nesne oluşturuldu. İçeriği değiştir, gömülü kaynağı sabit çerçevede yeniler.");
+}
+
+void MainWindow::replaceSmartObjectContents() {
+    const QPointer<MainWindow> self(this);
+    const QPointer<Canvas> canvas = currentCanvas();
+    const QPointer<Document> document = currentDocument();
+    if (!canvas || !document || document->state.active < 0 ||
+        document->state.active >= document->state.layers.size())
+        return;
+    const int active = document->state.active;
+    const Layer &source = document->state.layers[active];
+    if (!source.isSmartObject() || source.locked || !source.visible)
+        return;
+    const quint64 revision = document->revision();
+    const QByteArray stack = layerStackKey(document);
+    const bool editingMask = document->editingMask;
+    const bool transforming = canvas->isTransforming();
+    const QTransform preview = transforming ? canvas->transformGeometry() : QTransform{};
+    const State expected = transforming ? canvas->pendingTransformState() : document->state;
+    if (expected.active < 0 || expected.active >= expected.layers.size() ||
+        !expected.layers[expected.active].isSmartObject()) {
+        status->setText("Seçim kopyası bir piksel katmanıdır; içeriği değiştirilemez. Esc özgün akıllı nesneye döner.");
+        return;
+    }
+    QFileDialog dialog(this, "Akıllı nesne içeriğini değiştir", {},
+                       "Görüntüler (*.png *.jpg *.jpeg *.webp *.bmp *.gif *.tif *.tiff)");
+    dialog.setObjectName("replaceSmartObjectContentsDialog");
+    dialog.setAcceptMode(QFileDialog::AcceptOpen);
+    dialog.setFileMode(QFileDialog::ExistingFile);
+    dialog.setLabelText(QFileDialog::FileName, "Görüntü (sabit çerçeveye esnetilir):");
+    dialog.setToolTip("Görüntü özgün çözünürlüğünde gömülür. Farklı en-boy oranı sabit çerçeveyi dolduracak şekilde esnetilir; dönüşüm ve maske korunur.");
+    if (dialog.exec() != QDialog::Accepted || dialog.selectedFiles().isEmpty())
+        return;
+    auto targetIsCurrent = [&] {
+        return self && canvas && document && currentCanvas() == canvas && currentDocument() == document &&
+               document->revision() == revision && document->state.active == active &&
+               document->editingMask == editingMask && layerStackKey(document) == stack &&
+               canvas->isTransforming() == transforming &&
+               (!transforming || canvas->transformGeometry() == preview);
+    };
+    if (!targetIsCurrent()) {
+        if (self)
+            status->setText("Hedef değişti; içerik değiştirilmedi. İşlemi yeniden açın.");
+        return;
+    }
+    QString message;
+    const QImage image = Document::readImage(dialog.selectedFiles().first(), &message);
+    if (image.isNull()) {
+        error(message);
+        return;
+    }
+    // Decode and validate the complete pending state before committing a live preview.
+    // Failed images, oversized sources and selection-copy targets leave it untouched.
+    Document candidate;
+    candidate.state = expected;
+    candidate.editingMask = editingMask;
+    if (!candidate.replaceSmartObjectContents(image, &message)) {
+        if (message.isEmpty())
+            status->setText("Seçilen içerik aynı; değişiklik yapılmadı.");
+        else
+            error(message);
+        return;
+    }
+    if (!targetIsCurrent())
+        return;
+    finishLayerRename();
+    const bool settled = canvas->finishPendingGesture();
+    if (!self || !canvas || !document || currentCanvas() != canvas || currentDocument() != document ||
+        canvas->hasPendingGesture() || document->isEditing() || (transforming && !settled) ||
+        document->editingMask != editingMask || document->state.active != expected.active ||
+        layerStackKey(document) != layerStackKey(expected) ||
+        !document->selection.equivalent(expected.selection, expected.size))
+        return;
+    const bool replaced = document->replaceSmartObjectContents(image, &message);
+    if (!self)
+        return;
+    if (!replaced) {
+        if (message.isEmpty())
+            status->setText("Seçilen içerik aynı; değişiklik yapılmadı.");
+        else
+            error(message);
+        return;
+    }
+    refresh();
+    if (self)
+        status->setText("Gömülü kaynak değiştirildi; yeni görüntü sabit çerçeveyi doldurur. Konum, dönüşüm ve maske korundu.");
+}
+
 void MainWindow::rasterizeLayer() {
     const QPointer<MainWindow> self(this);
     const QPointer<Canvas> canvas = currentCanvas();
@@ -3105,6 +3280,7 @@ void MainWindow::rasterizeLayer() {
     const QTransform preview = transforming ? canvas->transformGeometry() : QTransform{};
     const State expected = transforming ? canvas->pendingTransformState() : document->state;
     const QString targetName = canvas->activeLayerTargetName();
+    const bool smartObject = expected.layers[expected.active].isSmartObject();
     QMessageBox confirm(QMessageBox::Warning, "Görünümü rasterleştir",
                         QString("“%1” katmanının görünümü piksele çevrilsin mi?\n\n"
                                 "Dönüşüm, katman maskesi, renk/ton ve filtre ayarları görünür "
@@ -3113,7 +3289,10 @@ void MainWindow::rasterizeLayer() {
                                 "modu ve kırpma ilişkisi korunur.\n\n"
                                 "Sonra bu piksel katmanında boyayabilirsiniz. Geri al ile "
                                 "rasterleştirme öncesine dönebilirsiniz.")
-                            .arg(targetName),
+                            .arg(targetName) +
+                            (smartObject
+                                 ? "\n\nAkıllı nesne kimliği ve gömülü özgün kaynak kaldırılır; İçeriği değiştir ile düzenleme olanağı kalkar. Geri al, akıllı nesneyi ve gömülü kaynağını geri yükler."
+                                 : QString()),
                         QMessageBox::Yes | QMessageBox::Cancel, this);
     confirm.setObjectName("rasterizeLayerDialog");
     confirm.setTextFormat(Qt::PlainText);
@@ -3196,8 +3375,14 @@ bool MainWindow::saveDocument(Document *d, bool saveAs) {
             return false;
     }
     Document::SaveOptions options;
-    bool v6WarningAccepted = false;
+    int acceptedFormatVersion = 0;
     while (true) {
+        const int formatVersion = d->projectSaveVersion();
+        const QString formatExplanation = formatVersion >= 7
+            ? "Akıllı nesneler v7 gerektirir. Önceki PhotoDeck EA2 ve 0.9.1 sürümleri bu dosyayı açamaz."
+            : formatVersion >= 6
+                ? "Kayıtlı seçimler v6 gerektirir. Yayımlanan PhotoDeck 0.9.1 bu dosyayı açamaz."
+                : QString();
         if (!file.endsWith(".pdeck", Qt::CaseInsensitive)) {
             error("Projeyi .pdeck uzantısıyla kaydedin.");
             return false;
@@ -3207,10 +3392,8 @@ bool MainWindow::saveDocument(Document *d, bool saveAs) {
                 QString("Bu proje v%1 biçiminde açıldı. PhotoDeck yeni kayıtları v%2 biçiminde "
                         "yazar; eski uygulama sürümleri bu kopyayı açamayabilir.\n\nOrijinal dosyayı "
                         "korumak için farklı bir adla kaydedin.")
-                    .arg(d->sourceVersion()).arg(d->projectSaveVersion()) +
-                    (d->projectSaveVersion() >= 6
-                         ? "\n\nKayıtlı seçimler v6 gerektirir. Yayımlanan PhotoDeck 0.9.1 bu dosyayı açamaz."
-                         : QString()),
+                    .arg(d->sourceVersion()).arg(formatVersion) +
+                    (formatExplanation.isEmpty() ? QString() : "\n\n" + formatExplanation),
                 QMessageBox::Cancel, this);
             warning.setObjectName("projectUpgradeWarning");
             auto *copy = warning.addButton("Kopya olarak kaydet…", QMessageBox::AcceptRole);
@@ -3226,20 +3409,25 @@ bool MainWindow::saveDocument(Document *d, bool saveAs) {
                                                   ".pdeck"));
             if (file.isEmpty())
                 return false;
-            v6WarningAccepted = d->projectSaveVersion() >= 6;
+            acceptedFormatVersion = formatVersion;
             options = {};
             continue; // A path alias to the original must not bypass the compatibility check.
         }
-        if (d->projectSaveVersion() >= 6 && d->sourceVersion() < 6 && !v6WarningAccepted) {
-            QMessageBox warning(QMessageBox::Warning, "Kayıtlı seçimler için v6 proje biçimi",
-                "Kayıtlı seçimler bu kopyanın v6 biçiminde yazılmasını gerektirir. Yayımlanan "
-                "PhotoDeck 0.9.1 bu dosyayı açamaz. Kayıtlı seçimleri silerseniz normal kayıt "
-                "yeniden v5 biçimini kullanır.", QMessageBox::Save | QMessageBox::Cancel, this);
-            warning.setObjectName("savedSelectionFormatWarning");
+        if (formatVersion >= 6 && d->sourceVersion() < formatVersion && acceptedFormatVersion < formatVersion) {
+            QMessageBox warning(QMessageBox::Warning,
+                formatVersion >= 7 ? "Akıllı nesneler için v7 proje biçimi"
+                                   : "Kayıtlı seçimler için v6 proje biçimi",
+                formatExplanation + (formatVersion >= 7
+                    ? " Akıllı nesneleri açıkça rasterleştirirseniz normal kayıt, kalan özelliklere göre v5 veya v6 kullanır."
+                    : " Kayıtlı seçimleri silerseniz normal kayıt yeniden v5 biçimini kullanır."),
+                QMessageBox::Save | QMessageBox::Cancel, this);
+            warning.setObjectName(formatVersion >= 7 ? "smartObjectFormatWarning" : "savedSelectionFormatWarning");
             warning.setDefaultButton(QMessageBox::Cancel);
             if (warning.exec() != QMessageBox::Save)
                 return false;
-            v6WarningAccepted = true;
+            acceptedFormatVersion = formatVersion;
+            if (d->projectSaveVersion() > formatVersion)
+                continue;
         }
         QString e;
         if (d->save(file, &e, true, options))
@@ -3346,24 +3534,8 @@ void MainWindow::customizeBrush() {
     c->update();
 }
 void MainWindow::exportAdvancedRaster() {
-    auto *d = currentDocument();
-    if (!d)
-        return;
-    RasterOutputDialog dialog(d->state.size, this);
-    if (dialog.exec() != QDialog::Accepted)
-        return;
-    QString filters = "PNG (*.png);;JPEG (*.jpg)";
-    if (QImageWriter::supportedImageFormats().contains("webp"))
-        filters += ";;WebP (*.webp)";
-    if (QImageWriter::supportedImageFormats().contains("tiff"))
-        filters += ";;TIFF (*.tiff)";
-    QString file = chooseSaveTarget(this, "Raster görüntüyü dışa aktar",
-                                    QFileInfo(d->title).completeBaseName() + ".png", filters);
-    if (file.isEmpty())
-        return;
-    QString e;
-    if (!d->exportRaster(file, dialog.options(), &e))
-        error(e);
+    // The regular export screen now includes the advanced raster settings.
+    exportDocument();
 }
 void MainWindow::exportPdfDocument() {
     auto *d = currentDocument();
@@ -3398,33 +3570,45 @@ void MainWindow::printDocument() {
         error("Yazdırma tamamlanamadı. Yazıcı bağlantısını ve sürücüyü kontrol edin.");
 }
 void MainWindow::exportDocument() {
-    auto *d = currentDocument();
-    if (!d)
+    const QPointer<MainWindow> self(this);
+    const QPointer<Canvas> canvas = currentCanvas();
+    const QPointer<Document> document = currentDocument();
+    if (!canvas || !document)
         return;
-    currentCanvas()->finishPendingGesture();
-    QString filters = "PNG · saydam (*.png);;JPEG · beyaz arka plan (*.jpg)";
-    if (QImageWriter::supportedImageFormats().contains("webp"))
-        filters += ";;WebP · saydam (*.webp)";
-    filters += ";;BMP (*.bmp)";
-    if (QImageWriter::supportedImageFormats().contains("tiff"))
-        filters += ";;TIFF · RGB 8 bit (*.tiff)";
-    QString selected;
-    QString file = chooseSaveTarget(this, "Görüntüyü dışa aktar",
-                                    QFileInfo(d->title).completeBaseName() + ".png", filters, &selected);
-    if (file.isEmpty())
+    const quint64 revision = document->revision();
+    const QByteArray stack = layerStackKey(document);
+    const bool transforming = canvas->isTransforming();
+    const QTransform preview = transforming ? canvas->transformGeometry() : QTransform{};
+    // Export what is currently previewed without committing a transform or changing
+    // the layered document, its dirty state, selection or undo/redo history.
+    State snapshot = transforming ? canvas->pendingTransformState() : document->state;
+    for (auto &layer : snapshot.layers)
+        layer.cache = {};
+    const QString title = document->title;
+    QString initial = QFileInfo(title).completeBaseName() + ".png";
+    if (!document->path.isEmpty())
+        initial = QFileInfo(document->path).dir().filePath(initial);
+    const QPointer<ExportDialog> dialog = new ExportDialog(snapshot.size, initial, this);
+    auto cleanup = qScopeGuard([dialog] {
+        if (dialog)
+            dialog->deleteLater();
+    });
+    if (dialog->exec() != QDialog::Accepted || !self || !dialog)
         return;
-    int quality = 95;
-    if (QFileInfo(file).suffix().toLower() == "jpg" || QFileInfo(file).suffix().toLower() == "jpeg" ||
-        QFileInfo(file).suffix().toLower() == "webp") {
-        bool ok;
-        quality =
-            QInputDialog::getInt(this, "Dışa aktarım kalitesi", "Kalite (1–100)", 95, 1, 100, 1, &ok);
-        if (!ok)
-            return;
+    if (!canvas || !document || currentCanvas() != canvas || currentDocument() != document ||
+        document->revision() != revision || layerStackKey(document) != stack ||
+        canvas->isTransforming() != transforming ||
+        (transforming && canvas->transformGeometry() != preview)) {
+        status->setText("Çalışma değişti; görüntü dışa aktarılmadı. Dışa aktar penceresini yeniden açın.");
+        return;
     }
-    QString e;
-    if (!d->exportImage(file, quality, &e))
-        error(e);
+    const QString file = dialog->filePath();
+    Document output;
+    output.state = std::move(snapshot);
+    output.title = title;
+    QString message;
+    if (!output.exportRaster(file, dialog->options(), &message))
+        error(message);
     else
         status->setText("Dışa aktarıldı · " + QFileInfo(file).fileName());
 }
@@ -3759,7 +3943,9 @@ void MainWindow::showLayerMenu(const QPoint &position) {
     if (!item || !currentDocument())
         return;
     layers->setCurrentItem(item);
-    currentCanvas()->finishPendingGesture();
+    // Keep a same-row transform preview live until a chooser-backed command succeeds.
+    if (!currentCanvas()->isTransforming())
+        currentCanvas()->finishPendingGesture();
     QPointer<Document> target = currentDocument();
     const int index = target->state.active;
     const quint64 revision = target->revision();
@@ -3771,6 +3957,7 @@ void MainWindow::showLayerMenu(const QPoint &position) {
         auto *entry = parent->addAction(source->icon(), source->text());
         entry->setObjectName(id);
         entry->setEnabled(source->isEnabled());
+        entry->setToolTip(source->toolTip());
         if (id == "layerUp" || id == "layerDown")
             entry->setToolTip("Tek katmanı taşır. Sıra değişikliği görünümü ve kırpma ilişkisini "
                               "değiştirebilir.");
@@ -3786,6 +3973,10 @@ void MainWindow::showLayerMenu(const QPoint &position) {
     if (!target->state.layers[index].text.isEmpty())
         append(&menu, "editText");
     append(&menu, "duplicateWhole");
+    menu.addSeparator();
+    append(&menu, "convertSmartObject");
+    append(&menu, "replaceSmartObjectContents");
+    append(&menu, "rasterize");
     menu.addSeparator();
     append(&menu, "layerUp");
     append(&menu, "layerDown");

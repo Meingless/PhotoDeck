@@ -1,10 +1,16 @@
 # PhotoDeck erken erişim ve geliştirme notları
 
-Bu kaynak dalı **0.10.0-ea.2** erken erişim adayını hazırlar. Aşağıdaki 0.9.1 ve önceki sürüm kayıtları tarihsel kapsamı anlatır; 0.10 için platform/paket doğrulaması sayılmaz. Yeni davranışlar ve doğrulama sınırları [geliştirme notlarında](docs/DEVELOPMENT-0.10.md) izlenir.
+Bu kaynak dalı **0.10.0-ea.3** erken erişim adayını hazırlar. Aşağıdaki 0.9.1 ve önceki sürüm kayıtları tarihsel kapsamı anlatır; 0.10 için platform/paket doğrulaması sayılmaz. Yeni davranışlar ve doğrulama sınırları [geliştirme notlarında](docs/DEVELOPMENT-0.10.md) izlenir.
 
 AI içermeyen yerel fotoğraf ve katman düzenleyici. Erken erişim sürümüdür; önemli orijinalleri koruyun ve ayrı proje kopyalarıyla çalışın.
 
-## 0.10.0-ea.2 — güncel kapsam
+## 0.10.0-ea.3 — güncel kapsam
+
+- Piksel katmanı gömülü akıllı nesneye çevrilir; tam kaynak pikselleri ve sabit çerçeve korunur. İçeriği değiştir… dönüşüm, konum, maske ve mevcut efekt ayarlarını korur. Kaynak doğrudan boyanmaz; açık onaylı rasterleştirme veya yeni boş boya katmanı kullanılır. İşlemler geri alınabilir. [Akıllı nesne kılavuzu](docs/SMART-OBJECTS.md).
+- Dışa aktar düğmesi ve Ctrl+Shift+E; konum, biçim, kalite, boyut, DPI ve ICC seçeneklerini tek PhotoDeck ekranında toplar. Kurulu Qt kodlayıcıları kullanılır; üzerine yazma ayrı onay ister. Çıktı, katmanlı projeyi veya açık dönüşüm önizlemesini değiştirmez. [Dışa aktarım kılavuzu](docs/EXPORT.md).
+- Akıllı nesneyi sessizce pişirecek bütün-görüntü boyutlandırma/dönüş/aynalama ve birleştirme/düzleştirme engellenir. Bağlantılı dosya, iç içe içerik-düzenleme belgesi veya Photoshop akıllı filtre yığını eklenmedi. Etkin maske/efekt işleme sabit çerçeve çözünürlüğündedir; büyütmede tam ayrıntı garanti edilmez.
+
+EA2 ve önceki 0.10 davranışları korunur:
 
 - Tuvalden görünür piksele göre hedef katman seçimi ve görünüm sınırı; canlı kaynak/görünüm ölçüleri, açık sayısal oran kilidi ve dar pencerede okunur dönüşüm eylemleri eklendi.
 - Seçimi kopyala ve dönüştür, görünen seçili pikselleri bağımsız kopyada önizler; özgün yerinde kalır. Esc kopyayı iptal eder, Uygula kopya ile dönüşümü tek geri alma adımı yapar.
@@ -16,13 +22,13 @@ AI içermeyen yerel fotoğraf ve katman düzenleyici. Erken erişim sürümüdü
 - F2 katman adını satır içinde düzenler; bağlam menüsü açılan satırı hedefler. Sayısal X/Y, tuval/seçim sınırına yatay-dikey hizalama ve odaklı tuvalde Taşı aracıyla ok/Shift+ok = 1/10 belge pikseli vardır. [Konumlandırma kılavuzu](docs/LAYER-POSITIONING.md).
 - [Geçmiş paneli](docs/HISTORY-NAVIGATION.md) geri/ileri adımlara fare ve klavyeyle gider. [Kurtarma](docs/RECOVERY.md) görüntü kodlama ve büyük yazımı arka planda, süreç genelinde tek değişmez anlık görüntü/kodlayıcıyla yapar. Normal Kaydet eşzamanlı kalır; büyük belgelerde bekleyebilir.
 
-Normal projeler adlandırılmış seçim yoksa v5 olarak kalır; yalnız geçici seçim dosyayı yükseltmez. Adlandırılmış seçimler v6 gerektirir ve yayımlanan 0.9.1 bunları açamaz. İlk v6 kaydında uyarı verilir; eski orijinal ayrı kopyayla korunur. Son adlandırılmış seçim silinince normal kayıt yeniden v5 olur. Kurtarma seçim bağlamı için ayrıca v6 kullanabilir; normal projenin kayıt kimliğini değiştirmez.
+Akıllı nesne içeren normal proje ve kurtarma kopyaları v7 gerektirir; EA2 ve eski okuyucular v7'yi açamaz. İlk v7 kaydında uyumsuzluk açıklanır ve eski orijinali koruyan kopya/uyarı yolu kullanılır. Son akıllı nesnenin silinmesi/rasterleştirilmesi düşük sürüme dönüşü mümkün kılar. Akıllı nesne yoksa normal projeler adlandırılmış seçim yoksa v5 olarak kalır; yalnız geçici seçim dosyayı yükseltmez. Adlandırılmış seçimler v6 gerektirir ve yayımlanan 0.9.1 bunları açamaz. İlk v6 kaydında uyarı verilir; eski orijinal ayrı kopyayla korunur. Son adlandırılmış seçim silinince normal kayıt yeniden v5 olur. Kurtarma seçim bağlamı için ayrıca v6 kullanabilir; normal projenin kayıt kimliğini değiştirmez.
 
 Bu kapsam PSD/RAW, CMYK/yüksek bit, grup veya ayar katmanları eklemez. Kayıtlı seçimler genel amaçlı alfa Channels paneli değildir; dönüşüm varsayılan olarak bütün etkin katmanı kapsar; seçimi kopyala ve dönüştür özgünü koruyan ayrı raster kopya oluşturur. Yerinde seçili piksel dönüşümü ve warp sağlamaz. Bu sürüm tam Photoshop eşdeğeri değildir. Kaynak testleri [özellik denetiminden](docs/FEATURE-AUDIT.md), gerçekten çalıştırılan commit/ortam ve sınırlar [0.10 geliştirme notlarından](docs/DEVELOPMENT-0.10.md) izlenir. Aşağıdaki tarihsel paket sonuçları 0.10'u doğrulamaz.
 
-## 0.10.0-ea.2 paketleri ve doğrulama
+## 0.10.0-ea.3 paketleri ve doğrulama
 
-[Sürüm kaydı](https://github.com/Meingless/PhotoDeck/releases/tag/v0.10.0-ea.2), test edilen tam kaynak commit'ini, başarılı CI/paket akışlarını, SHA256SUMS.txt ve RELEASE-PROOF.json dosyalarını içerir. Yayımlayıcı dört platformda 22/22 native CTest grubu ve ayrı Linux ASan/UBSan işi başarılı olmadan yayını açmaz. Linux/Windows'ta 22 grubun tamamı paketlenmiş Qt ile ayrıca çalışır; macOS'ta native CTest, dağıtılmış uygulama açılışı ve ad hoc imza kontrolü yapılır. Atlanan platforma özgü vakalar kanıt dosyasında ad ve gerekçeyle listelenir; bunlar başarılı vaka sayılmaz.
+[EA3 sürüm notları](docs/releases/0.10.0-ea.3.md) bu adayın yayın şartlarını anlatır. Yayımlayıcı, yalnız incelenen PR #5'in tam son kaynağı ile aynı ağaçtaki güncel main birleştirmesi için dört platformda 24/24 native CTest grubu ve ayrı Linux ASan/UBSan işi başarılı olduğunda ilerler. Yeni paketler, tam kaynak kimliği, gerçek CI/paket bağlantıları, SHA256SUMS.txt ve RELEASE-PROOF.json ile yayımlanır. Önceki geliştirme CI'ı son EA3 metadata kaynağının kanıtı değildir. Linux/Windows'ta 24 grubun tamamı paketlenmiş Qt ile ayrıca çalışır; macOS'ta native CTest, dağıtılmış uygulama açılışı ve ad hoc imza kontrolü yapılır. Atlanan platforma özgü vakalar kanıt dosyasında ad ve gerekçeyle listelenir; bunlar başarılı vaka sayılmaz.
 
 - Linux x86_64 portable arşivi: tamamen açıp launch.sh çalıştırın. AppImage için çalıştırma izni gerekir; FUSE yoksa APPIMAGE_EXTRACT_AND_RUN=1 kullanılabilir. CI paketi Ubuntu 22.04 tabanında yeniden derlenir; önceki glibc 2.39 isteyen bulut geliştirme paketi yayımlanmaz.
 - Windows x64: ZIP'i tamamen açıp PhotoDeck.exe çalıştırın. Qt ve VC++ çalışma zamanı DLL'leri yanındadır. Yayıncı sertifikasıyla imzalı değildir.

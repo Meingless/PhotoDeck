@@ -119,9 +119,9 @@ TransformDialog::TransformDialog(Document *d, QWidget *parent)
     cornerNote->setWordWrap(true);
     corners->addRow(cornerNote);
     QPolygonF sourceCorners{{0, 0},
-                            {qreal(source.pixels.width()), 0},
-                            {qreal(source.pixels.width()), qreal(source.pixels.height())},
-                            {0, qreal(source.pixels.height())}};
+                            {qreal(source.sourceSize().width()), 0},
+                            {qreal(source.sourceSize().width()), qreal(source.sourceSize().height())},
+                            {0, qreal(source.sourceSize().height())}};
     const QStringList names{"Sol üst", "Sağ üst", "Sağ alt", "Sol alt"};
     for (int i = 0; i < 4; ++i) {
         QPointF at = source.geometry.map(sourceCorners[i]);
@@ -175,9 +175,9 @@ TransformDialog::TransformDialog(Document *d, QWidget *parent)
         if (index == 1) {
             const auto &matrix = document->state.layers[document->state.active].geometry;
             const QPolygonF corners{{0, 0},
-                                    {qreal(source.pixels.width()), 0},
-                                    {qreal(source.pixels.width()), qreal(source.pixels.height())},
-                                    {0, qreal(source.pixels.height())}};
+                                    {qreal(source.sourceSize().width()), 0},
+                                    {qreal(source.sourceSize().width()), qreal(source.sourceSize().height())},
+                                    {0, qreal(source.sourceSize().height())}};
             for (int i = 0; i < 4; ++i) {
                 QSignalBlocker x(cornerX[i]), y(cornerY[i]);
                 const QPointF point = matrix.map(corners[i]);
@@ -213,9 +213,9 @@ void TransformDialog::setKeepAspectRatio(bool keep) {
 QTransform TransformDialog::transform() const {
     if (tabs->currentIndex() == 1) {
         QPolygonF from{{0, 0},
-                       {qreal(source.pixels.width()), 0},
-                       {qreal(source.pixels.width()), qreal(source.pixels.height())},
-                       {0, qreal(source.pixels.height())}};
+                       {qreal(source.sourceSize().width()), 0},
+                       {qreal(source.sourceSize().width()), qreal(source.sourceSize().height())},
+                       {0, qreal(source.sourceSize().height())}};
         QPolygonF to;
         for (int i = 0; i < 4; ++i)
             to.append({cornerX[i]->value(), cornerY[i]->value()});
@@ -252,16 +252,20 @@ void TransformDialog::updateMetrics() {
     const QRect bounds = display.transformedBounds();
     const auto &matrix = display.geometry;
     const QPointF origin = matrix.map(QPointF(0, 0));
-    const QPointF horizontal = matrix.map(QPointF(source.pixels.width(), 0)) - origin;
-    const QPointF vertical = matrix.map(QPointF(0, source.pixels.height())) - origin;
-    const double scaleX = QLineF(QPointF(), horizontal).length() / source.pixels.width() * 100;
-    const double scaleY = QLineF(QPointF(), vertical).length() / source.pixels.height() * 100;
+    const QPointF horizontal = matrix.map(QPointF(source.sourceSize().width(), 0)) - origin;
+    const QPointF vertical = matrix.map(QPointF(0, source.sourceSize().height())) - origin;
+    const double scaleX = QLineF(QPointF(), horizontal).length() / source.sourceSize().width() * 100;
+    const double scaleY = QLineF(QPointF(), vertical).length() / source.sourceSize().height() * 100;
     const double rotation = qRadiansToDegrees(std::atan2(horizontal.y(), horizontal.x()));
-    metrics->setText(QString("Kaynak: %1 × %2 px · Görünüm sınırı: %3 × %4 px (eksene hizalı)\n"
+    const QString sourceLabel = source.isSmartObject() ? "Akıllı nesne çerçevesi" : "Kaynak";
+    metrics->setText(QString("%8: %1 × %2 px · Görünüm sınırı: %3 × %4 px (eksene hizalı)\n"
                              "Üst / sol kenar: %%5 / %%6 · Üst kenar açısı: %7°")
-                         .arg(source.pixels.width()).arg(source.pixels.height())
+                         .arg(source.sourceSize().width()).arg(source.sourceSize().height())
                          .arg(bounds.width()).arg(bounds.height())
-                         .arg(scaleX, 0, 'f', 1).arg(scaleY, 0, 'f', 1).arg(rotation, 0, 'f', 1));
+                         .arg(scaleX, 0, 'f', 1).arg(scaleY, 0, 'f', 1).arg(rotation, 0, 'f', 1).arg(sourceLabel));
+    if (source.isSmartObject())
+        metrics->setText(metrics->text() + QString("\nGömülü kaynak: %1 × %2 px · İçeriği değiştir ile yenilenebilir.")
+                                             .arg(source.pixels.width()).arg(source.pixels.height()));
 }
 void TransformDialog::accept() {
     if (document->setLayerTransform(transform()))
