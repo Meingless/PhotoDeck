@@ -14,6 +14,7 @@
 #include <QSet>
 #include <QTextLayout>
 #include <QtMath>
+#include <algorithm>
 #include <cmath>
 #include <limits>
 #include <memory>
@@ -90,8 +91,80 @@ bool sameLayer(const Layer &a, const Layer &b) {
            a.color == b.color && a.tones == b.tones && a.geometry == b.geometry &&
            a.clipped == b.clipped && a.filters == b.filters && a.maskSettings == b.maskSettings;
 }
+QVector<const Selection *> selections(const State &state) {
+    QVector<const Selection *> result{&state.selection, &state.previousSelection};
+    for (const auto &saved : state.savedSelections)
+        result.append(&saved.selection);
+    return result;
+}
+bool sameSavedSelections(const State &a, const State &b) {
+    if (a.savedSelections.size() != b.savedSelections.size())
+        return false;
+    for (int i = 0; i < a.savedSelections.size(); ++i)
+        if (a.savedSelections[i].name != b.savedSelections[i].name ||
+            !a.savedSelections[i].selection.equivalent(b.savedSelections[i].selection, a.size))
+            return false;
+    return true;
+}
+bool validSelections(const State &state, QString *error) {
+    auto fail = [&] {
+        if (error)
+            *error = "Seçimler güvenli sınırı aşıyor (16 ad / ad başına 128 karakter / 64 MiB maske).";
+        return false;
+    };
+    if (state.savedSelections.size() > Document::MaxSavedSelections)
+        return fail();
+    QSet<QString> names;
+    for (const auto &saved : state.savedSelections) {
+        if (saved.name.isEmpty() || saved.name != saved.name.trimmed() ||
+            saved.name.size() > Document::MaxSelectionNameLength || names.contains(saved.name) ||
+            saved.selection.isEmpty())
+            return fail();
+        for (QChar c : saved.name)
+            if (c.unicode() < 0x20 || c.unicode() == 0x7f)
+                return fail();
+        names.insert(saved.name);
+    }
+    qint64 bytes = 0;
+    for (const auto *selection : selections(state)) {
+        const auto &mask = selection->coverageImage();
+        if (mask.isNull()) {
+            if (!selection->isEmpty() &&
+                !QRect(QPoint(), state.size).contains(selection->bounds()))
+                return fail();
+        } else {
+            if (mask.size() != state.size || mask.format() != QImage::Format_Grayscale8)
+                return fail();
+            bytes += mask.sizeInBytes();
+            if (bytes > Document::MaxSelectionBytes)
+                return fail();
+        }
+    }
+    return true;
+}
+bool mapSelections(State &state, const std::function<Selection(const Selection &)> &map,
+                   QString *error) {
+    qint64 bytes = 0;
+    auto apply = [&](Selection &selection) {
+        selection = map(selection);
+        bytes += selection.coverageImage().sizeInBytes();
+        return bytes <= Document::MaxSelectionBytes;
+    };
+    if (!apply(state.selection) || !apply(state.previousSelection)) {
+        if (error)
+            *error = "Dönüşüm 64 MiB seçim maskesi sınırını aşar.";
+        return false;
+    }
+    for (auto &saved : state.savedSelections)
+        if (!apply(saved.selection)) {
+            if (error)
+                *error = "Dönüşüm 64 MiB seçim maskesi sınırını aşar.";
+            return false;
+        }
+    return validSelections(state, error);
+}
 bool sameContent(const State &a, const State &b) {
-    if (a.size != b.size || a.layers.size() != b.layers.size())
+    if (a.size != b.size || a.layers.size() != b.layers.size() || !sameSavedSelections(a, b))
         return false;
     for (int i = 0; i < a.layers.size(); ++i)
         if (!sameLayer(a.layers[i], b.layers[i]))
@@ -125,7 +198,7 @@ bool validState(const State &s, QString *error) {
         if (renderBytes > Document::MaxLayerBytes)
             return fail();
     }
-    return true;
+    return validSelections(s, error);
 }
 bool offsetError(QString *error) {
     if (error)
@@ -171,6 +244,10 @@ void renderLayers(QImage &output, QPoint origin, const QVector<Layer> &layers) {
     }
 }
 void clearCaches(State &s) {
+    s.selection.clearCache();
+    s.previousSelection.clearCache();
+    for (auto &saved : s.savedSelections)
+        saved.selection.clearCache();
     for (auto &l : s.layers)
         l.cache = QImage();
 }
@@ -274,7 +351,13 @@ QImage flippedImage(const QImage &source, bool horizontal) {
     return source.mirrored(horizontal, !horizontal);
 #endif
 }
-bool writeImage(QDataStream &stream, const QImage &image) {
+bool cancelled(const std::atomic_bool *cancel) {
+    return cancel && cancel->load(std::memory_order_relaxed);
+}
+bool writeImage(QDataStream &stream, const QImage &image,
+                const std::atomic_bool *cancel = nullptr) {
+    if (cancelled(cancel))
+        return false;
     QByteArray data;
     if (!image.isNull()) {
         QBuffer buffer(&data);
@@ -282,8 +365,126 @@ bool writeImage(QDataStream &stream, const QImage &image) {
         if (!image.save(&buffer, "PNG"))
             return false;
     }
+    if (cancelled(cancel))
+        return false;
     stream << quint32(data.size());
-    return data.isEmpty() || stream.writeRawData(data.constData(), data.size()) == data.size();
+    // Keep the ordinary-save write/error behavior exactly as before extraction.
+    if (!cancel)
+        return data.isEmpty() || stream.writeRawData(data.constData(), data.size()) == data.size();
+    constexpr qsizetype chunkSize = 1024 * 1024;
+    for (qsizetype offset = 0; offset < data.size(); offset += chunkSize) {
+        const qsizetype length = qMin(chunkSize, data.size() - offset);
+        if (cancelled(cancel) || stream.writeRawData(data.constData() + offset, length) != length)
+            return false;
+    }
+    return stream.status() == QDataStream::Ok;
+}
+// v6 selection records are explicit and bounded, with no decoder-dependent expansion:
+// 0 = unrestricted, 1 = hard rectangle, 2 = full-canvas 8-bit row-major coverage.
+bool writeSelectionRecord(QDataStream &stream, const Selection &selection,
+                          const std::atomic_bool *cancel = nullptr) {
+    if (cancelled(cancel))
+        return false;
+    const QImage &mask = selection.coverageImage();
+    const quint8 kind = selection.isEmpty() ? 0 : mask.isNull() ? 1 : 2;
+    stream << kind;
+    if (kind == 1)
+        stream << selection.bounds();
+    else if (kind == 2) {
+        stream << mask.size() << quint32(qint64(mask.width()) * mask.height());
+        for (int y = 0; y < mask.height(); ++y)
+            if (cancelled(cancel) ||
+                stream.writeRawData(reinterpret_cast<const char *>(mask.constScanLine(y)), mask.width()) !=
+                mask.width())
+                return false;
+    }
+    return stream.status() == QDataStream::Ok;
+}
+// One byte codec for ordinary Save and value-only background recovery. All source-file,
+// conflict/format and mark-clean policy remains in Document::save on its owning thread.
+bool writeProject(const State &state, QIODevice &device, int targetVersion, bool recoveryContext,
+                  QString *error, const std::atomic_bool *cancel = nullptr) {
+    QDataStream out(&device);
+    out.setVersion(QDataStream::Qt_6_2);
+    out << quint32(0x50444543) << quint32(targetVersion) << state.size << qint32(state.active)
+        << qint32(state.layers.size());
+    for (const auto &l : state.layers) {
+        if (cancelled(cancel))
+            return false;
+        out << l.name << l.offset << l.visible << l.locked << double(l.opacity) << qint32(l.blend)
+            << qint32(l.brightness) << qint32(l.contrast) << qint32(l.saturation) << qint32(l.blur)
+            << l.text << l.font.toString() << l.color;
+        l.tones.write(out);
+        out << l.geometry << l.clipped;
+        l.filters.write(out);
+        l.maskSettings.write(out);
+        if (!writeImage(out, l.pixels, cancel) || !writeImage(out, l.mask, cancel)) {
+            if (error)
+                *error = "Katman görüntüsü yazılamadı.";
+            return false;
+        }
+    }
+    if (targetVersion >= 6) {
+        // Only named selections require a new normal project format. Temporary recovery
+        // copies can additionally preserve editing context using this explicit v6 flag.
+        out << quint8(recoveryContext ? 1 : 0) << quint32(state.savedSelections.size());
+        for (const auto &saved : state.savedSelections) {
+            out << saved.name;
+            if (!writeSelectionRecord(out, saved.selection, cancel)) {
+                if (error)
+                    *error = "Kayıtlı seçim yazılamadı.";
+                return false;
+            }
+        }
+        if (recoveryContext && (!writeSelectionRecord(out, state.selection, cancel) ||
+                                !writeSelectionRecord(out, state.previousSelection, cancel))) {
+            if (error)
+                *error = "Kurtarma seçimi yazılamadı.";
+            return false;
+        }
+    }
+    if (cancelled(cancel) || out.status() != QDataStream::Ok) {
+        if (cancel && error && error->isEmpty())
+            *error = cancelled(cancel) ? "Kurtarma kaydı iptal edildi." : device.errorString();
+        return false;
+    }
+    return true;
+}
+bool readSelectionRecord(QDataStream &stream, Selection &selection, QSize canvas, qint64 &remaining) {
+    quint8 kind = 0;
+    stream >> kind;
+    if (stream.status() != QDataStream::Ok || kind > 2)
+        return false;
+    if (kind == 0) {
+        selection = {};
+        return true;
+    }
+    if (kind == 1) {
+        QRect rect;
+        stream >> rect;
+        if (stream.status() != QDataStream::Ok || rect.isEmpty() ||
+            !QRect(QPoint(), canvas).contains(rect))
+            return false;
+        selection = Selection(rect);
+        return true;
+    }
+    QSize size;
+    quint32 length = 0;
+    stream >> size >> length;
+    const qint64 decoded = qint64((canvas.width() + 3) & ~3) * canvas.height();
+    if (stream.status() != QDataStream::Ok || size != canvas ||
+        qint64(length) != qint64(canvas.width()) * canvas.height() ||
+        length > stream.device()->bytesAvailable() || decoded > remaining)
+        return false;
+    QImage mask(canvas, QImage::Format_Grayscale8);
+    if (mask.isNull())
+        return false;
+    for (int y = 0; y < canvas.height(); ++y)
+        if (stream.readRawData(reinterpret_cast<char *>(mask.scanLine(y)), canvas.width()) != canvas.width())
+            return false;
+    selection = Selection::fromMask(mask);
+    remaining -= mask.sizeInBytes();
+    return stream.status() == QDataStream::Ok;
 }
 bool readImageRecord(QDataStream &stream, QImage &image, qint64 &remaining) {
     quint32 length = 0;
@@ -435,7 +636,7 @@ QImage Layer::rendered() const {
     cacheMaskSettings = maskSettings;
     return cache;
 }
-Document::Document(QObject *parent) : QObject(parent) {}
+Document::Document(QObject *parent) : QObject(parent), selection(state.selection) {}
 bool Document::validSize(QSize s) {
     return s.width() > 0 && s.height() > 0 && s.width() <= 16384 && s.height() <= 16384 &&
            qint64(s.width()) * s.height() <= MaxPixels;
@@ -462,15 +663,16 @@ bool Document::allows(qint64 extra, QString *error, int addedLayers) const {
     return false;
 }
 void Document::resetHistory(const QString &label) {
+    lastNudgeRevision = 0;
     clearCaches(state);
     history.clear();
     cursor = 0;
-    history.append({state, label, nextId++});
-    savedId = history[0].id;
+    const quint64 id = nextId++;
+    history.append({state, label, id, id});
+    savedId = history[0].contentId;
     dirty = false;
     inEdit = false;
     before = {};
-    selection = {};
     editingMask = false;
     emit updated();
 }
@@ -600,6 +802,27 @@ void Document::reorder(int delta) {
     state.layers.first().clipped = false;
     commit("Katman sırası");
 }
+bool Document::reorderLayer(int from, int to) {
+    if (inEdit || from < 0 || from >= state.layers.size() || to < 0 ||
+        to >= state.layers.size() || from == to || state.active < 0 ||
+        state.active >= state.layers.size())
+        return false;
+    // Row selection is context, not a separate undo step. Capture the current
+    // active identity so undo does not jump to an unrelated, previously active row.
+    if (cursor >= 0)
+        history[cursor].state.active = state.active;
+    beginEdit();
+    state.layers.move(from, to);
+    if (state.active == from)
+        state.active = to;
+    else if (from < state.active && state.active <= to)
+        --state.active;
+    else if (to <= state.active && state.active < from)
+        ++state.active;
+    state.layers.first().clipped = false;
+    commit("Katman sırası");
+    return true;
+}
 bool Document::addMask(QString *error) {
     auto &l = state.layers[state.active];
     if (l.locked)
@@ -664,11 +887,11 @@ bool Document::crop(QRect rect, QString *error) {
     pending.size = rect.size();
     for (auto &l : pending.layers)
         l.offset -= rect.topLeft();
-    if (!validState(pending, error))
+    if (!mapSelections(pending, [&](const Selection &s) { return s.cropped(rect, state.size); }, error) ||
+        !validState(pending, error))
         return false;
     beginEdit();
     state = pending;
-    selection = {};
     commit("Tuval kırpıldı");
     return true;
 }
@@ -702,6 +925,9 @@ bool Document::resize(QSize size, QString *error) {
             *error = "Yeniden boyutlandırma 256 MiB katman sınırını aşar.";
         return false;
     }
+    pending.size = size;
+    if (!mapSelections(pending, [&](const Selection &s) { return s.resized(state.size, size); }, error))
+        return false;
     beginEdit();
     for (auto &l : pending.layers) {
         QSize ls(qMax(1, qRound(l.pixels.width() * sx)), qMax(1, qRound(l.pixels.height() * sy)));
@@ -711,8 +937,6 @@ bool Document::resize(QSize size, QString *error) {
         l.offset = {qRound(l.offset.x() * sx), qRound(l.offset.y() * sy)};
         l.text.clear();
     }
-    pending.size = size;
-    selection = {};
     state = pending;
     commit("Görüntü boyutu");
     return true;
@@ -729,6 +953,9 @@ bool Document::rotate(bool cw, QString *error) {
         if (!validOffset(offset))
             return offsetError(error);
     }
+    pending.size.transpose();
+    if (!mapSelections(pending, [&](const Selection &s) { return s.rotated(cw, state.size); }, error))
+        return false;
     beginEdit();
     QTransform t;
     t.rotate(cw ? 90 : -90);
@@ -741,8 +968,6 @@ bool Document::rotate(bool cw, QString *error) {
                       : QPoint(l.offset.y(), w - l.offset.x() - old.width());
         l.text.clear();
     }
-    pending.size.transpose();
-    selection = {};
     state = pending;
     commit("90° döndürme");
     return true;
@@ -761,6 +986,8 @@ bool Document::flip(bool h, QString *error) {
         if (!validOffset(offset))
             return offsetError(error);
     }
+    if (!mapSelections(pending, [&](const Selection &s) { return s.flipped(h, state.size); }, error))
+        return false;
     beginEdit();
     for (auto &l : pending.layers) {
         l.pixels = flippedImage(l.pixels, h);
@@ -772,10 +999,155 @@ bool Document::flip(bool h, QString *error) {
             l.offset.setY(pending.size.height() - l.offset.y() - l.pixels.height());
         l.text.clear();
     }
-    selection = {};
     state = pending;
     commit("Görüntü çevrildi");
     return true;
+}
+QRect Document::activeLayerBounds() const {
+    if (state.active < 0 || state.active >= state.layers.size())
+        return {};
+    const auto &layer = state.layers[state.active];
+    if (layer.pixels.isNull() || !validOffset(layer.offset) || !layer.validGeometry())
+        return {};
+    return layer.transformedBounds().translated(layer.offset);
+}
+bool Document::nudgeLayer(QPoint delta, quint64 mergeRevision, QString *error) {
+    auto fail = [&](const QString &message) {
+        if (error)
+            *error = message;
+        return false;
+    };
+    if (inEdit)
+        return fail("Taşımadan önce etkin düzenlemeyi tamamlayın.");
+    const QRect bounds = activeLayerBounds();
+    if (bounds.isEmpty())
+        return fail("Taşınacak etkin katman yok veya katman geometrisi geçersiz.");
+    const auto &layer = state.layers[state.active];
+    if (layer.locked || !layer.visible)
+        return fail("Taşımak için katmanın kilidini açın ve görünür yapın.");
+    // Never fold a different edit, save point, active target or directly mutated
+    // state into a held key. History remains committed throughout the gesture.
+    if (mergeRevision) {
+        if (mergeRevision != lastNudgeRevision || mergeRevision != revision() || cursor <= 0 ||
+            cursor + 1 != history.size() || history[cursor].contentId == savedId ||
+            state.active != history[cursor].state.active ||
+            !sameContent(state, history[cursor].state) ||
+            !state.selection.equivalent(history[cursor].state.selection, state.size) ||
+            !state.previousSelection.equivalent(history[cursor].state.previousSelection, state.size))
+            return fail("Belge veya etkin katman değişti; taşımak için ok tuşuna yeniden basın.");
+    }
+    const qint64 x = qint64(layer.offset.x()) + delta.x();
+    const qint64 y = qint64(layer.offset.y()) + delta.y();
+    const qint64 left = qint64(bounds.x()) + delta.x();
+    const qint64 top = qint64(bounds.y()) + delta.y();
+    if (qAbs(x) > MaxCoordinate || qAbs(y) > MaxCoordinate ||
+        qAbs(left) > MaxCoordinate || qAbs(top) > MaxCoordinate)
+        return fail("Katman konumu ±16777216 piksel sınırını aşıyor.");
+    State pending = state;
+    pending.layers[pending.active].offset = QPoint(int(x), int(y));
+    if (!validState(pending, error))
+        return false;
+    if (delta.isNull())
+        return true;
+    const QString label = "Etkin katman ok tuşlarıyla taşındı";
+    if (!mergeRevision) {
+        beginEdit();
+        state.layers[state.active].offset = pending.layers[pending.active].offset;
+        lastNudgeRevision = nextId;
+        commit(label);
+    } else {
+        state.layers[state.active].offset = pending.layers[pending.active].offset;
+        clearCaches(pending);
+        const quint64 id = nextId++;
+        history[cursor] = {pending, label, id, id};
+        dirty = true;
+        lastNudgeRevision = id;
+        emit updated();
+    }
+    return true;
+}
+bool Document::positionLayer(QPoint topLeft, QString *error) {
+    auto fail = [&](const QString &message) {
+        if (error)
+            *error = message;
+        return false;
+    };
+    if (inEdit)
+        return fail("Konumlandırmadan önce etkin düzenlemeyi tamamlayın.");
+    const QRect bounds = activeLayerBounds();
+    if (bounds.isEmpty())
+        return fail("Konumlandırılacak etkin katman yok veya katman geometrisi geçersiz.");
+    const auto &layer = state.layers[state.active];
+    if (layer.locked || !layer.visible)
+        return fail("Konumlandırmak için katmanın kilidini açın ve görünür yapın.");
+    const QPoint origin = layer.transformedBounds().topLeft();
+    const qint64 x = qint64(topLeft.x()) - origin.x();
+    const qint64 y = qint64(topLeft.y()) - origin.y();
+    if (!validOffset(topLeft) || qAbs(x) > MaxCoordinate || qAbs(y) > MaxCoordinate)
+        return fail("Katman konumu ±16777216 piksel sınırını aşıyor.");
+    State pending = state;
+    pending.layers[pending.active].offset = QPoint(int(x), int(y));
+    if (!validState(pending, error))
+        return false;
+    if (topLeft == bounds.topLeft())
+        return true;
+    beginEdit();
+    state.layers[state.active].offset = pending.layers[pending.active].offset;
+    commit("Etkin katman konumlandırıldı");
+    return true;
+}
+bool Document::alignLayer(LayerAlignment alignment, AlignmentTarget target, QString *error) {
+    auto fail = [&](const QString &message) {
+        if (error)
+            *error = message;
+        return false;
+    };
+    const QRect bounds = activeLayerBounds();
+    if (bounds.isEmpty())
+        return fail("Hizalanacak etkin katman yok veya katman geometrisi geçersiz.");
+    QRect destination;
+    switch (target) {
+    case AlignmentTarget::Canvas:
+        if (!validSize(state.size))
+            return fail("Hizalama için geçerli bir tuval gerekiyor.");
+        destination = QRect(QPoint(), state.size);
+        break;
+    case AlignmentTarget::Selection:
+        if (!selection.hasPixels())
+            return fail("Seçim sınırlarına hizalamak için pikselli bir seçim yapın.");
+        destination = selection.bounds();
+        if (destination.isEmpty() || !QRect(QPoint(), state.size).contains(destination))
+            return fail("Seçim sınırları geçersiz veya tuval dışında.");
+        break;
+    default:
+        return fail("Hizalama hedefi geçersiz.");
+    }
+    QPoint position = bounds.topLeft();
+    // Integer pixels cannot center odd differences exactly. Round toward top/left,
+    // leaving the extra pixel on the right/bottom, including oversized layers.
+    switch (alignment) {
+    case LayerAlignment::Left:
+        position.setX(destination.x());
+        break;
+    case LayerAlignment::Center:
+        position.setX(destination.x() + int(std::floor((destination.width() - bounds.width()) / 2.0)));
+        break;
+    case LayerAlignment::Right:
+        position.setX(destination.x() + destination.width() - bounds.width());
+        break;
+    case LayerAlignment::Top:
+        position.setY(destination.y());
+        break;
+    case LayerAlignment::Middle:
+        position.setY(destination.y() + int(std::floor((destination.height() - bounds.height()) / 2.0)));
+        break;
+    case LayerAlignment::Bottom:
+        position.setY(destination.y() + destination.height() - bounds.height());
+        break;
+    default:
+        return fail("Hizalama yönü geçersiz.");
+    }
+    return positionLayer(position, error);
 }
 bool Document::setLayerTransform(const QTransform &transform, QString *error) {
     if (state.layers.isEmpty() || state.layers[state.active].locked) {
@@ -826,11 +1198,11 @@ bool Document::canvasSize(QSize size, QPoint anchor, QString *error) {
     pending.size = size;
     for (auto &l : pending.layers)
         l.offset += delta;
-    if (!validState(pending, error))
+    if (!mapSelections(pending, [&](const Selection &s) { return s.translated(delta, size); }, error) ||
+        !validState(pending, error))
         return false;
     beginEdit();
     state = pending;
-    selection = {};
     commit("Tuval boyutu değişti");
     return true;
 }
@@ -1161,31 +1533,128 @@ bool Document::editText(QString text, QFont font, QColor color, QString *error) 
     commit("Metin düzenlendi");
     return true;
 }
+bool Document::setSelection(const Selection &value, const QString &label, QString *error) {
+    if (inEdit) {
+        if (error)
+            *error = "Seçimi değiştirmeden önce etkin düzenlemeyi tamamlayın.";
+        return false;
+    }
+    State pending = state;
+    pending.selection = value.clipped(state.size);
+    if (selection.equivalent(pending.selection, state.size))
+        return true;
+    if (!selection.isEmpty())
+        pending.previousSelection = selection;
+    if (!validSelections(pending, error))
+        return false;
+    beginEdit();
+    state = pending;
+    commit(label);
+    return true;
+}
+bool Document::deselect() {
+    return setSelection({}, "Seçim kaldırıldı");
+}
+bool Document::reselect(QString *error) {
+    if (!canReselect())
+        return false;
+    return setSelection(state.previousSelection, "Yeniden seçildi", error);
+}
+QStringList Document::savedSelectionNames() const {
+    QStringList names;
+    for (const auto &saved : state.savedSelections)
+        names.append(saved.name);
+    return names;
+}
+bool Document::saveSelection(const QString &name, QString *error) {
+    if (inEdit || selection.isEmpty()) {
+        if (error)
+            *error = "Kaydetmek için bir seçim yapın ve etkin düzenlemeyi tamamlayın.";
+        return false;
+    }
+    State pending = state;
+    auto existing = std::find_if(pending.savedSelections.begin(), pending.savedSelections.end(),
+                                 [&](const SavedSelection &saved) { return saved.name == name; });
+    if (existing == pending.savedSelections.end())
+        pending.savedSelections.append({name, selection.clipped(state.size)});
+    else
+        existing->selection = selection.clipped(state.size);
+    if (!validSelections(pending, error))
+        return false;
+    beginEdit();
+    state = pending;
+    commit("Seçim kaydedildi: " + name);
+    return true;
+}
+bool Document::loadSelection(const QString &name, Selection::Mode mode, QString *error) {
+    if (mode < Selection::Replace || mode > Selection::Intersect) {
+        if (error)
+            *error = "Geçersiz seçim birleştirme işlemi.";
+        return false;
+    }
+    for (const auto &saved : state.savedSelections)
+        if (saved.name == name)
+            return setSelection(selection.combined(saved.selection, mode, state.size),
+                                "Kayıtlı seçim yüklendi: " + name, error);
+    if (error)
+        *error = "Kayıtlı seçim bulunamadı.";
+    return false;
+}
+bool Document::removeSavedSelection(const QString &name, QString *error) {
+    if (inEdit) {
+        if (error)
+            *error = "Kayıtlı seçimi silmeden önce etkin düzenlemeyi tamamlayın.";
+        return false;
+    }
+    State pending = state;
+    for (int i = 0; i < pending.savedSelections.size(); ++i)
+        if (pending.savedSelections[i].name == name) {
+            pending.savedSelections.removeAt(i);
+            beginEdit();
+            state = pending;
+            commit("Kayıtlı seçim silindi: " + name);
+            return true;
+        }
+    if (error)
+        *error = "Kayıtlı seçim bulunamadı.";
+    return false;
+}
 void Document::beginEdit() {
+    lastNudgeRevision = 0;
     if (inEdit)
         return;
     before = state;
     clearCaches(before);
+    // Legacy callers can still assign Document::selection directly. Capture that context
+    // at the operation boundary so undoing a pixel/layer edit never discards it.
+    if (cursor >= 0) {
+        history[cursor].state.selection = before.selection;
+        history[cursor].state.previousSelection = before.previousSelection;
+    }
     inEdit = true;
 }
 void Document::commit(const QString &label) {
     if (!inEdit)
         return;
+    const bool contentChanged = !sameContent(state, before);
+    const bool contextChanged = !state.selection.equivalent(before.selection, state.size) ||
+                                !state.previousSelection.equivalent(before.previousSelection, state.size);
     inEdit = false;
-    if (sameContent(state, before)) {
+    if (!contentChanged && !contextChanged) {
         before = {};
         emit updated();
         return;
     }
     before = {};
+    const quint64 contentId = !contentChanged && cursor >= 0 ? history[cursor].contentId : nextId;
     while (history.size() > cursor + 1)
         history.removeLast();
     State copy = state;
     clearCaches(copy);
-    history.append({copy, label, nextId++});
+    history.append({copy, label, nextId++, contentId});
     cursor = history.size() - 1;
     trimHistory();
-    dirty = history[cursor].id != savedId;
+    dirty = history[cursor].contentId != savedId;
     emit updated();
 }
 void Document::cancelEdit() {
@@ -1197,29 +1666,57 @@ void Document::cancelEdit() {
     emit updated();
 }
 void Document::changed() {
+    lastNudgeRevision = 0;
     emit updated();
 }
 void Document::undo() {
+    lastNudgeRevision = 0;
     if (inEdit)
         cancelEdit();
     if (!canUndo())
         return;
     state = history[--cursor].state;
-    selection = {};
     editingMask = false;
-    dirty = history[cursor].id != savedId;
+    dirty = history[cursor].contentId != savedId;
     emit updated();
 }
 void Document::redo() {
+    lastNudgeRevision = 0;
     if (inEdit)
         cancelEdit();
     if (!canRedo())
         return;
     state = history[++cursor].state;
-    selection = {};
     editingMask = false;
-    dirty = history[cursor].id != savedId;
+    dirty = history[cursor].contentId != savedId;
     emit updated();
+}
+QVector<Document::HistoryDescription> Document::historyDescriptions() const {
+    QVector<HistoryDescription> descriptions;
+    descriptions.reserve(history.size());
+    for (const auto &entry : history)
+        descriptions.append({entry.id, entry.label});
+    return descriptions;
+}
+bool Document::jumpToHistoryRevision(quint64 revision) {
+    int target = -1;
+    for (int i = 0; i < history.size(); ++i)
+        if (history[i].id == revision) {
+            target = i;
+            break;
+        }
+    // Validate before cancelling previews: a stale/no-op request must be inert.
+    if (target < 0 || target == cursor)
+        return false;
+    lastNudgeRevision = 0;
+    state = history[target].state;
+    before = {};
+    inEdit = false;
+    cursor = target;
+    editingMask = false;
+    dirty = history[cursor].contentId != savedId;
+    emit updated();
+    return true;
 }
 QStringList Document::historyLabels() const {
     QStringList labels;
@@ -1232,18 +1729,27 @@ qint64 Document::imageBytes() const {
 }
 qint64 Document::historyBytes() const {
     QSet<qint64> seen;
-    for (const auto &layer : state.layers)
-        for (const QImage *image : {&layer.pixels, &layer.mask})
-            if (!image->isNull())
-                seen.insert(image->cacheKey());
     qint64 total = 0;
-    for (const auto &e : history)
-        for (const auto &l : e.state.layers)
-            for (const QImage *im : {&l.pixels, &l.mask})
-                if (!im->isNull() && !seen.contains(im->cacheKey())) {
-                    seen.insert(im->cacheKey());
-                    total += im->sizeInBytes();
-                }
+    auto images = [&](const State &snapshot, bool count) {
+        auto add = [&](const QImage &image) {
+            if (!image.isNull() && !seen.contains(image.cacheKey())) {
+                seen.insert(image.cacheKey());
+                if (count)
+                    total += image.sizeInBytes();
+            }
+        };
+        for (const auto &layer : snapshot.layers) {
+            add(layer.pixels);
+            add(layer.mask);
+        }
+        for (const auto *selection : selections(snapshot))
+            add(selection->coverageImage());
+    };
+    images(state, false); // Live document buffers do not consume the additional undo budget.
+    if (inEdit)
+        images(before, true);
+    for (const auto &entry : history)
+        images(entry.state, true);
     return total;
 }
 void Document::trimHistory() {
@@ -1253,7 +1759,8 @@ void Document::trimHistory() {
     }
 }
 void Document::markSaved() {
-    savedId = history[cursor].id;
+    lastNudgeRevision = 0;
+    savedId = history[cursor].contentId;
     dirty = false;
     emit updated();
 }
@@ -1306,7 +1813,7 @@ bool Document::isSourceFile(const FileVersion &version) const {
             (!version.identity.isEmpty() && version.identity == sourceFile.identity));
 }
 bool Document::requiresFormatUpgrade(const QString &file) const {
-    if (sourceProjectVersion <= 0 || sourceProjectVersion >= NativeProjectVersion)
+    if (sourceProjectVersion <= 0 || sourceProjectVersion >= projectSaveVersion())
         return false;
     FileVersion destination;
     destination.absolutePath = QDir::cleanPath(QFileInfo(file).absoluteFilePath());
@@ -1316,11 +1823,29 @@ bool Document::requiresFormatUpgrade(const QString &file) const {
         destination.identity = fileIdentity(input);
     return isSourceFile(destination);
 }
+State Document::recoverySnapshot(const State &source) {
+    State snapshot = source;
+    clearCaches(snapshot);
+    return snapshot;
+}
+bool Document::writeRecoverySnapshot(const State &snapshot, QIODevice &device, QString *error,
+                                     const std::atomic_bool *cancel) {
+    if (error)
+        error->clear();
+    if (cancelled(cancel) || !validState(snapshot, error))
+        return false;
+    const bool context = !snapshot.selection.isEmpty() || !snapshot.previousSelection.isEmpty();
+    const int version = context || !snapshot.savedSelections.isEmpty() ? 6 : 5;
+    return writeProject(snapshot, device, version, context, error, cancel);
+}
 bool Document::save(const QString &file, QString *error, bool markClean) {
     return save(file, error, markClean, SaveOptions{});
 }
 bool Document::save(const QString &file, QString *error, bool markClean, const SaveOptions &options) {
     saveStatus = SaveStatus::Error;
+    const bool recoveryContext = !markClean &&
+                                 (!selection.isEmpty() || !state.previousSelection.isEmpty());
+    const int targetVersion = recoveryContext ? 6 : projectSaveVersion();
     if (error)
         error->clear();
     if (!validState(state, error))
@@ -1345,14 +1870,14 @@ bool Document::save(const QString &file, QString *error, bool markClean, const S
     if (overwritesSource && !options.allowExternalOverwrite &&
         !sameFileVersion(destination, sourceFile))
         return externalChange();
-    if (overwritesSource && sourceProjectVersion < NativeProjectVersion &&
+    if (overwritesSource && sourceProjectVersion < targetVersion &&
         !options.allowFormatUpgrade) {
         saveStatus = SaveStatus::FormatUpgradeRequired;
         if (error)
             *error = QString("Bu proje v%1 biçiminde açıldı. Özgün dosyanın üzerine v%2 biçiminde "
                              "yazmak için yükseltmeyi onaylayın veya Farklı Kaydet'i kullanın.")
                          .arg(sourceProjectVersion)
-                         .arg(NativeProjectVersion);
+                         .arg(targetVersion);
         return false;
     }
     QSaveFile f(destination.resolvedPath);
@@ -1363,26 +1888,8 @@ bool Document::save(const QString &file, QString *error, bool markClean, const S
         return false;
     }
     HashedWriter writer(f);
-    QDataStream out(&writer);
-    out.setVersion(QDataStream::Qt_6_2);
-    out << quint32(0x50444543) << quint32(NativeProjectVersion) << state.size << qint32(state.active)
-        << qint32(state.layers.size());
-    for (const auto &l : state.layers) {
-        out << l.name << l.offset << l.visible << l.locked << double(l.opacity) << qint32(l.blend)
-            << qint32(l.brightness) << qint32(l.contrast) << qint32(l.saturation) << qint32(l.blur)
-            << l.text << l.font.toString() << l.color;
-        l.tones.write(out);
-        out << l.geometry << l.clipped;
-        l.filters.write(out);
-        l.maskSettings.write(out);
-        if (!writeImage(out, l.pixels) || !writeImage(out, l.mask)) {
-            if (error)
-                *error = "Katman görüntüsü yazılamadı.";
-            return false;
-        }
-    }
-    if (out.status() != QDataStream::Ok || !f.flush()) {
-        if (error)
+    if (!writeProject(state, writer, targetVersion, recoveryContext, error) || !f.flush()) {
+        if (error && error->isEmpty())
             *error = f.errorString();
         return false;
     }
@@ -1405,11 +1912,12 @@ bool Document::save(const QString &file, QString *error, bool markClean, const S
             *error = f.errorString();
         return false;
     }
+    lastNudgeRevision = 0;
     if (markClean) {
         path = file;
         title = QFileInfo(file).fileName();
         sourceFile = written;
-        sourceProjectVersion = NativeProjectVersion;
+        sourceProjectVersion = targetVersion;
         saveStatus = SaveStatus::Success;
         markSaved();
     }
@@ -1440,20 +1948,20 @@ bool Document::load(const QString &file, QString *error) {
     State pending;
     in >> magic >> version >> pending.size >> active >> count;
     if (magic != 0x50444543 ||
-        (version != 1 && version != 2 && version != 3 && version != 4 && version != 5) ||
+        (version < 1 || version > NativeProjectVersion) ||
         !validSize(pending.size) || count < 1 || count > 64 || active < 0 || active >= count)
         return fail();
     pending.active = active;
     qint64 remaining = MaxLayerBytes;
     // Bound each string before allocation: Qt's generic QString reader trusts its length.
-    auto readString = [&](QString &s) -> bool {
+    auto readString = [&](QString &s, quint32 maxBytes = 32768) -> bool {
         quint32 n = 0;
         in >> n;
         if (n == 0xffffffffu) {
             s.clear();
             return true;
         }
-        if (n > 32768 || n % 2 || n > f.bytesAvailable())
+        if (n > maxBytes || n % 2 || n > f.bytesAvailable())
             return false;
         QByteArray raw(n, Qt::Uninitialized);
         if (in.readRawData(raw.data(), n) != int(n))
@@ -1501,6 +2009,24 @@ bool Document::load(const QString &file, QString *error) {
             return fail();
         l.pixels = Output::workingRgb(l.pixels);
         pending.layers.append(l);
+    }
+    if (version >= 6) {
+        quint8 context = 0;
+        quint32 count = 0;
+        in >> context >> count;
+        if (in.status() != QDataStream::Ok || context > 1 || count > MaxSavedSelections)
+            return fail();
+        qint64 selectionRemaining = MaxSelectionBytes;
+        for (quint32 i = 0; i < count; ++i) {
+            SavedSelection saved;
+            if (!readString(saved.name, MaxSelectionNameLength * 2) ||
+                !readSelectionRecord(in, saved.selection, pending.size, selectionRemaining))
+                return fail();
+            pending.savedSelections.append(saved);
+        }
+        if (context && (!readSelectionRecord(in, pending.selection, pending.size, selectionRemaining) ||
+                        !readSelectionRecord(in, pending.previousSelection, pending.size, selectionRemaining)))
+            return fail();
     }
     if (in.status() != QDataStream::Ok || !f.atEnd() || !validState(pending, error))
         return fail();

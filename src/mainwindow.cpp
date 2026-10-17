@@ -1,4 +1,6 @@
 #include "mainwindow.h"
+#include "recoverymanager.h"
+#include "recoveryfiles.h"
 #include "version.h"
 #include "blending.h"
 #include "effectdialog.h"
@@ -15,6 +17,7 @@
 #include <QDir>
 #include <QDockWidget>
 #include <QDoubleSpinBox>
+#include <QDragMoveEvent>
 #include <QDragEnterEvent>
 #include <QDropEvent>
 #include <QEvent>
@@ -37,6 +40,7 @@
 #include <QMimeData>
 #include <QMouseEvent>
 #include <QPlainTextEdit>
+#include <QPointer>
 #include <QPainterPath>
 #include <QPrintDialog>
 #include <QPrinter>
@@ -46,18 +50,227 @@
 #include <QSaveFile>
 #include <QScreen>
 #include <QScrollArea>
+#include <QScrollBar>
+#include <QScopeGuard>
 #include <QSet>
 #include <QSignalBlocker>
 #include <QStandardPaths>
 #include <QStatusBar>
+#include <QStyle>
+#include <QStyledItemDelegate>
+#include <QStyleOptionViewItem>
 #include <QTabBar>
 #include <QToolBar>
 #include <QUrl>
 #include <QUuid>
 #include <QVBoxLayout>
+#include <algorithm>
 #include <cmath>
 
 namespace {
+// These editor dialogs use action verbs even when the system Qt translations are absent.
+// Retain the standard button roles so Enter, Escape and existing modal drivers still work.
+void labelEditorDialogButtons(QDialogButtonBox *buttons, const QString &acceptText) {
+    auto *accept = buttons->button(QDialogButtonBox::Ok);
+    auto *cancel = buttons->button(QDialogButtonBox::Cancel);
+    accept->setText(acceptText);
+    accept->setAccessibleName(QString(acceptText).remove('&'));
+    cancel->setText("İ&ptal");
+    cancel->setAccessibleName("İptal");
+}
+void labelEditorDialogButtons(QInputDialog &dialog, const QString &acceptText) {
+    // QInputDialog creates its standard button box lazily.
+    dialog.setOkButtonText(acceptText);
+    labelEditorDialogButtons(dialog.findChild<QDialogButtonBox *>(), acceptText);
+}
+// Keep the editable name separate from the row's status text. A rename has no live
+// document preview: only a valid, current editor can commit a single history entry.
+enum LayerItemRole {
+    LayerNameRole = Qt::UserRole, LayerStatusRole, LayerDocumentRole, LayerRevisionRole, LayerCountRole, LayerStackRole
+};
+struct LayerRenameTarget {
+    QPointer<Document> document;
+    int index = -1, count = 0;
+    quint64 revision = 0;
+    QString name;
+};
+class LayerNameEditor : public QLineEdit {
+  public:
+    explicit LayerNameEditor(QWidget *parent) : QLineEdit(parent) {
+        setObjectName("layerNameEditor");
+        setAccessibleName("Katman adı");
+        setMaxLength(128);
+    }
+    LayerRenameTarget target;
+    QString initialText;
+    bool initialized = false, cancelled = false;
+};
+class LayerNameDelegate : public QStyledItemDelegate {
+  public:
+    explicit LayerNameDelegate(QObject *parent) : QStyledItemDelegate(parent) {
+        connect(this, &QAbstractItemDelegate::closeEditor, this, [this](QWidget *closed) {
+            if (auto *line = liveEditor(); line && line == closed)
+                line->cancelled = true;
+        });
+    }
+    std::function<LayerRenameTarget(const QModelIndex &)> targetForIndex;
+    std::function<void(const LayerRenameTarget &, const QString &)> rename;
+    void paint(QPainter *painter, const QStyleOptionViewItem &option,
+               const QModelIndex &index) const override {
+        QStyleOptionViewItem row(option);
+        initStyleOption(&row, index);
+        const auto *style = row.widget ? row.widget->style() : QApplication::style();
+        const QRect textRect = style->subElementRect(QStyle::SE_ItemViewItemText, &row, row.widget);
+        row.text.clear();
+        style->drawControl(QStyle::CE_ItemViewItem, &row, painter, row.widget);
+        QFont nameFont = row.font;
+        // At Compact's 11 px size, thin hinted strokes can fade into the
+        // selection tint on some system fonts. Keep the editable name distinct.
+        if (nameFont.pixelSize() > 0 && nameFont.pixelSize() <= 11)
+            nameFont.setWeight(QFont::DemiBold);
+        QFont small = row.font;
+        if (small.pixelSize() > 0)
+            small.setPixelSize(qMax(9, small.pixelSize() - 1));
+        else
+            small.setPointSizeF(qMax(7.0, small.pointSizeF() - 1));
+        const QFontMetrics mainMetrics(nameFont), smallMetrics(small);
+        const int height = mainMetrics.height() + smallMetrics.height() + 2;
+        QRect nameRect = textRect;
+        nameRect.setTop(textRect.center().y() - height / 2);
+        nameRect.setHeight(mainMetrics.height());
+        QRect detailRect = nameRect.translated(0, mainMetrics.height() + 2);
+        detailRect.setHeight(smallMetrics.height());
+        // The stylesheet uses a tinted panel for selection, not the palette's
+        // solid accent highlight. WindowText stays readable in both light/dark UIs.
+        const QColor foreground = row.palette.color(QPalette::WindowText);
+        painter->save();
+        painter->setClipRect(option.rect);
+        painter->setFont(nameFont);
+        painter->setPen(foreground);
+        painter->drawText(nameRect, Qt::AlignLeft | Qt::AlignVCenter,
+                          mainMetrics.elidedText(index.data(LayerNameRole).toString(),
+                                                 Qt::ElideRight, nameRect.width()));
+        painter->setPen(row.palette.color(QPalette::PlaceholderText));
+        painter->setFont(small);
+        painter->drawText(detailRect, Qt::AlignLeft | Qt::AlignVCenter,
+                          smallMetrics.elidedText(index.data(LayerStatusRole).toString(),
+                                                  Qt::ElideRight, detailRect.width()));
+        painter->restore();
+    }
+    QWidget *createEditor(QWidget *parent, const QStyleOptionViewItem &,
+                          const QModelIndex &index) const override {
+        auto *line = new LayerNameEditor(parent);
+        line->target = targetForIndex(index);
+        editor = line;
+        return line;
+    }
+    void setEditorData(QWidget *widget, const QModelIndex &) const override {
+        auto *line = dynamic_cast<LayerNameEditor *>(widget);
+        if (!line)
+            return;
+        // A scheduled thumbnail/status refresh must not overwrite text being typed.
+        if (!line->initialized) {
+            line->setText(line->target.name);
+            line->initialText = line->text();
+            line->selectAll();
+            line->initialized = true;
+        }
+    }
+    void setModelData(QWidget *widget, QAbstractItemModel *, const QModelIndex &) const override {
+        auto *line = dynamic_cast<LayerNameEditor *>(widget);
+        if (!line)
+            return;
+        const auto apply = rename;
+        const auto target = line->target;
+        const QString text = line->text();
+        const bool changed = !line->cancelled && text != line->initialText;
+        line->cancelled = true;
+        if (changed && apply)
+            apply(target, text);
+    }
+    bool eventFilter(QObject *watched, QEvent *event) override {
+        if (watched == editor && !liveEditor())
+            return false; // QWidget teardown must not request a derived-editor commit.
+        if (event->type() == QEvent::FocusOut && watched == editor && isRenaming() &&
+            static_cast<QFocusEvent *>(event)->reason() == Qt::MouseFocusReason) {
+            const auto *view = qobject_cast<const QListWidget *>(parent());
+            const auto *focus = QApplication::focusWidget();
+            if (view && focus && (focus == view || view->isAncestorOf(focus))) {
+                // QApplication assigns mouse focus before dispatching the press.
+                // Keep this name pending until the list's guarded settlement; a
+                // scrollbar focus path that has no row press gets a safe fallback.
+                const QPointer<LayerNameDelegate> alive = this;
+                const QPointer<QWidget> line = liveEditor();
+                QTimer::singleShot(0, this, [alive, line] {
+                    if (alive && line && alive->editor == line && !line->hasFocus())
+                        alive->finishRename();
+                });
+                return false;
+            }
+        }
+        return QStyledItemDelegate::eventFilter(watched, event);
+    }
+    bool isCheckIndicator(const QModelIndex &index, const QRect &rect, QPoint point) const {
+        const auto *view = qobject_cast<const QListWidget *>(parent());
+        QStyleOptionViewItem option;
+        if (view) {
+            option.initFrom(view);
+            option.widget = view;
+            option.decorationSize = view->iconSize();
+        }
+        initStyleOption(&option, index);
+        option.rect = rect;
+        const auto *style = view ? view->style() : QApplication::style();
+        return style->subElementRect(QStyle::SE_ItemViewItemCheckIndicator, &option, view).contains(point);
+    }
+    bool isRenaming() const {
+        const auto *line = liveEditor();
+        return line && !line->cancelled;
+    }
+    QString pendingName() const {
+        const auto *line = liveEditor();
+        if (!line || line->cancelled || line->text() == line->initialText)
+            return {};
+        const QString name = line->text().trimmed().left(128);
+        return name == line->target.name ? QString() : name;
+    }
+    void finishRename() {
+        if (!isRenaming())
+            return;
+        auto *line = liveEditor();
+        const QPointer<QWidget> survivingLine = line;
+        const QPointer<LayerNameDelegate> alive = this;
+        const auto apply = rename;
+        const auto target = line->target;
+        const QString text = line->text(), initial = line->initialText;
+        line->cancelled = true;
+        // Explicit command settlement does not need the view's commitData frame:
+        // its editor bookkeeping cannot survive arbitrary synchronous deletion.
+        if (apply && text != initial)
+            apply(target, text);
+        if (alive && survivingLine)
+            emit alive->closeEditor(survivingLine, QAbstractItemDelegate::NoHint);
+    }
+    void cancelIfStale(Document *document) {
+        if (!isRenaming())
+            return;
+        auto *line = liveEditor();
+        const auto &target = line->target;
+        if (target.document != document || !document || document->revision() != target.revision ||
+            document->state.layers.size() != target.count || target.index < 0 ||
+            target.index >= document->state.layers.size() ||
+            document->state.layers[target.index].name != target.name) {
+            line->cancelled = true;
+            emit closeEditor(line, QAbstractItemDelegate::RevertModelCache);
+        }
+    }
+
+  private:
+    // QWidget sends teardown events before QObject clears QPointer. Keep the
+    // guard at QObject level and test the live dynamic type before editor access.
+    LayerNameEditor *liveEditor() const { return dynamic_cast<LayerNameEditor *>(editor.data()); }
+    mutable QPointer<QObject> editor;
+};
 QIcon toolIcon(int kind, QColor color = QColor("#d5dee5")) {
     QIcon icon;
     for (int edge : {24, 32, 48, 64, 96}) {
@@ -267,6 +480,24 @@ QWidget *row(QWidget *a, QWidget *b = nullptr, QWidget *c = nullptr) {
         l->addWidget(c);
     return w;
 }
+QWidget *wrappingRow(QWidget *first, QWidget *second) {
+    auto *widget = new QWidget;
+    auto *layout = new QFormLayout(widget);
+    layout->setContentsMargins(0, 0, 0, 0);
+    // Qt's WrapLongRows fit check omits horizontalSpacing, then subtracts it
+    // during placement. Budget the gap inside the label cell so a near-fitting
+    // pair wraps instead of taking those pixels from the second control.
+    auto *labelCell = new QWidget;
+    auto *labelLayout = new QHBoxLayout(labelCell);
+    labelLayout->setContentsMargins(0, 0, 6, 0);
+    labelLayout->addWidget(first);
+    layout->setHorizontalSpacing(0);
+    layout->setVerticalSpacing(6);
+    layout->setRowWrapPolicy(QFormLayout::WrapLongRows);
+    layout->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow);
+    layout->addRow(labelCell, second);
+    return widget;
+}
 QSlider *slider() {
     auto *s = new QSlider(Qt::Horizontal);
     s->setRange(-100, 100);
@@ -311,6 +542,347 @@ QByteArray compositePreviewKey(const Document *document) {
             << layer.blend << layer.clipped;
     return key;
 }
+// A drag identifies the live stack, never a QListWidget row that a refresh can repurpose.
+// Cache keys cover image buffers cheaply; names/text/locks supplement the render identity.
+QByteArray layerIdentityKey(const Layer &layer) {
+    QByteArray key;
+    QDataStream out(&key, QIODevice::WriteOnly);
+    out << layerPreviewKey(layer) << layer.offset << layer.visible << layer.opacity
+        << layer.blend << layer.clipped << layer.name << layer.locked << layer.text
+        << layer.font << layer.color;
+    return key;
+}
+QByteArray layerStackKey(const Document *document, int ignore = -1) {
+    QByteArray key;
+    QDataStream out(&key, QIODevice::WriteOnly);
+    out << document->state.size << qint32(document->state.layers.size());
+    for (int i = 0; i < document->state.layers.size(); ++i)
+        if (i != ignore)
+            out << qint32(i) << layerIdentityKey(document->state.layers[i]);
+    return key;
+}
+struct LayerDragTarget {
+    QPointer<Document> document;
+    QPointer<Canvas> canvas;
+    int index = -1, count = 0, active = -1;
+    quint64 revision = 0;
+    bool editingMask = false, pendingGesture = false, editing = false;
+    QTransform pendingTransform;
+    QByteArray stackKey;
+};
+class LayerDropIndicator : public QWidget {
+  public:
+    using QWidget::QWidget;
+  protected:
+    void paintEvent(QPaintEvent *) override {
+        QPainter painter(this);
+        painter.fillRect(rect(), palette().color(QPalette::Highlight));
+    }
+};
+class LayerListWidget : public QListWidget {
+  public:
+    explicit LayerListWidget(QWidget *parent = nullptr) : QListWidget(parent) {
+        // Reordering is an in-list pointer gesture. There is no native drag or
+        // transferable payload whose source must survive an external event loop.
+        setDragEnabled(false);
+        setAcceptDrops(false);
+        setDragDropMode(QAbstractItemView::NoDragDrop);
+        setAutoScroll(false);
+        indicator = new LayerDropIndicator(viewport());
+        indicator->setObjectName("layerDropIndicator");
+        indicator->setAccessibleName("Katman bırakma konumu");
+        indicator->setAttribute(Qt::WA_TransparentForMouseEvents);
+        indicator->hide();
+        scrollTimer.setInterval(70);
+        connect(&scrollTimer, &QTimer::timeout, this, [this] {
+            if (!sessionIsCurrent()) {
+                invalidateDrag();
+                return;
+            }
+            const QPoint global = dropGlobalPoint;
+            const QPoint point = viewport()->mapFromGlobal(global);
+            const QRect area = dragArea();
+            if (!pointIsVisible(point)) {
+                clearInsertion();
+                return;
+            }
+            const int direction = point.y() < area.top() + 24 ? -1
+                                  : point.y() > area.bottom() - 24 ? 1 : 0;
+            const QPointer<LayerListWidget> alive = this;
+            auto *scroll = verticalScrollBar();
+            const int previous = scroll->value();
+            scroll->setValue(previous + direction * scroll->singleStep());
+            if (!alive)
+                return;
+            if (!sessionIsCurrent()) {
+                invalidateDrag();
+                return;
+            }
+            // A narrow inspector may clip this viewport inside its own scroll
+            // area. Once the inner list reaches its limit, reveal the clipped
+            // edge too, so the first/last insertion slot is actually reachable.
+            const bool clipped = direction < 0 ? area.top() > viewport()->rect().top()
+                                                : area.bottom() < viewport()->rect().bottom();
+            if (direction && scroll->value() == previous && clipped)
+                for (QWidget *parent = parentWidget(); parent; parent = parent->parentWidget())
+                    if (auto *outer = qobject_cast<QScrollArea *>(parent)) {
+                        auto *bar = outer->verticalScrollBar();
+                        const int old = bar->value();
+                        bar->setValue(old + direction * bar->singleStep());
+                        if (!alive)
+                            return;
+                        if (!sessionIsCurrent()) {
+                            invalidateDrag();
+                            return;
+                        }
+                        if (bar->value() != old)
+                            break;
+                    }
+            if (!sessionIsCurrent()) {
+                invalidateDrag();
+                return;
+            }
+            const QPoint moved = viewport()->mapFromGlobal(global);
+            if (pointIsVisible(moved))
+                showInsertion(moved);
+            else
+                clearInsertion();
+        });
+    }
+    std::function<bool()> displayIsCurrent;
+    std::function<bool(bool)> prepareDrag;
+    std::function<LayerDragTarget(int)> captureTarget;
+    std::function<bool(const LayerDragTarget &)> pressIsCurrent, targetIsCurrent;
+    std::function<bool(const LayerDragTarget &, int)> moveLayer;
+    void invalidateDrag() {
+        suppressPointer |= bool(pressTarget.document) || bool(dragTarget.document);
+        pressTarget = {};
+        dragTarget = {};
+        clearInsertion();
+    }
+
+  protected:
+    void mousePressEvent(QMouseEvent *event) override {
+        invalidateDrag();
+        const bool left = event->button() == Qt::LeftButton;
+        if (left)
+            suppressPointer = false;
+        pressPosition = event->position().toPoint();
+        const QPointer<LayerListWidget> alive = this;
+        const quint64 cancellation = cancelEpoch;
+        const auto displayCurrent = displayIsCurrent;
+        const auto prepare = prepareDrag;
+        // Reject an old displayed row, rather than moving whatever replaced it.
+        if (left && (!pointIsVisible(pressPosition) || (!displayCurrent || !displayCurrent()) || !alive)) {
+            if (alive)
+                suppressPointer = true;
+            event->accept();
+            return;
+        }
+        // An ordinary click on the active row keeps its preview alive (including
+        // the first click of text double-click). Settle Canvas at the threshold;
+        // a different-row click retains the existing row-change finalization.
+        const QModelIndex pressed = indexAt(event->position().toPoint());
+        const bool changeRow = pressed.isValid() && pressed.row() != currentRow();
+        // Settlement may refresh the row, switch tabs, or destroy the window.
+        if ((left || event->button() == Qt::RightButton) && prepare && !prepare(changeRow)) {
+            if (alive)
+                suppressPointer = true;
+            event->accept();
+            return;
+        }
+        if (!alive)
+            return;
+        if (cancelEpoch != cancellation) {
+            suppressPointer |= left;
+            event->accept();
+            return;
+        }
+        const QModelIndex index = indexAt(event->position().toPoint());
+        const bool check = index.isValid() &&
+            static_cast<LayerNameDelegate *>(itemDelegate())->isCheckIndicator(
+                index, visualRect(index), event->position().toPoint());
+        const auto capture = captureTarget;
+        const auto before = left && !check && index.isValid() && capture
+                                ? capture(index.row()) : LayerDragTarget{};
+        if (left && !check && index.isValid() && !before.document) {
+            suppressPointer = true;
+            event->accept();
+            return;
+        }
+        QListWidget::mousePressEvent(event);
+        if (!alive)
+            return;
+        if (cancelEpoch != cancellation) {
+            suppressPointer |= left;
+            event->accept();
+            return;
+        }
+        if (before.document && capture) {
+            const auto after = capture(index.row());
+            // Selection callbacks can synchronously repurpose the row too.
+            if (before.document == after.document && before.canvas == after.canvas &&
+                before.index == after.index && before.count == after.count &&
+                before.revision == after.revision && before.stackKey == after.stackKey)
+                pressTarget = after;
+            else
+                suppressPointer = true;
+        }
+    }
+    void mouseMoveEvent(QMouseEvent *event) override {
+        if ((event->buttons() & Qt::LeftButton) && suppressPointer &&
+            !pressTarget.document && !dragTarget.document) {
+            event->accept();
+            return;
+        }
+        if (!(event->buttons() & Qt::LeftButton) || (!pressTarget.document && !dragTarget.document)) {
+            QListWidget::mouseMoveEvent(event);
+            return;
+        }
+        event->accept();
+        if (!dragTarget.document) {
+            if ((event->position().toPoint() - pressPosition).manhattanLength() <
+                QApplication::startDragDistance())
+                return;
+            if (!pressIsCurrent || !pressIsCurrent(pressTarget)) {
+                invalidateDrag();
+                return;
+            }
+            const auto pressed = pressTarget;
+            const auto prepare = prepareDrag;
+            const auto capture = captureTarget;
+            const QPointer<LayerListWidget> alive = this;
+            const quint64 cancellation = cancelEpoch;
+            // Keep only a guarded row intent before settlement; the live drag
+            // target is captured afterwards, never from indexAt a refreshed row.
+            invalidateDrag();
+            if (!prepare || !prepare(true) || !alive || cancelEpoch != cancellation)
+                return;
+            const auto settled = capture ? capture(pressed.count - 1 - pressed.index) : LayerDragTarget{};
+            if (settled.document != pressed.document || settled.canvas != pressed.canvas ||
+                settled.index != pressed.index || settled.count != pressed.count ||
+                !targetIsCurrent || !targetIsCurrent(settled))
+                return;
+            dragTarget = settled;
+            suppressPointer = true;
+        }
+        if (!sessionIsCurrent()) {
+            invalidateDrag();
+            return;
+        }
+        const QPoint point = event->position().toPoint();
+        if (pointIsVisible(point))
+            showInsertion(point);
+        else
+            clearInsertion(); // Keep the source so moving back into the list works.
+    }
+    void mouseReleaseEvent(QMouseEvent *event) override {
+        if (event->button() == Qt::LeftButton && dragTarget.document) {
+            event->accept();
+            const QPoint point = event->position().toPoint();
+            const bool current = pointIsVisible(point) && sessionIsCurrent();
+            const auto target = dragTarget;
+            const auto move = moveLayer;
+            const int slot = insertionSlot(point);
+            const int fromRow = target.count - 1 - target.index;
+            const int toRow = slot > fromRow ? slot - 1 : slot;
+            const int toIndex = target.count - 1 - toRow;
+            invalidateDrag();
+            suppressPointer = false;
+            // Commit may synchronously destroy this window. Do not touch it after.
+            if (current && move)
+                move(target, toIndex);
+            return;
+        }
+        pressTarget = {};
+        if (event->button() == Qt::LeftButton && suppressPointer) {
+            suppressPointer = false;
+            event->accept();
+            return;
+        }
+        QListWidget::mouseReleaseEvent(event);
+    }
+    void keyPressEvent(QKeyEvent *event) override {
+        if (event->key() == Qt::Key_Escape)
+            ++cancelEpoch;
+        if (event->key() == Qt::Key_Escape && (pressTarget.document || dragTarget.document)) {
+            invalidateDrag();
+            event->accept();
+            return;
+        }
+        QListWidget::keyPressEvent(event);
+    }
+    void focusOutEvent(QFocusEvent *event) override {
+        ++cancelEpoch;
+        invalidateDrag();
+        QListWidget::focusOutEvent(event);
+    }
+    bool viewportEvent(QEvent *event) override {
+        if (event->type() == QEvent::UngrabMouse || event->type() == QEvent::Hide) {
+            ++cancelEpoch;
+            invalidateDrag();
+        }
+        return QListWidget::viewportEvent(event);
+    }
+    void dragEnterEvent(QDragEnterEvent *event) override { event->ignore(); }
+    void dragMoveEvent(QDragMoveEvent *event) override { event->ignore(); }
+    void dropEvent(QDropEvent *event) override { event->ignore(); }
+
+  private:
+    LayerDragTarget pressTarget, dragTarget;
+    QTimer scrollTimer;
+    QWidget *indicator;
+    bool suppressPointer = false;
+    quint64 cancelEpoch = 0;
+    QPoint dropGlobalPoint, pressPosition;
+    bool sessionIsCurrent() const {
+        return dragTarget.document && targetIsCurrent && targetIsCurrent(dragTarget);
+    }
+    QRect dragArea() const {
+        // A scrolled outer inspector can clip the list without resizing its
+        // viewport. Feedback and edge scrolling must stay in the actual window.
+        return viewport()->visibleRegion().boundingRect();
+    }
+    bool pointIsVisible(QPoint point) const {
+        return viewport()->rect().contains(point) && viewport()->visibleRegion().contains(point);
+    }
+    int insertionSlot(QPoint point) const {
+        for (int row = 0; row < count(); ++row)
+            if (point.y() <= visualItemRect(item(row)).center().y())
+                return row;
+        return count();
+    }
+    void showInsertion(QPoint point) {
+        dropGlobalPoint = viewport()->mapToGlobal(point);
+        const int slot = insertionSlot(point);
+        int y = slot < count() ? visualItemRect(item(slot)).top() - spacing() / 2
+                               : visualItemRect(item(count() - 1)).bottom() + spacing() / 2;
+        const QRect area = dragArea();
+        if (area.width() < 10 || area.height() < 5) {
+            clearInsertion();
+            return;
+        }
+        y = qBound(area.top() + 2, y, area.bottom() - 2);
+        QPalette colors = palette();
+        colors.setColor(QPalette::Window, colors.color(QPalette::Highlight));
+        indicator->setPalette(colors);
+        indicator->setGeometry(area.left() + 5, y - 1, area.width() - 10, 3);
+        indicator->show();
+        indicator->raise();
+        if (point.y() < area.top() + 24 || point.y() > area.bottom() - 24) {
+            // Pointer updates can arrive faster than the scroll interval. Keep
+            // the pending tick instead of postponing it on every edge move.
+            if (!scrollTimer.isActive())
+                scrollTimer.start();
+        } else
+            scrollTimer.stop();
+    }
+    void clearInsertion() {
+        scrollTimer.stop();
+        indicator->hide();
+    }
+};
+
 QString recoveryDir() {
     QString dir = QStandardPaths::writableLocation(QStandardPaths::AppLocalDataLocation) + "/recovery";
     QDir().mkpath(dir);
@@ -393,9 +965,17 @@ MainWindow::MainWindow(bool recovery, bool useSettings) {
     refreshTimer.setSingleShot(true);
     refreshTimer.setInterval(25);
     connect(&refreshTimer, &QTimer::timeout, this, &MainWindow::refresh);
-    connect(tabs, &QTabWidget::currentChanged, this, [this] { refresh(); });
+    connect(tabs, &QTabWidget::currentChanged, this, [this] {
+        static_cast<LayerListWidget *>(layers)->invalidateDrag();
+        refresh();
+    });
     connect(tabs->tabBar(), &QTabBar::tabMoved, this, [this](int, int) { refresh(); });
     connect(tabs, &QTabWidget::tabCloseRequested, this, &MainWindow::closeTab);
+    recoveryManager = new RecoveryManager(recoveryDir(), this);
+    connect(recoveryManager, &RecoveryManager::failed, this,
+            [this](Document *, const QString &message) {
+                status->setText("Kurtarma kopyası yazılamadı: " + message);
+            });
     autosaveTimer.setParent(this);
     autosaveTimer.setObjectName("autosaveTimer");
     autosaveTimer.setInterval(45000);
@@ -432,10 +1012,31 @@ QAction *MainWindow::action(const QString &id, const QString &text, const QKeySe
     a->setObjectName(id);
     if (!shortcut.isEmpty())
         a->setShortcut(shortcut);
-    connect(a, &QAction::triggered, this, [this, fn](bool) {
-        if (auto *canvas = currentCanvas())
-            canvas->finishPendingGesture();
-        fn();
+    connect(a, &QAction::triggered, this, [this, id, fn](bool) {
+        // Settlement can synchronously destroy this action and its connection.
+        const auto command = fn;
+        const QPointer<MainWindow> self(this);
+        const QPointer<Canvas> canvas = currentCanvas();
+        const QPointer<Document> target = canvas ? canvas->document : nullptr;
+        const int active = target ? target->state.active : -1;
+        if (canvas) {
+            if ((id == "undo" || id == "redo") && canvas->isTransforming()) {
+                canvas->cancelTransform();
+                return;
+            }
+            const bool preservePreview = id == "fit" || id == "actual" || id == "zoomIn" ||
+                                         id == "zoomOut" || id == "transform" ||
+                                         id == "transformAdvanced" || id == "help" ||
+                                         id == "about" || id.startsWith("ui.");
+            if (!canvas->isTransforming() || !preservePreview) {
+                canvas->finishPendingGesture();
+                if (!self || !canvas || !target || currentCanvas() != canvas ||
+                    canvas->document != target || target->state.active != active ||
+                    canvas->hasPendingGesture())
+                    return;
+            }
+        }
+        command();
     });
     actions[id] = a;
     addAction(a); // Shortcuts remain reachable when users hide menus and toolbars.
@@ -476,25 +1077,126 @@ void MainWindow::buildMenus() {
             currentDocument()->redo();
     }));
     edit->addSeparator();
-    edit->addAction(action("selectAll", "Tümünü seç", QKeySequence::SelectAll, [this] {
+    auto *selection = menuBar()->addMenu("&Seçim");
+    selection->setObjectName("selectionMenu");
+    selection->addAction(action("selectAll", "&Tümünü seç", QKeySequence::SelectAll, [this] {
         if (currentDocument()) {
-            currentDocument()->selection = QRect(QPoint(), currentDocument()->state.size);
-            currentDocument()->changed();
+            currentDocument()->setSelection(Selection(QRect(QPoint(), currentDocument()->state.size)),
+                                            "Tümü seçildi");
         }
     }));
-    edit->addAction(action("deselect", "Seçimi kaldır", QKeySequence("Ctrl+D"), [this] {
+    selection->addAction(action("deselect", "Seçimi &kaldır", QKeySequence("Ctrl+D"), [this] {
         if (currentDocument()) {
-            currentDocument()->selection = {};
-            currentDocument()->changed();
+            currentDocument()->deselect();
         }
     }));
-    edit->addAction(action("invertSelection", "Seçimi ters çevir", QKeySequence("Ctrl+Shift+I"), [this] {
+    selection->addAction(action("reselect", "Ye&niden seç", QKeySequence("Ctrl+Shift+D"), [this] {
         if (auto *d = currentDocument()) {
-            d->selection = d->selection.inverted(d->state.size);
-            d->changed();
+            QString e;
+            if (!d->reselect(&e) && !e.isEmpty())
+                error(e);
         }
     }));
-    edit->addAction(action("featherSelection", "Seçim kenarlarını yumuşat…", {}, [this] {
+    selection->addSeparator();
+    selection->addAction(action("saveSelection", "Seçimi kay&det…", {}, [this] {
+        if (auto *d = currentDocument()) {
+            QInputDialog dialog(this);
+            dialog.setObjectName("saveSelectionDialog");
+            dialog.setWindowTitle("Seçimi kaydet");
+            dialog.setAccessibleName(dialog.windowTitle());
+            dialog.setLabelText("Seçim &adı:");
+            dialog.setTextValue({});
+            auto *nameInput = dialog.findChild<QLineEdit *>();
+            nameInput->setObjectName("savedSelectionName");
+            nameInput->setAccessibleName("Kayıtlı seçim adı");
+            labelEditorDialogButtons(dialog, "&Kaydet");
+            nameInput->setFocus();
+            if (dialog.exec() != QDialog::Accepted)
+                return;
+            const QString name = dialog.textValue().trimmed();
+            if (d->savedSelectionNames().contains(name)) {
+                QMessageBox replace(QMessageBox::Question, "Kayıtlı seçimi değiştir",
+                                    "Bu ad zaten kullanılıyor. Kayıtlı seçim değiştirilsin mi?",
+                                    QMessageBox::Yes | QMessageBox::Cancel, this);
+                replace.setObjectName("replaceSavedSelectionDialog");
+                replace.setAccessibleName(replace.windowTitle());
+                replace.button(QMessageBox::Yes)->setText("&Değiştir");
+                replace.button(QMessageBox::Yes)->setAccessibleName("Kayıtlı seçimi değiştir");
+                auto *cancel = replace.button(QMessageBox::Cancel);
+                cancel->setText("İ&ptal");
+                cancel->setAccessibleName("İptal");
+                replace.setDefaultButton(QMessageBox::Cancel);
+                replace.setEscapeButton(QMessageBox::Cancel);
+                cancel->setFocus();
+                if (replace.exec() != QMessageBox::Yes)
+                    return;
+            }
+            QString e;
+            if (!d->saveSelection(name, &e))
+                error(e);
+        }
+    }));
+    selection->addAction(action("loadSelection", "Kayıtlı seçimi &yükle…", {}, [this] {
+        if (auto *d = currentDocument()) {
+            QDialog dialog(this);
+            dialog.setObjectName("loadSelectionDialog");
+            dialog.setWindowTitle("Kayıtlı seçimi yükle");
+            dialog.setAccessibleName(dialog.windowTitle());
+            QFormLayout layout(&dialog);
+            QComboBox names, mode;
+            names.setObjectName("savedSelectionChoice");
+            names.setAccessibleName("Kayıtlı seçim");
+            mode.setObjectName("savedSelectionMode");
+            mode.setAccessibleName("Seçim yükleme işlemi");
+            names.addItems(d->savedSelectionNames());
+            mode.addItems({"Yeni seçim", "Seçime ekle", "Seçimden çıkar", "Seçimle kesiştir"});
+            layout.addRow("&Seçim:", &names);
+            layout.addRow("İşle&m:", &mode);
+            QDialogButtonBox buttons(QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
+            labelEditorDialogButtons(&buttons, "&Yükle");
+            layout.addRow(&buttons);
+            connect(&buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
+            connect(&buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+            names.setFocus();
+            if (dialog.exec() != QDialog::Accepted)
+                return;
+            QString e;
+            if (!d->loadSelection(names.currentText(), Selection::Mode(mode.currentIndex()), &e))
+                error(e);
+        }
+    }));
+    selection->addAction(action("removeSavedSelection", "Kayıtlı &seçimi sil…", {}, [this] {
+        if (auto *d = currentDocument()) {
+            QInputDialog dialog(this);
+            dialog.setObjectName("removeSavedSelectionDialog");
+            dialog.setWindowTitle("Kayıtlı seçimi sil");
+            dialog.setAccessibleName(dialog.windowTitle());
+            dialog.setLabelText("Seçi&m:");
+            dialog.setComboBoxItems(d->savedSelectionNames());
+            dialog.setComboBoxEditable(false);
+            auto *names = dialog.findChild<QComboBox *>();
+            names->setObjectName("savedSelectionChoice");
+            names->setAccessibleName("Kayıtlı seçim");
+            labelEditorDialogButtons(dialog, "&Sil");
+            names->setFocus();
+            if (dialog.exec() != QDialog::Accepted)
+                return;
+            const QString name = dialog.textValue();
+            QString e;
+            if (!d->removeSavedSelection(name, &e))
+                error(e);
+        }
+    }));
+    selection->addSeparator();
+    selection->addAction(
+        action("invertSelection", "Seçimi ters çe&vir", QKeySequence("Ctrl+Shift+I"), [this] {
+            if (auto *d = currentDocument()) {
+                QString e;
+                if (!d->setSelection(d->selection.inverted(d->state.size), "Seçim ters çevrildi", &e))
+                    error(e);
+            }
+        }));
+    selection->addAction(action("featherSelection", "Seçim kenarlarını y&umuşat…", {}, [this] {
         if (auto *d = currentDocument()) {
             if (d->selection.isEmpty())
                 return;
@@ -502,14 +1204,15 @@ void MainWindow::buildMenus() {
             int radius =
                 QInputDialog::getInt(this, "Seçim yumuşatma", "Yarıçap (px)", 4, 1, 128, 1, &ok);
             if (ok) {
-                d->selection = d->selection.feathered(radius, d->state.size);
-                d->changed();
+                QString e;
+                if (!d->setSelection(d->selection.feathered(radius, d->state.size), "Seçim yumuşatıldı", &e))
+                    error(e);
             }
         }
     }));
     for (const bool grow : {true, false}) {
-        edit->addAction(action(
-            grow ? "growSelection" : "shrinkSelection", grow ? "Seçimi büyüt…" : "Seçimi küçült…", {},
+        selection->addAction(action(
+            grow ? "growSelection" : "shrinkSelection", grow ? "Seçimi &büyüt…" : "Seçimi küçü&lt…", {},
             [this, grow] {
                 if (auto *d = currentDocument()) {
                     if (d->selection.isEmpty())
@@ -518,8 +1221,10 @@ void MainWindow::buildMenus() {
                     int radius = QInputDialog::getInt(this, grow ? "Seçimi büyüt" : "Seçimi küçült",
                                                       "Piksel", 2, 1, 128, 1, &ok);
                     if (ok) {
-                        d->selection = d->selection.grown(grow ? radius : -radius, d->state.size);
-                        d->changed();
+                        QString e;
+                        if (!d->setSelection(d->selection.grown(grow ? radius : -radius, d->state.size),
+                                             grow ? "Seçim büyütüldü" : "Seçim küçültüldü", &e))
+                            error(e);
                     }
                 }
             }));
@@ -654,8 +1359,46 @@ void MainWindow::buildMenus() {
         }
     }));
     auto *layer = menuBar()->addMenu("&Katman");
+    layer->addAction(action("positionLayer", "Etkin katman konumu…", {}, [this] { positionLayer(); }));
+    actions["positionLayer"]->setIconText("Konum…");
+    auto *alignment = layer->addMenu("Etkin katmanı hizala");
+    alignment->setObjectName("layerAlignmentMenu");
+    alignment->setAccessibleName("Etkin katmanı açık hedefe hizala");
+    struct AlignmentCommand {
+        const char *id;
+        const char *text;
+        Document::LayerAlignment direction;
+    };
+    const AlignmentCommand commands[] = {
+        {"Left", "Sola", Document::LayerAlignment::Left},
+        {"Center", "Yatay ortaya", Document::LayerAlignment::Center},
+        {"Right", "Sağa", Document::LayerAlignment::Right},
+        {"Top", "Üste", Document::LayerAlignment::Top},
+        {"Middle", "Dikey ortaya", Document::LayerAlignment::Middle},
+        {"Bottom", "Alta", Document::LayerAlignment::Bottom}};
+    for (auto target : {Document::AlignmentTarget::Canvas, Document::AlignmentTarget::Selection}) {
+        const bool canvas = target == Document::AlignmentTarget::Canvas;
+        auto *menu = alignment->addMenu(canvas ? "Tuval sınırlarına" : "Geçerli seçim sınırlarına");
+        menu->setObjectName(canvas ? "alignCanvasMenu" : "alignSelectionMenu");
+        for (const auto &command : commands) {
+            const auto direction = command.direction;
+            auto *a = action(QString(canvas ? "alignCanvas" : "alignSelection") + command.id,
+                             command.text, {}, [this, direction, target] { alignLayer(direction, target); });
+            a->setToolTip("Yalnızca etkin katmanı taşır; saydam/maske kenarları sınırın içindedir.");
+            menu->addAction(a);
+        }
+    }
+    connect(alignment, &QMenu::aboutToShow, this, [this] {
+        finishLayerRename();
+        if (auto *canvas = currentCanvas())
+            canvas->finishPendingGesture();
+        updateActionAvailability();
+    });
+    layer->addSeparator();
     layer->addAction(action("transform", "Kaynak koruyan serbest dönüşüm…", QKeySequence("Ctrl+T"),
                             [this] { transformLayer(); }));
+    layer->addAction(action("transformAdvanced", "Sayısal dönüşüm / perspektif…",
+                            QKeySequence("Ctrl+Alt+T"), [this] { transformLayerNumerically(); }));
     layer->addAction(action("resetTransform", "Dönüşümü sıfırla", {}, [this] {
         if (auto *d = currentDocument()) {
             d->beginEdit();
@@ -676,7 +1419,7 @@ void MainWindow::buildMenus() {
         }
     }));
     layer->addAction(
-        action("mergeVisible", "Görünür katmanları birleştir", QKeySequence("Ctrl+Shift+E"), [this] {
+        action("mergeVisible", "Görünür katmanları birleştir", QKeySequence("Ctrl+Alt+Shift+E"), [this] {
             if (auto *d = currentDocument()) {
                 QString e;
                 if (!d->mergeVisible(&e))
@@ -738,19 +1481,23 @@ void MainWindow::buildMenus() {
                 error(e);
         }
     }));
-    layer->addAction(action("selectLayerPixels", "Katman alfasını seç", {}, [this] {
+    layer->addAction(action("selectLayerPixels", "Katman &alfasını seç", {}, [this] {
         if (auto *d = currentDocument()) {
             Layer source = d->state.layers[d->state.active];
             source.mask = {};
             source.blur = 0;
             source.filters = {};
             source.cache = {};
-            d->selection =
-                Selection::fromAlpha(source.rendered(), source.renderedOffset(), d->state.size);
-            d->changed();
+            QString e;
+            if (!d->setSelection(Selection::fromAlpha(source.rendered(), source.renderedOffset(), d->state.size),
+                                 "Katman saydamlığı seçildi", &e))
+                error(e);
         }
     }));
-    layer->addAction(action("rename", "Yeniden adlandır…", {}, [this] { renameLayer(); }));
+    selection->addSeparator();
+    selection->addAction(actions["selectLayerPixels"]);
+    layer->addAction(action("rename", "Yeniden adlandır", QKeySequence(Qt::Key_F2),
+                            [this] { renameLayer(); }));
     layer->addAction(action("editText", "Metni düzenle…", {}, [this] { textDialog({}, true); }));
     layer->addAction(action("deleteLayer", "Katmanı sil", {}, [this] {
         if (currentDocument())
@@ -831,10 +1578,17 @@ void MainWindow::buildMenus() {
             "katmandan kaynak seçin.\nKırpma: alanı sürükleyin, sonra Ctrl+Shift+X.\nMetin: metin "
             "aracında tuvale tıklayın; katmana çift tıklayarak düzenleyin.\nMaske: beyaz gösterir, "
             "siyah gizler. X renkleri değiştirir.\nŞekil: Shift ile kare / daire. Tüm çizim araçları "
-            "seçime uyar.\nTekerlek: işaretçinin çevresinde yakınlaştırma. Orta tuş: gezinme.\n\n.pdeck "
+            "seçime uyar.\nCtrl+D seçimi kaldırır; Ctrl+Shift+D yeniden seçer. Seçim işlemleri geri alınabilir.\n"
+            "Seçim menüsü: tümünü seç, kaldır, yeniden seç, ters çevir, yumuşat ve büyüt/küçült.\n"
+            "Seçim → Seçimi kaydet / Kayıtlı seçimi yükle, adlandırılmış seçimleri projede saklar.\n"
+            "Yalnızca kayıtlı seçim içeren normal projeler v6 kullanır; yayımlanan 0.9.1 bunları açamaz.\n"
+            "Tekerlek: işaretçinin çevresinde yakınlaştırma. Orta tuş: gezinme.\n\n.pdeck "
             "proje dosyası katmanları, maskeleri ve renk ayarlarını korur.\nPNG/WebP saydamlığı korur; "
-            "JPEG beyaz arka planla düzleştirilir.\nCtrl+T katman dönüşümü, metni ve kaynak pikselleri "
-            "korur. Görüntüyü yeniden boyutlandırma / 90° döndürme, çizim ve silme metni "
+            "JPEG beyaz arka planla düzleştirilir.\nCtrl+Shift+E dışa aktarım penceresini açar. "
+            "Ctrl+E alta, Ctrl+Alt+Shift+E görünür katmanları birleştirir.\n"
+            "Ctrl+T katman dönüşümü, metni ve kaynak pikselleri korur. Enter dönüşümü uygular, "
+            "Esc iptal eder. Ctrl+Alt+T sayısal dönüşüm ve perspektif ayarlarını açar. "
+            "Görüntüyü yeniden boyutlandırma / 90° döndürme, çizim ve silme metni "
             "piksele dönüştürebilir.\nKilit, doğrudan katman düzenlemesini engeller; tüm görüntü dönüşümleri "
             "kilitli katmanları da dönüştürür.\n\nSınırlar: 16 MP tuval, 64 katman, 256 MiB katman "
             "verisi.\nGeçmiş: 30 adım / 128 MiB; büyük belgelerde adım sayısı azalır.\nDüzenleme sonrası yaklaşık "
@@ -1051,7 +1805,8 @@ void MainWindow::buildTools() {
         group->addAction(a);
         if (i == 0)
             a->setChecked(true);
-        a->setToolTip(names[i] + " · " + keys[i]);
+        a->setToolTip(names[i] + " · " + keys[i] +
+                      (i == Canvas::Move ? " · Tuvalde ok: 1 px · Shift+ok: 10 px" : ""));
         auto *button = new QToolButton(toolPalette);
         button->setDefaultAction(a);
         button->setObjectName("toolButton" + QString::number(i));
@@ -1086,31 +1841,37 @@ void MainWindow::buildTools() {
 void MainWindow::updateToolOptions() {
     const auto *canvas = currentCanvas();
     const auto tool = canvas ? canvas->tool : Canvas::Move;
-    const bool brush = canvas && (tool == Canvas::Brush || tool == Canvas::Pencil ||
-                                  tool == Canvas::Eraser || tool == Canvas::Clone);
-    const bool flow = canvas && (brush || tool == Canvas::Fill || tool == Canvas::Gradient ||
-                                 tool == Canvas::Rectangle || tool == Canvas::Ellipse);
-    const bool selection = canvas && canvas->isSelectionTool();
-    const bool crop = canvas && (tool == Canvas::Crop || selection ||
-                                 canvas->document->selection.hasPixels());
+    const bool transforming = canvas && canvas->isTransforming();
+    const bool brush = canvas && !transforming &&
+                       (tool == Canvas::Brush || tool == Canvas::Pencil ||
+                        tool == Canvas::Eraser || tool == Canvas::Clone);
+    const bool flow = canvas && !transforming &&
+                      (brush || tool == Canvas::Fill || tool == Canvas::Gradient ||
+                       tool == Canvas::Rectangle || tool == Canvas::Ellipse);
+    const bool selection = canvas && !transforming && canvas->isSelectionTool();
+    const bool crop = canvas && !transforming &&
+                      (tool == Canvas::Crop || selection || canvas->document->selection.hasPixels());
     for (const auto &id : {"brush", "brushSettings", "brushLibrary"})
         actions[QString("ui.options.") + id]->setVisible(brush);
     actions["ui.options.flow"]->setVisible(flow);
     actions["ui.options.divider"]->setVisible(flow && crop);
     actions["ui.options.crop"]->setVisible(crop);
     actions["ui.options.selectionMode"]->setVisible(selection);
-    actions["ui.options.tolerance"]->setVisible(canvas && tool == Canvas::Wand);
-    actions["ui.options.contiguous"]->setVisible(canvas && tool == Canvas::Wand);
+    actions["ui.options.tolerance"]->setVisible(canvas && !transforming && tool == Canvas::Wand);
+    actions["ui.options.contiguous"]->setVisible(canvas && !transforming && tool == Canvas::Wand);
     auto *caption = optionsToolbar->findChild<QLabel *>("toolbarCaption");
-    caption->setText(canvas ? actions["tool" + QString::number(tool)]->iconText().toUpper()
-                            : "ARAÇ AYARLARI");
+    caption->setText(transforming ? "DÖNÜŞTÜR"
+                     : canvas ? actions["tool" + QString::number(tool)]->iconText().toUpper()
+                              : "ARAÇ AYARLARI");
     QString hint;
     if (!canvas)
         hint = "Yeni belge oluşturun veya bir görüntü açın";
+    else if (transforming)
+        hint = "Enter: uygula · Esc / Geri al: iptal · Orta tuş: kaydır";
     else if (selection)
         hint = "Shift: ekle · Alt: çıkar";
     else if (tool == Canvas::Move)
-        hint = "Etkin katmanı sürükleyin · Ctrl+T: dönüştür";
+        hint = "Sürükle · Ok: 1 px · Shift+ok: 10 px · Ctrl+T: dönüştür";
     else if (tool == Canvas::Crop)
         hint = "Alanı sürükleyin, ardından Kırp";
     else if (tool == Canvas::Clone)
@@ -1132,10 +1893,12 @@ void MainWindow::buildInspector() {
     auto *panel = new QWidget;
     auto *layout = new QVBoxLayout(panel);
     panel->setObjectName("colorPanel");
+    layout->setSizeConstraint(QLayout::SetMinAndMaxSize);
     layout->setContentsMargins(14, 12, 14, 14);
     layout->setSpacing(12);
     auto *histogramTitle = new QLabel("TON DAĞILIMI");
     histogramTitle->setObjectName("sectionTitle");
+    histogramTitle->setWordWrap(true);
     auto *rgbLabel = new QLabel("RGB");
     rgbLabel->setObjectName("metaBadge");
     layout->addWidget(row(histogramTitle, rgbLabel));
@@ -1145,6 +1908,7 @@ void MainWindow::buildInspector() {
     auto *form = new QFormLayout;
     form->setHorizontalSpacing(12);
     form->setVerticalSpacing(14);
+    form->setRowWrapPolicy(QFormLayout::WrapLongRows);
     brightness = slider();
     contrast = slider();
     saturation = slider();
@@ -1167,13 +1931,16 @@ void MainWindow::buildInspector() {
     layout->addLayout(form);
     for (auto *s : {brightness, contrast, saturation}) {
         connect(s, &QSlider::sliderPressed, this, [this] {
-            if (currentDocument())
+            if (currentDocument()) {
+                currentCanvas()->finishPendingGesture();
                 currentDocument()->beginEdit();
+            }
         });
         connect(s, &QSlider::valueChanged, this, [this, s](int v) {
             s->setToolTip(QString::number(v));
             if (refreshing || !currentDocument())
                 return;
+            currentCanvas()->finishPendingGesture();
             auto *d = currentDocument();
             bool keyboard = !s->isSliderDown();
             if (keyboard)
@@ -1188,9 +1955,11 @@ void MainWindow::buildInspector() {
         });
     }
     auto *reset = new QPushButton("Ayarları sıfırla");
+    reset->setObjectName("resetColorAdjustments");
     reset->setFlat(true);
     connect(reset, &QPushButton::clicked, this, [this] {
         if (auto *d = currentDocument()) {
+            currentCanvas()->finishPendingGesture();
             d->beginEdit();
             d->adjust(0, 0, 0);
             d->adjustTones(ToneSettings{});
@@ -1198,11 +1967,19 @@ void MainWindow::buildInspector() {
         }
     });
     layout->addWidget(reset);
-    auto *advancedTones = new QPushButton("Seviyeler, eğriler ve renk…");
+    auto *advancedTones = new QPushButton("Seviyeler,\neğriler ve renk…");
+    advancedTones->setAccessibleName("Seviyeler, eğriler ve renk…");
     advancedTones->setObjectName("advancedTones");
     connect(advancedTones, &QPushButton::clicked, actions["tones"], &QAction::trigger);
     layout->addWidget(advancedTones);
-    colorDock = createDock("Renk & ton", "colorDock", panel);
+    // Keep the controls' minimum layout inside a clipped, keyboard-scrollable
+    // viewport when other docks or a larger font leave less vertical space.
+    auto *colorScroll = new QScrollArea;
+    colorScroll->setObjectName("colorPanelScroll");
+    colorScroll->setWidgetResizable(true);
+    colorScroll->setFrameShape(QFrame::NoFrame);
+    colorScroll->setWidget(panel);
+    colorDock = createDock("Renk & ton", "colorDock", colorScroll);
     addDockWidget(Qt::RightDockWidgetArea, colorDock);
     panel = new QWidget;
     layerPanel = panel;
@@ -1212,9 +1989,13 @@ void MainWindow::buildInspector() {
     layout->setSpacing(10);
     blend = new QComboBox;
     blend->addItems(Blending::names());
+    // The popup can show long mode names without forcing the whole inspector
+    // wider than its scroll viewport on native Windows fonts.
+    blend->setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon);
+    blend->setMinimumContentsLength(6);
     blend->setObjectName("blendMode");
     blend->setAccessibleName("Katman karışım modu");
-    layout->addWidget(row(new QLabel("Karışım"), blend));
+    layout->addWidget(wrappingRow(new QLabel("Karışım"), blend));
     opacity = slider();
     opacity->setRange(0, 100);
     opacity->setValue(100);
@@ -1236,8 +2017,10 @@ void MainWindow::buildInspector() {
             });
     });
     connect(opacity, &QSlider::sliderPressed, this, [this] {
-        if (currentDocument())
+        if (currentDocument()) {
+            currentCanvas()->finishPendingGesture();
             currentDocument()->beginEdit();
+        }
     });
     connect(opacity, &QSlider::valueChanged, this, [this](int v) {
         opacity->setToolTip(QString::number(v) + " %");
@@ -1246,6 +2029,7 @@ void MainWindow::buildInspector() {
         auto *d = currentDocument();
         if (d->state.layers[d->state.active].locked)
             return;
+        currentCanvas()->finishPendingGesture();
         bool keyboard = !opacity->isSliderDown();
         if (keyboard)
             d->beginEdit();
@@ -1258,7 +2042,8 @@ void MainWindow::buildInspector() {
         if (currentDocument())
             currentDocument()->commit("Katman opaklığı");
     });
-    layers = new QListWidget;
+    auto *layerList = new LayerListWidget;
+    layers = layerList;
     layers->setObjectName("layers");
     layers->setIconSize({50, 36});
     layers->setAccessibleName("Belge katmanları");
@@ -1266,14 +2051,173 @@ void MainWindow::buildInspector() {
     layers->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     layers->setTextElideMode(Qt::ElideRight);
     layers->setSpacing(3);
+    layers->setEditTriggers(QAbstractItemView::NoEditTriggers);
+    layers->setContextMenuPolicy(Qt::CustomContextMenu);
+    layers->setToolTip("Sürükle: tek katmanı sırala · F2: yeniden adlandır · Sağ tık: işlemler");
+    layers->installEventFilter(this);
+    auto *nameDelegate = new LayerNameDelegate(layers);
+    nameDelegate->targetForIndex = [this](const QModelIndex &index) {
+        auto *d = currentDocument();
+        const int layer = d ? d->state.layers.size() - 1 - index.row() : -1;
+        if (!d || layer < 0 || layer >= d->state.layers.size())
+            return LayerRenameTarget{};
+        return LayerRenameTarget{d, layer, int(d->state.layers.size()), d->revision(),
+                                 d->state.layers[layer].name};
+    };
+    nameDelegate->rename = [this](const LayerRenameTarget &target, const QString &value) {
+        const QPointer<MainWindow> alive = this;
+        const QPointer<Canvas> canvas = currentCanvas();
+        if (canvas)
+            canvas->finishPendingGesture();
+        if (!alive || canvas != alive->currentCanvas())
+            return;
+        auto *d = alive->currentDocument();
+        if (!d || d->isEditing() || target.document != d || d->revision() != target.revision ||
+            d->state.layers.size() != target.count || target.index < 0 ||
+            target.index >= d->state.layers.size() ||
+            d->state.layers[target.index].name != target.name)
+            return;
+        const QString name = value == target.name ? target.name : value.trimmed().left(128);
+        if (name.isEmpty() || name == target.name)
+            return;
+        d->beginEdit();
+        d->state.layers[target.index].name = name;
+        d->commit("Katman yeniden adlandırıldı");
+    };
+    layers->setItemDelegate(nameDelegate);
+    layerList->displayIsCurrent = [this] {
+        auto *d = currentDocument();
+        const bool sameDocument = d && layers->count() == d->state.layers.size() &&
+            layers->count() && layers->item(0)->data(LayerDocumentRole).value<Document *>() == d &&
+            layers->item(0)->data(LayerCountRole).toInt() == d->state.layers.size();
+        const bool current = sameDocument &&
+            layers->item(0)->data(LayerRevisionRole).toULongLong() == d->revision() &&
+            layers->item(0)->data(LayerStackRole).toByteArray() == layerStackKey(d);
+        if (!current)
+            refresh();
+        return current;
+    };
+    layerList->prepareDrag = [this](bool finishGesture) {
+        const QPointer<MainWindow> alive = this;
+        const QPointer<Canvas> canvas = currentCanvas();
+        const QPointer<Document> document = currentDocument();
+        if (!canvas || !document)
+            return false;
+        const int active = document->state.active;
+        if (active < 0 || active >= document->state.layers.size())
+            return false;
+        const Layer source = document->state.layers[active];
+        const QByteArray order = layerStackKey(document, active);
+        const QString name = static_cast<LayerNameDelegate *>(layers->itemDelegate())->pendingName();
+        if (!finishGesture && name.isEmpty())
+            return true;
+        const bool gesture = canvas->hasPendingGesture(), transform = canvas->isTransforming();
+        const bool painting = gesture && (canvas->tool == Canvas::Brush || canvas->tool == Canvas::Pencil ||
+            canvas->tool == Canvas::Eraser || canvas->tool == Canvas::Clone ||
+            canvas->tool == Canvas::Gradient || canvas->tool == Canvas::Rectangle ||
+            canvas->tool == Canvas::Ellipse);
+        const bool paintingMask = painting && document->editingMask;
+        QSet<quint64> revisions;
+        for (const auto &entry : document->historyDescriptions())
+            revisions.insert(entry.revision);
+        bool tabChanged = false;
+        const auto tabConnection = connect(tabs, &QTabWidget::currentChanged, this,
+                                           [&tabChanged] { tabChanged = true; });
+        const auto disconnectTabs = qScopeGuard([tabConnection] { QObject::disconnect(tabConnection); });
+        finishLayerRename();
+        if (!alive || !canvas || !document || tabChanged || alive->currentCanvas() != canvas ||
+            alive->currentDocument() != document)
+            return false;
+        if (finishGesture)
+            canvas->finishPendingGesture();
+        if (!alive || !canvas || !document || tabChanged || alive->currentCanvas() != canvas ||
+            alive->currentDocument() != document)
+            return false;
+        bool sameRows = document->state.active == active &&
+                        layerStackKey(document, active) == order;
+        if (sameRows) {
+            Layer settled = document->state.layers[active];
+            // Permit only fields the pending operation can actually settle. The
+            // original row must not turn into an unrelated replacement layer.
+            if (!name.isEmpty() && settled.name == name)
+                settled.name = source.name;
+            if (transform)
+                settled.geometry = source.geometry;
+            if (painting) {
+                if (paintingMask)
+                    settled.mask = source.mask;
+                else {
+                    settled.pixels = source.pixels;
+                    settled.text = source.text;
+                }
+            }
+            sameRows = layerIdentityKey(settled) == layerIdentityKey(source);
+        }
+        int newRevisions = 0;
+        for (const auto &entry : document->historyDescriptions())
+            newRevisions += !revisions.contains(entry.revision);
+        sameRows &= newRevisions <= int(!name.isEmpty()) + int(gesture);
+        alive->refresh();
+        return alive && sameRows;
+    };
+    layerList->captureTarget = [this](int row) {
+        auto *d = currentDocument();
+        auto *canvas = currentCanvas();
+        const int index = d ? int(d->state.layers.size()) - 1 - row : -1;
+        if (!d || !canvas || index < 0 ||
+            index >= d->state.layers.size())
+            return LayerDragTarget{};
+        return LayerDragTarget{d, canvas, index, int(d->state.layers.size()), d->state.active,
+                               d->revision(), d->editingMask, canvas->hasPendingGesture(), d->isEditing(),
+                               canvas->isTransforming() ? canvas->transformGeometry() : QTransform{},
+                               layerStackKey(d)};
+    };
+    layerList->pressIsCurrent = [layerList](const LayerDragTarget &target) {
+        const auto current = layerList->captureTarget(target.count - 1 - target.index);
+        return current.document == target.document && current.canvas == target.canvas &&
+               current.index == target.index && current.count == target.count &&
+               current.active == target.active && current.revision == target.revision &&
+               current.editingMask == target.editingMask && current.pendingGesture == target.pendingGesture &&
+               current.editing == target.editing && current.pendingTransform == target.pendingTransform &&
+               current.stackKey == target.stackKey;
+    };
+    layerList->targetIsCurrent = [this](const LayerDragTarget &target) {
+        const auto *d = currentDocument();
+        return d && target.document == d && target.canvas == currentCanvas() &&
+               !d->isEditing() && !target.canvas->hasPendingGesture() &&
+               !static_cast<LayerNameDelegate *>(layers->itemDelegate())->isRenaming() &&
+               target.revision == d->revision() && target.count == d->state.layers.size() &&
+               target.index >= 0 && target.index < target.count &&
+               target.active == d->state.active && target.editingMask == d->editingMask &&
+               target.stackKey == layerStackKey(d);
+    };
+    layerList->moveLayer = [this, layerList](const LayerDragTarget &target, int to) {
+        if (!layerList->targetIsCurrent(target))
+            return false;
+        auto *d = target.document.data();
+        const QPointer<MainWindow> alive = this;
+        const bool moved = target.index == to || d->reorderLayer(target.index, to);
+        if (alive)
+            alive->refresh();
+        return moved;
+    };
+    connect(layers, &QListWidget::customContextMenuRequested, this,
+            [this](QPoint position) { showLayerMenu(position); });
     layout->addWidget(layers, 1);
     connect(layers, &QListWidget::currentRowChanged, this, [this](int r) {
         if (refreshing || r < 0 || !currentDocument())
             return;
-        currentCanvas()->finishPendingGesture();
-        currentDocument()->state.active = currentDocument()->state.layers.size() - 1 - r;
-        currentDocument()->editingMask = false;
-        refresh();
+        static_cast<LayerListWidget *>(layers)->invalidateDrag();
+        const QPointer<MainWindow> alive = this;
+        const QPointer<Canvas> canvas = currentCanvas();
+        const QPointer<Document> document = currentDocument();
+        canvas->finishPendingGesture();
+        if (!alive || !canvas || !document || alive->currentCanvas() != canvas ||
+            alive->currentDocument() != document || r >= document->state.layers.size())
+            return;
+        document->state.active = document->state.layers.size() - 1 - r;
+        document->editingMask = false;
+        alive->refresh();
     });
     connect(layers, &QListWidget::itemChanged, this, [this](QListWidgetItem *item) {
         if (refreshing || !currentDocument())
@@ -1285,7 +2229,8 @@ void MainWindow::buildInspector() {
     connect(layers, &QListWidget::itemDoubleClicked, this, [this](QListWidgetItem *) {
         if (!currentDocument())
             return;
-        if (!currentDocument()->state.layers[currentDocument()->state.active].text.isEmpty())
+        const auto &layer = currentDocument()->state.layers[currentDocument()->state.active];
+        if (!layer.text.isEmpty() && !layer.locked)
             textDialog({}, true);
         else
             renameLayer();
@@ -1320,18 +2265,34 @@ void MainWindow::buildInspector() {
     layout->addWidget(maskButton);
     auto *propertiesTitle = new QLabel("KATMAN ÖZELLİKLERİ");
     propertiesTitle->setObjectName("sectionTitle");
+    propertiesTitle->setWordWrap(true);
     layout->addWidget(propertiesTitle);
     layerDetails = new QLabel;
     layerDetails->setWordWrap(true);
     layerDetails->setObjectName("layerDetails");
     layout->addWidget(layerDetails);
+    auto *positionButton = new QToolButton;
+    positionButton->setObjectName("quickPosition");
+    positionButton->setDefaultAction(actions["positionLayer"]);
+    positionButton->setText("Konum…");
+    positionButton->setAccessibleName("Etkin katmanın X ve Y konumunu düzenle");
+    positionButton->setToolButtonStyle(Qt::ToolButtonTextOnly);
+    positionButton->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+    auto *alignButton = new QToolButton;
+    alignButton->setObjectName("quickAlign");
+    alignButton->setText("Hizala");
+    alignButton->setAccessibleName("Etkin katmanı tuvale veya seçim sınırlarına hizala");
+    alignButton->setMenu(findChild<QMenu *>("layerAlignmentMenu"));
+    alignButton->setPopupMode(QToolButton::InstantPopup);
+    alignButton->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+    layout->addWidget(wrappingRow(positionButton, alignButton));
     auto *transformButton = new QPushButton("Dönüştür…");
     transformButton->setObjectName("quickTransform");
     connect(transformButton, &QPushButton::clicked, actions["transform"], &QAction::trigger);
     auto *toneButton = new QPushButton("Renk / ton…");
     toneButton->setObjectName("quickTones");
     connect(toneButton, &QPushButton::clicked, actions["tones"], &QAction::trigger);
-    layout->addWidget(row(transformButton, toneButton));
+    layout->addWidget(wrappingRow(transformButton, toneButton));
     auto *scroll = new QScrollArea;
     scroll->setWidgetResizable(true);
     scroll->setFrameShape(QFrame::NoFrame);
@@ -1345,7 +2306,17 @@ void MainWindow::buildInspector() {
     layout->setContentsMargins(10, 10, 10, 10);
     history = new QListWidget;
     history->setObjectName("history");
-    history->setFocusPolicy(Qt::NoFocus);
+    // Handle mouse activation before moving focus, so an inline rename cannot
+    // commit a new branch before we have captured/validated the requested ID.
+    history->setFocusPolicy(Qt::TabFocus);
+    history->setAccessibleName("Belge geçmişi");
+    history->setToolTip("Tıkla: bu adıma dön · Ok tuşları: adım seç · Enter / Boşluk: uygula");
+    history->setSelectionMode(QAbstractItemView::SingleSelection);
+    history->setEditTriggers(QAbstractItemView::NoEditTriggers);
+    history->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    history->setTextElideMode(Qt::ElideRight);
+    history->installEventFilter(this);
+    history->viewport()->installEventFilter(this);
     history->setMinimumHeight(70);
     layout->addWidget(history);
     historyDock = createDock("Geçmiş", "historyDock", panel);
@@ -1354,6 +2325,7 @@ void MainWindow::buildInspector() {
 
 void MainWindow::addDocument(Document *d) {
     d->setParent(this);
+    recoveryManager->registerDocument(d);
     auto *canvas = new Canvas(d);
     canvas->showRulers = appearance.rulers;
     {
@@ -1363,6 +2335,7 @@ void MainWindow::addDocument(Document *d) {
     tabs->addTab(canvas, d->title);
     tabs->setCurrentWidget(canvas);
     connect(d, &Document::updated, this, [this, d] {
+        static_cast<LayerListWidget *>(layers)->invalidateDrag();
         scheduleRecovery(d);
         updateActionAvailability();
         if (!refreshTimer.isActive())
@@ -1373,6 +2346,11 @@ void MainWindow::addDocument(Document *d) {
             zoomLabel->setText(QString::number(qRound(currentCanvas()->zoom * 100)) + " %  ");
     });
     connect(canvas, &Canvas::toolHint, status, &QLabel::setText);
+    connect(canvas, &Canvas::transformSessionChanged, this, [this](bool) {
+        static_cast<LayerListWidget *>(layers)->invalidateDrag();
+        updateActionAvailability();
+        updateToolOptions();
+    });
     connect(canvas, &Canvas::colorPicked, this, [this, canvas](QColor c) {
         canvas->foreground = c;
         refresh();
@@ -1410,6 +2388,20 @@ bool MainWindow::openFile(const QString &file) {
     return true;
 }
 MainWindow::~MainWindow() {
+    // The delegate owns callbacks into this window; close its editor before our
+    // member containers are destroyed and QWidget teardown can move focus.
+    auto *layerList = static_cast<LayerListWidget *>(layers);
+    layerList->invalidateDrag();
+    layerList->displayIsCurrent = {};
+    layerList->prepareDrag = {};
+    layerList->captureTarget = {};
+    layerList->pressIsCurrent = {};
+    layerList->targetIsCurrent = {};
+    layerList->moveLayer = {};
+    auto *nameDelegate = static_cast<LayerNameDelegate *>(layers->itemDelegate());
+    nameDelegate->cancelIfStale(nullptr);
+    nameDelegate->targetForIndex = {};
+    nameDelegate->rename = {};
     refreshTimer.stop();
     autosaveTimer.stop();
     recoverySaveTimer.stop();
@@ -1421,6 +2413,10 @@ MainWindow::~MainWindow() {
     QObject::disconnect(&autosaveTimer, nullptr, this, nullptr);
     QObject::disconnect(&recoverySaveTimer, nullptr, this, nullptr);
     QObject::disconnect(&uiSaveTimer, nullptr, this, nullptr);
+    // Reject publication and join before any GUI/model members are torn down. Direct
+    // destruction is also used as crash simulation: preserve the last published file.
+    delete recoveryManager;
+    recoveryManager = nullptr;
 }
 void MainWindow::updateActionAvailability() {
     const auto *d = currentDocument();
@@ -1431,7 +2427,31 @@ void MainWindow::updateActionAvailability() {
             it.key() != "brushLibrary" && !it.key().startsWith("ui."))
             it.value()->setEnabled(present);
 
-    actions["undo"]->setEnabled(present && d->canUndo());
+    const bool activePresent = present && d->state.active >= 0 && d->state.active < d->state.layers.size();
+    const bool positionable = activePresent && !d->state.layers[d->state.active].locked &&
+                              d->state.layers[d->state.active].visible && !d->activeLayerBounds().isEmpty();
+    actions["positionLayer"]->setEnabled(positionable);
+    for (auto it = actions.begin(); it != actions.end(); ++it)
+        if (it.key().startsWith("alignCanvas") || it.key().startsWith("alignSelection"))
+            it.value()->setEnabled(positionable &&
+                (!it.key().startsWith("alignSelection") || d->selection.hasPixels()));
+    if (auto *menu = findChild<QMenu *>("alignSelectionMenu"))
+        menu->menuAction()->setEnabled(positionable && d->selection.hasPixels());
+    if (auto *menu = findChild<QMenu *>("alignCanvasMenu"))
+        menu->menuAction()->setEnabled(positionable);
+    if (auto *button = findChild<QToolButton *>("quickAlign"))
+        button->setEnabled(positionable);
+
+    const bool transforming = present && currentCanvas()->isTransforming();
+    actions["undo"]->setText(transforming ? "Dönüşüm önizlemesini iptal et" : "Geri al");
+    actions["redo"]->setText(transforming ? "Dönüşüm önizlemesini iptal et" : "Yinele");
+    actions["undo"]->setEnabled(present && (d->canUndo() || transforming));
+
+    actions["deselect"]->setEnabled(present && !d->selection.isEmpty());
+    actions["reselect"]->setEnabled(present && d->canReselect());
+    actions["saveSelection"]->setEnabled(present && !d->selection.isEmpty());
+    actions["loadSelection"]->setEnabled(present && !d->savedSelectionNames().isEmpty());
+    actions["removeSavedSelection"]->setEnabled(present && !d->savedSelectionNames().isEmpty());
     actions["invertSelection"]->setEnabled(present && !d->selection.isEmpty());
     actions["featherSelection"]->setEnabled(present && !d->selection.isEmpty());
     actions["growSelection"]->setEnabled(present && !d->selection.isEmpty());
@@ -1442,10 +2462,12 @@ void MainWindow::updateActionAvailability() {
     actions["resetFilters"]->setEnabled(present && !d->state.layers[d->state.active].locked);
     actions["maskSettings"]->setEnabled(present && !d->state.layers[d->state.active].locked &&
                                         !d->state.layers[d->state.active].mask.isNull());
-    for (const auto &id : {"transform", "resetTransform", "rasterize"})
+    for (const auto &id : {"transform", "transformAdvanced", "resetTransform", "rasterize"})
         actions[id]->setEnabled(present && !d->state.layers[d->state.active].locked);
-    actions["redo"]->setEnabled(present && d->canRedo());
+    actions["redo"]->setEnabled(present && (d->canRedo() || transforming));
     actions["deleteLayer"]->setEnabled(present && d->state.layers.size() > 1);
+    actions["layerUp"]->setEnabled(present && d->state.active + 1 < d->state.layers.size());
+    actions["layerDown"]->setEnabled(present && d->state.active > 0);
     actions["clipLayer"]->setEnabled(present && !d->state.layers[d->state.active].locked &&
                                      (d->state.active > 0 || d->state.layers[d->state.active].clipped));
     actions["mergeDown"]->setEnabled(present && d->state.active > 0);
@@ -1454,22 +2476,103 @@ void MainWindow::updateActionAvailability() {
     actions["selectionCopyLayer"]->setEnabled(present);
     actions["editText"]->setEnabled(present && !d->state.layers[d->state.active].text.isEmpty() &&
                                     !d->state.layers[d->state.active].locked);
+    actions["mask"]->setEnabled(present && !d->state.layers[d->state.active].locked);
     actions["removeMask"]->setEnabled(present && !d->state.layers[d->state.active].mask.isNull() &&
                                       !d->state.layers[d->state.active].locked);
     actions["invertMask"]->setEnabled(present && !d->state.layers[d->state.active].mask.isNull() &&
                                       !d->state.layers[d->state.active].locked);
 }
+void MainWindow::refreshHistory() {
+    auto *d = currentDocument();
+    const bool changedDocument = historyDocument != d;
+    const quint64 selected = !changedDocument && history->currentItem()
+                                 ? history->currentItem()->data(Qt::UserRole).toULongLong()
+                                 : 0;
+    const QSignalBlocker blocker(history);
+    if (changedDocument) {
+        history->clear();
+        historyDocument = d;
+    }
+    history->setEnabled(d != nullptr);
+    const auto descriptions = d ? d->historyDescriptions() : QVector<Document::HistoryDescription>{};
+    QSet<quint64> retained;
+    for (const auto &entry : descriptions)
+        retained.insert(entry.revision);
+    for (int row = history->count() - 1; row >= 0; --row)
+        if (!retained.contains(history->item(row)->data(Qt::UserRole).toULongLong()))
+            delete history->takeItem(row);
+    int selectedRow = -1;
+    const int current = d ? d->currentHistoryIndex() : -1;
+    for (int row = 0; row < descriptions.size(); ++row) {
+        const auto &entry = descriptions[row];
+        // Existing entries retain their objects, selection and scroll position.
+        auto *item = row < history->count() ? history->item(row) : new QListWidgetItem(history);
+        item->setData(Qt::UserRole, QVariant::fromValue(entry.revision));
+        const bool active = row == current, future = row > current;
+        const QString state = active ? "Geçerli adım" : future ? "Yineleme adımı" : "Önceki adım";
+        item->setText((active ? "●  " : future ? "›  " : "    ") + entry.label +
+                      (active ? " · Geçerli" : future ? " · Yinele" : ""));
+        QFont font = history->font();
+        font.setBold(active);
+        font.setItalic(future);
+        item->setFont(font);
+        // Redo states stay enabled and use normal readable text in every theme.
+        item->setForeground(history->palette().brush(QPalette::Text));
+        item->setToolTip(entry.label + "\n" + state + " · Tıkla veya Enter / Boşluk ile uygula");
+        item->setData(Qt::AccessibleTextRole, entry.label + ", " + state);
+        if (entry.revision == selected)
+            selectedRow = row;
+    }
+    // Keep an arrow-key browsing target through unrelated delayed refreshes.
+    // Outside keyboard browsing, selection follows the actual current state.
+    const int row = history->hasFocus() && selectedRow >= 0 ? selectedRow : current;
+    if (history->currentRow() != row) {
+        history->setCurrentRow(row);
+        if (row >= 0)
+            history->scrollToItem(history->item(row));
+    }
+}
+bool MainWindow::navigateHistory(Document *document, quint64 revision) {
+    QPointer<Document> target = document;
+    if (!target || target != currentDocument() || target->revision() == revision)
+        return false;
+    const auto descriptions = target->historyDescriptions();
+    const bool retained =
+        std::any_of(descriptions.cbegin(), descriptions.cend(),
+                    [revision](const auto &entry) { return entry.revision == revision; });
+    if (!retained) {
+        status->setText("Bu geçmiş adımı artık tutulmuyor.");
+        refresh();
+        return false;
+    }
+    // History navigation discards an unsubmitted name. Do this before focus can
+    // commit it; the name editor does not own a live Document edit.
+    static_cast<LayerNameDelegate *>(layers->itemDelegate())->cancelIfStale(nullptr);
+    auto *canvas = currentCanvas();
+    if (canvas->isTransforming())
+        canvas->cancelTransform();
+    else
+        canvas->finishPendingGesture();
+    // Finishing a brush/selection can trim history or replace its redo branch.
+    // Resolve the original ID again, never an old row number.
+    const bool jumped = target && target == currentDocument() && target->jumpToHistoryRevision(revision);
+    if (!jumped)
+        status->setText("İşlem tamamlandı; seçilen geçmiş adımı artık tutulmuyor.");
+    refresh();
+    return jumped;
+}
 void MainWindow::refresh() {
     refreshing = true;
     auto *d = currentDocument();
     auto *c = currentCanvas();
+    static_cast<LayerNameDelegate *>(layers->itemDelegate())->cancelIfStale(d);
     bool present = d;
     updateActionAvailability();
     for (auto *s : {brightness, contrast, saturation, opacity})
         s->setEnabled(present);
     blend->setEnabled(present);
     maskButton->setEnabled(present);
-    history->clear();
+    refreshHistory();
     for (int i = 0; i < tabs->count(); ++i) {
         auto *td = qobject_cast<Canvas *>(tabs->widget(i))->document;
         tabs->setTabText(i, td->title + (td->dirty ? " •" : ""));
@@ -1521,17 +2624,39 @@ void MainWindow::refresh() {
         auto *item = row < layers->count() ? layers->item(row) : new QListWidgetItem(layers);
         if (item->icon().cacheKey() != previews.layerThumbnails[i].cacheKey())
             item->setIcon(previews.layerThumbnails[i]);
-        item->setText((l.clipped ? "↳  " : "") + l.name + (l.locked ? "  ◇" : "") +
-                      (!l.mask.isNull() ? "  ◧" : ""));
-        item->setFlags(item->flags() | Qt::ItemIsUserCheckable);
+        QStringList details{l.text.isEmpty() ? "Piksel" : "Metin"};
+        if (!l.mask.isNull())
+            details << (d->editingMask && i == d->state.active ? "Maske düzenleniyor" : "Maske");
+        if (l.locked)
+            details << "Kilitli";
+        if (l.clipped)
+            details << "Kırpılmış";
+        const QString description = details.join(" · ");
+        const QString displayName = (l.clipped ? "↳  " : "") + l.name;
+        item->setText(displayName + "\n" + description);
+        item->setData(LayerNameRole, displayName);
+        item->setData(LayerStatusRole, description);
+        item->setData(LayerDocumentRole, QVariant::fromValue(d));
+        item->setData(LayerRevisionRole, QVariant::fromValue<qulonglong>(d->revision()));
+        item->setData(LayerCountRole, int(d->state.layers.size()));
+        const QString doubleClick = !l.text.isEmpty() && !l.locked
+                                        ? "Çift tık: metni düzenle"
+                                        : "Çift tık: yeniden adlandır";
+        QString hint = l.name + "\n" + description + "\n" + doubleClick +
+                       " · Sürükle: sırala · F2: yeniden adlandır · Sağ tık: katman işlemleri";
+        if (l.locked)
+            hint += "\nKilit, piksel/metin/maske düzenlemesini engeller. Ad ve görünürlük değişebilir; sıra da değiştirilebilir.";
+        if (l.clipped)
+            hint += "\nAltındaki kırpılmamış tabanın alfasını kullanır. Sıra değişikliği görünümü "
+                    "ve kırpma ilişkisini değiştirebilir.";
+        item->setToolTip(hint);
+        item->setData(Qt::AccessibleTextRole, l.name + ", " + description);
+        item->setFlags(item->flags() | Qt::ItemIsUserCheckable | Qt::ItemIsEditable);
         item->setCheckState(l.visible ? Qt::Checked : Qt::Unchecked);
-        item->setSizeHint({180, qMax(34, appearance.fontSize + 22)});
+        item->setSizeHint({180, qMax(54, appearance.fontSize * 2 + 28)});
     }
+    layers->item(0)->setData(LayerStackRole, layerStackKey(d));
     layers->setCurrentRow(d->state.layers.size() - 1 - d->state.active);
-    QStringList labels = d->historyLabels();
-    for (const auto &l : labels.mid(qMax(0, int(labels.size() - 4))))
-        history->addItem(l);
-    history->scrollToBottom();
     layerDetails->setText(
         d->editingMask ? "MASKE DÜZENLEME · Beyaz gösterir, siyah gizler. X: renkleri değiştir."
                        : QString("%1 × %2 px · %3\nKonum: %4, %5")
@@ -1540,9 +2665,12 @@ void MainWindow::refresh() {
                              .arg(active.text.isEmpty() ? "Piksel katmanı" : "Düzenlenebilir metin")
                              .arg(active.renderedOffset().x())
                              .arg(active.renderedOffset().y()));
-    maskButton->setText(active.mask.isNull() ? "◧  Katman maskesi ekle"
-                        : d->editingMask     ? "◧  Piksele geri dön"
-                                             : "◧  Maskeyi düzenle");
+    maskButton->setText(active.mask.isNull() ? "◧  Katman\nmaskesi ekle"
+                        : d->editingMask     ? "◧  Piksele\ngeri dön"
+                                             : "◧  Maskeyi\ndüzenle");
+    maskButton->setAccessibleName(active.mask.isNull() ? "Katman maskesi ekle"
+                                  : d->editingMask     ? "Piksele geri dön"
+                                                       : "Maskeyi düzenle");
     maskButton->setEnabled(!active.locked);
     auto ensureCompositePreview = [this](Document *document) -> PreviewCache & {
         auto &cached = previewCaches[document];
@@ -1578,9 +2706,9 @@ void MainWindow::refresh() {
         selectionToleranceInput->setValue(c->selectionTolerance);
         contiguousSelectionInput->setChecked(c->contiguousSelection);
     }
-    selectionModeInput->setVisible(c->isSelectionTool());
-    selectionToleranceInput->setVisible(c->tool == Canvas::Wand);
-    contiguousSelectionInput->setVisible(c->tool == Canvas::Wand);
+    selectionModeInput->setVisible(!c->isTransforming() && c->isSelectionTool());
+    selectionToleranceInput->setVisible(!c->isTransforming() && c->tool == Canvas::Wand);
+    contiguousSelectionInput->setVisible(!c->isTransforming() && c->tool == Canvas::Wand);
     actions["tool" + QString::number(c->tool)]->setChecked(true);
     if (filmDock && !filmDock->isHidden()) {
         QSignalBlocker block(filmstrip);
@@ -1672,8 +2800,10 @@ void MainWindow::importLayer() {
 bool MainWindow::saveDocument(Document *d, bool saveAs) {
     if (!d)
         return false;
-    if (currentCanvas() && currentCanvas()->document == d)
+    if (currentCanvas() && currentCanvas()->document == d) {
+        finishLayerRename();
         currentCanvas()->finishPendingGesture();
+    }
     QString file = d->path;
     auto choose = [&](const QString &initial) {
         return chooseSaveTarget(this, "Katmanlı projeyi kaydet", initial,
@@ -1686,6 +2816,7 @@ bool MainWindow::saveDocument(Document *d, bool saveAs) {
             return false;
     }
     Document::SaveOptions options;
+    bool v6WarningAccepted = false;
     while (true) {
         if (!file.endsWith(".pdeck", Qt::CaseInsensitive)) {
             error("Projeyi .pdeck uzantısıyla kaydedin.");
@@ -1696,7 +2827,10 @@ bool MainWindow::saveDocument(Document *d, bool saveAs) {
                 QString("Bu proje v%1 biçiminde açıldı. PhotoDeck yeni kayıtları v%2 biçiminde "
                         "yazar; eski uygulama sürümleri bu kopyayı açamayabilir.\n\nOrijinal dosyayı "
                         "korumak için farklı bir adla kaydedin.")
-                    .arg(d->sourceVersion()).arg(Document::NativeProjectVersion),
+                    .arg(d->sourceVersion()).arg(d->projectSaveVersion()) +
+                    (d->projectSaveVersion() >= 6
+                         ? "\n\nKayıtlı seçimler v6 gerektirir. Yayımlanan PhotoDeck 0.9.1 bu dosyayı açamaz."
+                         : QString()),
                 QMessageBox::Cancel, this);
             warning.setObjectName("projectUpgradeWarning");
             auto *copy = warning.addButton("Kopya olarak kaydet…", QMessageBox::AcceptRole);
@@ -1708,12 +2842,24 @@ bool MainWindow::saveDocument(Document *d, bool saveAs) {
                 return false;
             const QFileInfo original(file);
             file = choose(original.dir().filePath(original.completeBaseName() + "-v" +
-                                                  QString::number(Document::NativeProjectVersion) +
+                                                  QString::number(d->projectSaveVersion()) +
                                                   ".pdeck"));
             if (file.isEmpty())
                 return false;
+            v6WarningAccepted = d->projectSaveVersion() >= 6;
             options = {};
             continue; // A path alias to the original must not bypass the compatibility check.
+        }
+        if (d->projectSaveVersion() >= 6 && d->sourceVersion() < 6 && !v6WarningAccepted) {
+            QMessageBox warning(QMessageBox::Warning, "Kayıtlı seçimler için v6 proje biçimi",
+                "Kayıtlı seçimler bu kopyanın v6 biçiminde yazılmasını gerektirir. Yayımlanan "
+                "PhotoDeck 0.9.1 bu dosyayı açamaz. Kayıtlı seçimleri silerseniz normal kayıt "
+                "yeniden v5 biçimini kullanır.", QMessageBox::Save | QMessageBox::Cancel, this);
+            warning.setObjectName("savedSelectionFormatWarning");
+            warning.setDefaultButton(QMessageBox::Cancel);
+            if (warning.exec() != QMessageBox::Save)
+                return false;
+            v6WarningAccepted = true;
         }
         QString e;
         if (d->save(file, &e, true, options))
@@ -1747,10 +2893,7 @@ bool MainWindow::saveDocument(Document *d, bool saveAs) {
             return false;
         }
     }
-    if (recoveryFiles.contains(d)) {
-        QFile::remove(recoveryFiles[d]);
-        recoveryStates.remove(d);
-    }
+    recoveryManager->invalidate(d);
     deferredRecovery.remove(d);
     status->setText("Proje kaydedildi · " + QFileInfo(file).fileName());
     return true;
@@ -1924,13 +3067,15 @@ bool MainWindow::confirmClose(int index) {
     return true;
 }
 void MainWindow::closeTab(int index) {
-    if (index < 0 || !confirmClose(index))
+    if (index < 0 || index >= tabs->count())
+        return;
+    recoveryManager->pause();
+    const auto resumeRecovery = qScopeGuard([this] { recoveryManager->resume(); });
+    if (!confirmClose(index))
         return;
     auto *canvas = qobject_cast<Canvas *>(tabs->widget(index));
     auto *d = canvas->document;
-    if (recoveryFiles.contains(d))
-        QFile::remove(recoveryFiles.take(d));
-    recoveryStates.remove(d);
+    recoveryManager->forgetDocument(d);
     deferredRecovery.remove(d);
     previewCaches.remove(d);
     tabs->removeTab(index);
@@ -1939,17 +3084,101 @@ void MainWindow::closeTab(int index) {
     refresh();
 }
 void MainWindow::closeEvent(QCloseEvent *e) {
+    recoveryManager->pause();
+    const auto resumeRecovery = qScopeGuard([this] { recoveryManager->resume(); });
     for (int i = 0; i < tabs->count(); ++i)
         if (!confirmClose(i)) {
             e->ignore();
             return;
         }
     saveUiSettings();
-    for (const auto &file : recoveryFiles)
-        QFile::remove(file);
+    // Earlier Discard choices become final only when every close prompt accepted.
+    recoveryManager->stop(true);
     e->accept();
 }
+void MainWindow::alignLayer(Document::LayerAlignment alignment, Document::AlignmentTarget target) {
+    finishLayerRename();
+    // A transform preview may change the bounds. Finalize it before reading either
+    // the layer or selection target; false also means there was no pending gesture.
+    if (auto *canvas = currentCanvas())
+        canvas->finishPendingGesture();
+    if (auto *d = currentDocument()) {
+        QString message;
+        if (!d->alignLayer(alignment, target, &message))
+            error(message);
+    }
+}
+void MainWindow::positionLayer() {
+    finishLayerRename();
+    if (auto *canvas = currentCanvas())
+        canvas->finishPendingGesture();
+    QPointer<Document> d = currentDocument();
+    if (!d || d->isEditing() || d->activeLayerBounds().isEmpty())
+        return;
+    const auto &layer = d->state.layers[d->state.active];
+    if (layer.locked || !layer.visible)
+        return;
+    const auto revision = d->revision();
+    const int active = d->state.active;
+    const int count = d->state.layers.size();
+    const QRect bounds = d->activeLayerBounds();
+    QDialog dialog(this);
+    dialog.setObjectName("layerPositionDialog");
+    dialog.setWindowTitle("Etkin katman konumu");
+    dialog.setAccessibleName(dialog.windowTitle());
+    dialog.setMinimumWidth(360);
+    auto *layout = new QVBoxLayout(&dialog);
+    auto *description = new QLabel("X / Y: dönüşmüş kaynak dikdörtgeninin sol üst köşesi. "
+                                  "Saydam ve maskeli kenarlar dahildir; pikseller kırpılmaz.");
+    description->setWordWrap(true);
+    description->setMaximumWidth(360);
+    layout->addWidget(description);
+    auto *form = new QFormLayout;
+    auto *x = new QSpinBox;
+    auto *y = new QSpinBox;
+    for (auto *input : {x, y}) {
+        input->setRange(-Document::MaxCoordinate, Document::MaxCoordinate);
+        input->setSuffix(" px");
+    }
+    x->setObjectName("layerPositionX");
+    y->setObjectName("layerPositionY");
+    x->setAccessibleName("Dönüşmüş katman sol kenarı X");
+    y->setAccessibleName("Dönüşmüş katman üst kenarı Y");
+    x->setValue(bounds.x());
+    y->setValue(bounds.y());
+    form->addRow("&X (sol):", x);
+    form->addRow("&Y (üst):", y);
+    layout->addLayout(form);
+    auto *buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
+    labelEditorDialogButtons(buttons, "&Uygula");
+    connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
+    connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+    layout->addWidget(buttons);
+    x->setFocus();
+    x->selectAll();
+    if (dialog.exec() != QDialog::Accepted)
+        return;
+    // A queued document operation must not retarget a still-open numeric dialog.
+    if (!d || currentDocument() != d || d->revision() != revision || d->state.active != active ||
+        d->state.layers.size() != count || d->activeLayerBounds() != bounds) {
+        status->setText("Katman değişti; konum uygulanmadı. Konum penceresini yeniden açın.");
+        return;
+    }
+    QString message;
+    if (!d->positionLayer(QPoint(x->value(), y->value()), &message))
+        error(message);
+}
 void MainWindow::transformLayer() {
+    finishLayerRename();
+    if (auto *canvas = currentCanvas())
+        canvas->beginTransform();
+}
+void MainWindow::transformLayerNumerically() {
+    finishLayerRename();
+    if (auto *canvas = currentCanvas(); canvas && canvas->isTransforming()) {
+        canvas->showNumericTransform();
+        return;
+    }
     auto *d = currentDocument();
     if (!d || d->state.layers[d->state.active].locked)
         return;
@@ -2054,6 +3283,10 @@ void MainWindow::resizeDocument() {
         currentCanvas()->fit();
 }
 void MainWindow::textDialog(QPoint at, bool edit) {
+    // Active-row double-click enters directly rather than through QAction's
+    // gesture guard. Finalize before capturing the layer or opening the dialog.
+    if (auto *canvas = currentCanvas())
+        canvas->finishPendingGesture();
     auto *d = currentDocument();
     if (!d)
         return;
@@ -2112,11 +3345,78 @@ void MainWindow::textDialog(QPoint at, bool edit) {
 void MainWindow::renameLayer() {
     if (!currentDocument())
         return;
-    auto &l = currentDocument()->state.layers[currentDocument()->state.active];
-    bool ok;
-    QString name = QInputDialog::getText(this, "Katman adı", "Yeni ad", QLineEdit::Normal, l.name, &ok);
-    if (ok && !name.trimmed().isEmpty())
-        mutate([name](Document *d) { d->state.layers[d->state.active].name = name.left(128); });
+    currentCanvas()->finishPendingGesture();
+    if (currentDocument()->isEditing())
+        return;
+    auto *delegate = static_cast<LayerNameDelegate *>(layers->itemDelegate());
+    delegate->cancelIfStale(currentDocument());
+    if (delegate->isRenaming())
+        return;
+    // Commands can run before the scheduled 25 ms refresh after undo/reorder.
+    refresh();
+    if (!layers->isVisible()) {
+        actions["ui.panel.layers"]->setChecked(true);
+        if (appearance.preset != "focus")
+            layersDock->raise();
+    }
+    layers->setFocus();
+    layers->scrollToItem(layers->currentItem());
+    layers->editItem(layers->currentItem());
+}
+void MainWindow::finishLayerRename() {
+    const QPointer<LayerNameDelegate> delegate =
+        static_cast<LayerNameDelegate *>(layers->itemDelegate());
+    // A focus-out commit must precede a command's revision/transaction capture.
+    // In particular, it must not finish a transform session that just started.
+    delegate->cancelIfStale(currentDocument());
+    if (delegate)
+        delegate->finishRename();
+}
+void MainWindow::showLayerMenu(const QPoint &position) {
+    finishLayerRename();
+    refresh();
+    auto *item = layers->itemAt(position);
+    if (!item || !currentDocument())
+        return;
+    layers->setCurrentItem(item);
+    currentCanvas()->finishPendingGesture();
+    QPointer<Document> target = currentDocument();
+    const int index = target->state.active;
+    const quint64 revision = target->revision();
+    QMenu menu(this);
+    menu.setObjectName("layerContextMenu");
+    menu.setToolTipsVisible(true);
+    auto append = [&](QMenu *parent, const QString &id) {
+        auto *source = actions[id];
+        auto *entry = parent->addAction(source->icon(), source->text());
+        entry->setObjectName(id);
+        entry->setEnabled(source->isEnabled());
+        if (id == "layerUp" || id == "layerDown")
+            entry->setToolTip("Tek katmanı taşır. Sıra değişikliği görünümü ve kırpma ilişkisini "
+                              "değiştirebilir.");
+        // Context commands always apply to the row that opened the menu. If a
+        // tab/history/structural change occurs while it is open, discard the command.
+        connect(entry, &QAction::triggered, this, [this, target, index, revision, source] {
+            if (target && currentDocument() == target && target->state.active == index &&
+                target->revision() == revision)
+                source->trigger();
+        });
+    };
+    append(&menu, "rename");
+    if (!target->state.layers[index].text.isEmpty())
+        append(&menu, "editText");
+    append(&menu, "duplicateWhole");
+    menu.addSeparator();
+    append(&menu, "layerUp");
+    append(&menu, "layerDown");
+    append(&menu, "clipLayer");
+    auto *maskMenu = menu.addMenu("Katman maskesi");
+    for (const auto &id : {"mask", "maskSettings", "invertMask", "removeMask"})
+        append(maskMenu, id);
+    menu.addSeparator();
+    append(&menu, "lock");
+    append(&menu, "deleteLayer");
+    menu.exec(layers->viewport()->mapToGlobal(position));
 }
 void MainWindow::chooseColor() {
     if (!currentCanvas())
@@ -2144,7 +3444,7 @@ void MainWindow::scheduleRecovery(Document *d) {
         recoverySaveTimer.start(0);
         return;
     }
-    if (d->dirty && recoveryStates.value(d) != QString::number(d->revision()) &&
+    if (d->dirty && recoveryManager->publishedRevision(d) != d->revision() &&
         !recoverySaveTimer.isActive())
         recoverySaveTimer.start(5000);
 }
@@ -2156,28 +3456,15 @@ void MainWindow::autosave() {
             continue;
         }
         deferredRecovery.remove(d);
-        if (!d->dirty) {
-            if (recoveryFiles.contains(d))
-                QFile::remove(recoveryFiles.value(d));
-            recoveryStates.remove(d);
-            continue;
-        }
-        QString signature = QString::number(d->revision());
-        if (recoveryStates.value(d) == signature)
-            continue;
-        if (!recoveryFiles.contains(d))
-            recoveryFiles[d] =
-                recoveryDir() + "/" + QUuid::createUuid().toString(QUuid::WithoutBraces) + ".pdeck";
-        QString e;
-        if (d->save(recoveryFiles[d], &e, false))
-            recoveryStates[d] = signature;
-        else
-            status->setText("Kurtarma kopyası yazılamadı: " + e);
+        recoveryManager->request(d);
     }
 }
 void MainWindow::recover() {
     QDir dir(recoveryDir());
     QStringList files = dir.entryList({"*.pdeck"}, QDir::Files);
+    files.removeIf([&](const QString &name) {
+        return !RecoveryFiles::mayRecover(dir.filePath(name));
+    });
     if (files.isEmpty())
         return;
     auto choice = QMessageBox::question(
@@ -2205,8 +3492,7 @@ void MainWindow::recover() {
         d->title = "Kurtarılan çalışma";
         d->markRecovered();
         addDocument(d);
-        recoveryFiles[d] = file;
-        recoveryStates[d] = QString::number(d->revision());
+        recoveryManager->adoptRecovery(d, file, d->revision());
     }
 }
 void MainWindow::batch() {
@@ -2897,6 +4183,34 @@ void MainWindow::applyUiSettings(const UiSettings &settings, bool resetLayout, b
         appearance.dockState.clear();
         arrangePreset();
     }
+    if (resetLayout && appearance.dockState.isEmpty() && appearance.preset != "focus") {
+        // Wait for typography and initial window geometry before preferring the
+        // full controls. The smaller scroll minimum still fits crowded stacks.
+        QTimer::singleShot(0, colorDock, [this, expected = appearance.toJson()] {
+            if (appearance.toJson() != expected || colorDock->isFloating())
+                return;
+            const auto *scroll = qobject_cast<QScrollArea *>(colorDock->widget());
+            scroll->widget()->ensurePolished();
+            scroll->widget()->layout()->activate();
+            // Match QScrollArea's height-for-width sizing. Wrapping form rows
+            // can need more than minimumSizeHint even when their width fits.
+            const QSize viewport = scroll->maximumViewportSize();
+            // An existing vertical bar narrows the first height-for-width pass.
+            // Budget for that width too, otherwise Qt can retain the bar even
+            // when the full-width contents would fit without one.
+            const int contentWidth = qMax(scroll->widget()->minimumSizeHint().width(),
+                                          viewport.width() -
+                                              scroll->verticalScrollBar()->sizeHint().width());
+            const int contentHeight = qMax(scroll->widget()->minimumSizeHint().height(),
+                                            scroll->widget()->heightForWidth(contentWidth));
+            const int frameHeight = colorDock->height() - viewport.height();
+            const int colorHeight = contentHeight + frameHeight;
+            const int layerHeight = qMax(layersDock->minimumSizeHint().height(),
+                                        colorDock->height() + layersDock->height() - colorHeight);
+            resizeDocks({colorDock, layersDock}, {colorHeight, layerHeight},
+                        Qt::Vertical);
+        });
+    }
     menuBar()->setVisible(appearance.showMenu);
     statusBar()->setVisible(appearance.showStatus);
     for (const auto &p : uiPresets())
@@ -3092,9 +4406,16 @@ void MainWindow::positionOverlays() {
     const QSize toolsSize(toolWidth,
                           qMin(h - 24, toolPalette->sizeHint().height() +
                                             toolsHandle->sizeHint().height() + 24));
-    const QSize layerSize(qMin(appearance.panelWidth, qMax(220, w / 2 - 40)), h - 24);
-    const bool layersOnLeft = appearance.panelSide == "left";
     const int toolsMargin = appearance.focusToolsVisible ? toolsSize.width() + 24 : 8;
+    // Large, labelled tools and a wide inspector share the same horizontal
+    // budget. Reserve the tab viewport's minimum before sizing the inspector;
+    // otherwise QStackedWidget can become narrower than its canvas child.
+    const int viewportMinimum = qMax(tabs->minimumWidth(), tabs->minimumSizeHint().width());
+    const int layerWidth = qMin(appearance.panelWidth, qMax(220, w / 2 - 40));
+    const int layerBudget = qMax(0, w - toolsMargin - 24 - viewportMinimum);
+    const QSize layerSize(appearance.focusLayersVisible ? qMin(layerWidth, layerBudget) : layerWidth,
+                          h - 24);
+    const bool layersOnLeft = appearance.panelSide == "left";
     const int layersMargin = appearance.focusLayersVisible ? layerSize.width() + 24 : 8;
     // Keep the artwork in its own viewport. Floating panels can still be moved by the user.
     workspace->layout()->setContentsMargins(layersOnLeft ? layersMargin : toolsMargin, 0,
@@ -3115,6 +4436,37 @@ void MainWindow::positionOverlays() {
 }
 
 bool MainWindow::eventFilter(QObject *object, QEvent *event) {
+    if (history && object == history->viewport() &&
+        (event->type() == QEvent::MouseButtonPress || event->type() == QEvent::MouseButtonDblClick)) {
+        auto *mouse = static_cast<QMouseEvent *>(event);
+        if (mouse->button() == Qt::LeftButton) {
+            if (auto *item = history->itemAt(mouse->position().toPoint())) {
+                const quint64 revision = item->data(Qt::UserRole).toULongLong();
+                const QPointer<Document> target = historyDocument;
+                history->setCurrentItem(item);
+                if (navigateHistory(target, revision))
+                    history->setFocus(Qt::MouseFocusReason);
+            }
+            return true;
+        }
+    }
+    if (object == history && event->type() == QEvent::KeyPress) {
+        const auto *key = static_cast<QKeyEvent *>(event);
+        if (key->key() == Qt::Key_Return || key->key() == Qt::Key_Enter || key->key() == Qt::Key_Space) {
+            if (auto *item = history->currentItem())
+                navigateHistory(historyDocument, item->data(Qt::UserRole).toULongLong());
+            return true;
+        }
+    }
+    if (object == layers && event->type() == QEvent::KeyPress) {
+        auto *key = static_cast<QKeyEvent *>(event);
+        if (key->key() == Qt::Key_Menu ||
+            (key->key() == Qt::Key_F10 && key->modifiers() == Qt::ShiftModifier)) {
+            if (auto *item = layers->currentItem())
+                showLayerMenu(layers->visualItemRect(item).center());
+            return true;
+        }
+    }
     if (object == workspace && event->type() == QEvent::Resize) {
         positionOverlays();
         return false;

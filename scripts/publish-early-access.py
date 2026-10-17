@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Fail-closed publisher for reviewed PhotoDeck corrective PR #2 and v0.9.1-ea.1 only.
+"""Fail-closed publisher for reviewed PhotoDeck release PR #3 and v0.10.0-ea.1 only.
 
 Uses only the job's ephemeral token and GitHub's official HTTPS API. There is no
 force, delete, asset replacement, arbitrary-version, or credential-storage path.
@@ -22,12 +22,14 @@ from urllib.request import HTTPRedirectHandler, Request, build_opener
 import xml.etree.ElementTree as ET
 
 REPOSITORY = 'Meingless/PhotoDeck'
-TAG = 'v0.9.1-ea.1'
+TAG = 'v0.10.0-ea.1'
 VERSION = TAG[1:]
-# The original reviewed release merge must remain an ancestor of PR #2.
-BASE_SHA = 'd2d1b1335d9333d1ad9480e4ad7d955c78eac717'
-PR_NUMBER = 2
-NOTES_PATH = Path('docs/releases/0.9.1-ea.1.md')
+# Fixed release authorization. Update PR_NUMBER only to the assigned release PR;
+# no workflow input can change the approved repository, ancestry, branch or tag.
+BASE_SHA = 'e209345d91690ba091e535b13f2f6b5a4cb7aa4f'
+PR_NUMBER = 3
+PR_HEAD_REF = 'release/0.10.0-ea.1'
+NOTES_PATH = Path('docs/releases/0.10.0-ea.1.md')
 PLATFORMS = {
     'linux-x86_64': (f'PhotoDeck-{VERSION}-linux-x86_64.tar.gz',
                      f'PhotoDeck-{VERSION}-x86_64.AppImage'),
@@ -35,6 +37,8 @@ PLATFORMS = {
     'macos-intel': (f'PhotoDeck-{VERSION}-macos-intel.zip',),
     'macos-apple-silicon': (f'PhotoDeck-{VERSION}-macos-apple-silicon.zip',),
 }
+RELEASE_ASSET_NAMES = frozenset(
+    name for names in PLATFORMS.values() for name in names) | {'RELEASE-PROOF.json', 'SHA256SUMS.txt'}
 TEST_EXECUTABLES = frozenset({
     'photodeck-tests', 'photodeck-feature-audit', 'photodeck-tones-tests',
     'photodeck-selections-tests', 'photodeck-blending-tests',
@@ -42,8 +46,65 @@ TEST_EXECUTABLES = frozenset({
     'photodeck-effects-tests', 'photodeck-output-tests',
     'photodeck-brushes-tests', 'photodeck-presets-tests',
     'photodeck-save-safety-tests', 'photodeck-parser-safety-tests',
-    'photodeck-ui-resilience-tests',
+    'photodeck-ui-resilience-tests', 'photodeck-layer-drag-tests',
+    'photodeck-selection-workflow-tests', 'photodeck-positioning-tests',
+    'photodeck-history-navigation-tests', 'photodeck-recovery-tests',
+    'photodeck-recovery-files-tests', 'photodeck-recovery-codec-tests',
 })
+TEST_SUITE_COUNT = 21
+TEST_CLASSES = {
+    'photodeck-tests': 'PhotoDeckTests',
+    'photodeck-feature-audit': 'FeatureAudit',
+    'photodeck-tones-tests': 'ToneTests',
+    'photodeck-selections-tests': 'SelectionTests',
+    'photodeck-blending-tests': 'BlendTests',
+    'photodeck-transforms-tests': 'TransformTests',
+    'photodeck-layer-ops-tests': 'LayerOpsTests',
+    'photodeck-layer-drag-tests': 'LayerDragTests',
+    'photodeck-effects-tests': 'EffectTests',
+    'photodeck-output-tests': 'OutputTests',
+    'photodeck-brushes-tests': 'BrushTests',
+    'photodeck-presets-tests': 'PresetTests',
+    'photodeck-save-safety-tests': 'SaveSafetyTests',
+    'photodeck-parser-safety-tests': 'ParserSafetyTests',
+    'photodeck-ui-resilience-tests': 'UiResilienceTests',
+    'photodeck-selection-workflow-tests': 'SelectionWorkflowTests',
+    'photodeck-positioning-tests': 'PositioningTests',
+    'photodeck-history-navigation-tests': 'HistoryNavigationTests',
+    'photodeck-recovery-tests': 'RecoveryTests',
+    'photodeck-recovery-files-tests': 'RecoveryFilesTests',
+    'photodeck-recovery-codec-tests': 'RecoveryCodecTests',
+}
+CTEST_NAMES = frozenset(
+    'photodeck-functional' if name == 'photodeck-tests' else
+    name.removesuffix('-tests') for name in TEST_EXECUTABLES)
+# Explicit source-declared Windows exceptions. Qt 6.8.3 bootUniqueId() is
+# implemented only on Linux and Apple targets (qtbase qsysinfo.cpp); the four
+# boot-identity rows therefore skip on Windows. Other conditional skips remain
+# blocked until exact platform CI evidence is reviewed.
+ALLOWED_SKIPS = {
+    ('windows-x64', 'photodeck-save-safety-tests'): {
+        'suite': 'SaveSafetyTests', 'tests': 17, 'cases': {
+            'symbolicAliasesAndRetargetingAreProtected': 'This test requires Unix symbolic links.',
+        },
+    },
+    ('windows-x64', 'photodeck-recovery-files-tests'): {
+        'suite': 'RecoveryFilesTests', 'tests': 70, 'cases': {
+            'acceptsCanonicalDirectoryAliases':
+                'Creating native directory symlinks may require Windows developer privileges.',
+            'rejectsSymlinksWithoutFollowingThem':
+                'QFile::link creates a Windows shortcut, not a native symlink.',
+            'preservesForeignOrIncompleteActualOwnership(foreign-machine-matching-boot)':
+                'This platform does not expose a boot identity.',
+            'preservesForeignOrIncompleteActualOwnership(matching-boot-changed-host-without-machine)':
+                'This platform does not expose a boot identity.',
+            'localBootIdentityStillRequiresDeadPid(dead-pid)':
+                'This platform does not expose a boot identity.',
+            'localBootIdentityStillRequiresDeadPid(live-pid)':
+                'This platform does not expose a boot identity.',
+        },
+    },
+}
 CI_JOBS = frozenset({f'{label} / Qt 6.8.3' for label in PLATFORMS} |
                     {'Linux / ASan + UBSan'})
 
@@ -146,7 +207,7 @@ def verify_source_version(root=Path('.')):
     match = re.search(r'\bVersion\s*=\s*"([^"]+)"', header)
     require(match is not None and match.group(1) == VERSION, 'Source version differs from authorized release')
     cmake = (root / 'CMakeLists.txt').read_text(encoding='utf-8')
-    require('project(PhotoDeck VERSION 0.9.1 LANGUAGES CXX)' in cmake,
+    require('project(PhotoDeck VERSION 0.10.0 LANGUAGES CXX)' in cmake,
             'CMake version differs from authorized release')
 
 
@@ -154,7 +215,7 @@ def validate_context(env, event, expected_sha):
     require(env.get('GITHUB_REPOSITORY') == REPOSITORY, 'Wrong repository')
     require(env.get('GITHUB_REF') == 'refs/heads/main', 'Only main may publish')
     require(env.get('GITHUB_SHA') == expected_sha, 'Workflow source is not the requested main SHA')
-    require(env.get('REQUESTED_TAG', TAG) == TAG, 'Only the authorized v0.9.1-ea.1 release is allowed')
+    require(env.get('REQUESTED_TAG', TAG) == TAG, 'Only the authorized v0.10.0-ea.1 release is allowed')
     name = env.get('GITHUB_EVENT_NAME')
     require(name in {'workflow_run', 'workflow_dispatch'}, 'Unsupported publication trigger')
     if name == 'workflow_run':
@@ -181,13 +242,15 @@ def verify_guard(api, expected_sha, env=None, event=None, git_fn=git, root=Path(
     main = api.api('/git/ref/heads/main')
     require(main.get('object', {}).get('type') == 'commit' and
             main['object']['sha'] == expected_sha, 'Current main moved from the reviewed merge')
+    require(type(PR_NUMBER) is int and PR_NUMBER > 0, 'The fixed reviewed release PR is not configured')
     pull = api.api(f'/pulls/{PR_NUMBER}')
     require(pull.get('number') == PR_NUMBER and pull.get('merged') is True and
             pull.get('merge_commit_sha') == expected_sha and
             pull.get('base', {}).get('ref') == 'main' and
             pull.get('base', {}).get('repo', {}).get('full_name') == REPOSITORY and
-            pull.get('head', {}).get('repo', {}).get('full_name') == REPOSITORY,
-            f'Only the exact merged own-repository corrective PR #{PR_NUMBER} may publish')
+            pull.get('head', {}).get('repo', {}).get('full_name') == REPOSITORY and
+            pull.get('head', {}).get('ref') == PR_HEAD_REF,
+            f'Only the exact merged own-repository release PR #{PR_NUMBER} may publish')
     head_sha = full_sha(pull.get('head', {}).get('sha'))
     require(git_fn('rev-parse', 'HEAD') == expected_sha, 'Checkout is not the reviewed merge')
     git_fn('merge-base', '--is-ancestor', BASE_SHA, head_sha)
@@ -275,7 +338,7 @@ def junit_count(node, key, default=None):
     return int(value)
 
 
-def verify_junit(path, expected_count=None, *, platform=None, executable=None):
+def verify_junit(path, expected_count=None, *, expected_names=None, platform=None, executable=None):
     require(path.is_file() and not path.is_symlink(), f'Missing test proof: {path.name}')
     tree = ET.parse(path)
     root = tree.getroot()
@@ -286,8 +349,17 @@ def verify_junit(path, expected_count=None, *, platform=None, executable=None):
             f'Failing JUnit proof: {path.name}')
     require(all(node.get('status') in {None, 'run'} for node in tree.iter('testcase')),
             f'Non-run JUnit testcase: {path.name}')
+    if executable is not None:
+        expected_class = TEST_CLASSES.get(executable)
+        require(expected_class is not None and platform in PLATFORMS and len(suites) == 1 and
+                suites[0].get('name') == expected_class and
+                all(case.get('classname') == expected_class for case in tree.iter('testcase')),
+                f'QtTest suite identity differs from the authorized executable: {path.name}')
     count = 0
     skipped_count = 0
+    skipped_cases = []
+    case_names = []
+    allowed = ALLOWED_SKIPS.get((platform, executable), {})
     for suite in suites:
         require(all(junit_count(suite, key, '0') == 0 for key in ('failures', 'errors', 'disabled')),
                 f'Failing JUnit summary: {path.name}')
@@ -298,24 +370,25 @@ def verify_junit(path, expected_count=None, *, platform=None, executable=None):
         identities = [(case.get('classname'), case.get('name')) for case in cases]
         require(all(name for _, name in identities) and len(identities) == len(set(identities)),
                 f'Missing or duplicate JUnit testcase identity: {path.name}')
+        case_names.extend(case.get('name') for case in cases)
         suite_skips = 0
         for case in cases:
             skips = case.findall('skipped')
             if not skips:
                 continue
-            # Confirmed in Qt 6.8.3 Windows output and explicitly declared by
-            # test_save_safety.cpp. This Unix-only symlink case is still run on
-            # Linux; no other platform, executable, suite, reason or skip is allowed.
-            require(platform == 'windows-x64' and executable == 'photodeck-save-safety-tests' and
-                    len(suites) == 1 and suite.get('name') == 'SaveSafetyTests' and tests == 17 and
-                    case.get('classname') == 'SaveSafetyTests' and
-                    case.get('name') == 'symbolicAliasesAndRetargetingAreProtected' and
-                    len(skips) == 1 and
-                    skips[0].attrib == {'message': 'This test requires Unix symbolic links.'} and
+            # A skip is accepted only for this platform, executable, exact Qt
+            # suite size/class, testcase identity, reason and serialized node.
+            reason = allowed.get('cases', {}).get(case.get('name'))
+            require(reason is not None and len(suites) == 1 and
+                    suite.get('name') == allowed.get('suite') and tests == allowed.get('tests') and
+                    case.get('classname') == allowed.get('suite') and len(skips) == 1 and
+                    skips[0].attrib == {'message': reason} and
                     not list(skips[0]) and not (skips[0].text or '').strip(),
                     f'Unexpected JUnit skip: {path.name}')
             suite_skips += 1
-        require(suite_skips <= 1 and junit_count(suite, 'skipped', '0') == suite_skips,
+            skipped_cases.append({'suite': suite.get('name'), 'testcase': case.get('name'),
+                                  'reason': reason})
+        require(junit_count(suite, 'skipped', '0') == suite_skips,
                 f'JUnit skipped count differs from allowed testcase proof: {path.name}')
         count += tests
         skipped_count += suite_skips
@@ -329,13 +402,30 @@ def verify_junit(path, expected_count=None, *, platform=None, executable=None):
                     f'JUnit aggregate {key} count differs from suite proofs: {path.name}')
     require(count > 0 and (expected_count is None or count == expected_count),
             f'Unexpected JUnit test count: {path.name}')
+    if expected_names is not None:
+        require(len(case_names) == len(expected_names) and set(case_names) == set(expected_names),
+                f'JUnit suite inventory differs from the authorized 21 suites: {path.name}')
+    result = {'testcases': count, 'executed': count - skipped_count,
+              'skipped': skipped_count, 'skipped_cases': skipped_cases}
+    if expected_names is not None:
+        result['suite_names'] = sorted(case_names)
+    return result
 
 
-def verify_artifacts(artifacts, output, expected_sha):
+def verify_artifacts(artifacts, output, expected_sha, *, ci_run_id, package_run_id):
     expected_dirs = {'PhotoDeck-' + label for label in PLATFORMS}
     require(artifacts.is_dir() and {p.name for p in artifacts.iterdir()} == expected_dirs,
             'All four and only the four expected platform artifacts are required')
+    full_sha(expected_sha)
+    require(re.fullmatch(r'[0-9]+', ci_run_id) and re.fullmatch(r'[0-9]+', package_run_id),
+            'Exact CI and packaging run IDs are required')
     assets = {}
+    proof = {'schema_version': 1,
+             'qt_testcase_counting': 'Includes initTestCase, cleanupTestCase and individual data rows; executed excludes skipped records.',
+             'repository': REPOSITORY, 'tag': TAG, 'version': VERSION,
+             'source_commit': expected_sha, 'reviewed_pull_request': PR_NUMBER,
+             'source_ci_run_id': ci_run_id, 'package_run_id': package_run_id,
+             'test_executables': sorted(TEST_EXECUTABLES), 'platforms': {}}
     for label, names in PLATFORMS.items():
         folder = artifacts / ('PhotoDeck-' + label)
         require(folder.is_dir() and not folder.is_symlink(), 'Unsafe artifact directory')
@@ -356,29 +446,48 @@ def verify_artifacts(artifacts, output, expected_sha):
         require((folder / 'package-version.txt').read_text(encoding='utf-8-sig').strip() ==
                 'PhotoDeck ' + VERSION, f'Packaged executable version mismatch: {label}')
         inventory = (folder / 'packaged-test-list.txt').read_text(encoding='utf-8-sig').splitlines()
-        require(len(inventory) == 14 and set(inventory) == TEST_EXECUTABLES and
-                (folder / 'packaged-test-count.txt').read_text(encoding='utf-8-sig').strip() == '14',
-                f'Expected complete 14-suite inventory: {label}')
-        verify_junit(folder / 'build-release/tests.xml', 14)
-        # macOS uses native CTest, deployed-app startup and codesign verification.
+        require(len(inventory) == TEST_SUITE_COUNT and set(inventory) == TEST_EXECUTABLES and
+                (folder / 'packaged-test-count.txt').read_text(encoding='utf-8-sig').strip() == str(TEST_SUITE_COUNT),
+                f'Expected complete 21-suite inventory: {label}')
+        native = verify_junit(folder / 'build-release/tests.xml', TEST_SUITE_COUNT,
+                              expected_names=CTEST_NAMES)
+        platform_proof = {'native_ctest': native, 'native_qt': {}, 'bundled_runtime': {}}
+        proof['platforms'][label] = platform_proof
+        native_proofs = {p.name for p in (folder / 'build-release').glob('*-native.xml')}
+        require(native_proofs == {name + '-native.xml' for name in TEST_EXECUTABLES},
+                f'Incomplete native QtTest proofs: {label}')
+        for name in TEST_EXECUTABLES:
+            platform_proof['native_qt'][name] = verify_junit(
+                folder / 'build-release' / (name + '-native.xml'), platform=label, executable=name)
+        # macOS uses native CTest/QtTest, deployed-app startup and codesign verification.
         # Linux/Windows additionally rerun every suite in the bundled Qt runtime.
         if label in {'linux-x86_64', 'windows-x64'}:
             proofs = {p.name for p in folder.glob('*-packaged.xml')}
             require(proofs == {name + '-packaged.xml' for name in TEST_EXECUTABLES},
                     f'Incomplete packaged-runtime test proofs: {label}')
             for name in TEST_EXECUTABLES:
-                verify_junit(folder / (name + '-packaged.xml'), platform=label, executable=name)
+                platform_proof['bundled_runtime'][name] = verify_junit(
+                    folder / (name + '-packaged.xml'), platform=label, executable=name)
         startup = 'linux' if label == 'linux-x86_64' else 'windows' if label == 'windows-x64' else 'macos'
         require(inspect_asset(folder / (startup + '-startup.png')).size > 8,
                 f'Missing deployed-app startup proof: {label}')
         if label == 'linux-x86_64':
-            inspect_asset(folder / 'appimage-startup.png')
+            require(inspect_asset(folder / 'appimage-startup.png').size > 8,
+                    'Missing AppImage deployed-app startup proof')
+        platform_proof['deployed_app_startup'] = 'passed'
+        if label == 'linux-x86_64':
+            platform_proof['appimage_startup'] = 'passed'
         # Git's Windows checkout may use CRLF. Only that byte-level newline
         # conversion is allowed; BOMs, bare CRs and all content stay significant.
         require((folder / NOTES_PATH).read_bytes().replace(b'\r\n', b'\n') ==
                 NOTES_PATH.read_bytes().replace(b'\r\n', b'\n'),
                 f'Package notes differ from the tested source: {label}')
     output.mkdir(parents=True, exist_ok=True)
+    proof['packages'] = {name: {'size': asset.size, 'sha256': asset.sha256}
+                         for name, asset in sorted(assets.items())}
+    proof_path = output / 'RELEASE-PROOF.json'
+    proof_path.write_text(json.dumps(proof, indent=2, sort_keys=True) + '\n', encoding='utf-8')
+    assets[proof_path.name] = inspect_asset(proof_path)
     combined = output / 'SHA256SUMS.txt'
     combined.write_text(''.join(f'{assets[name].sha256}  {name}\n' for name in sorted(assets)), encoding='utf-8')
     assets[combined.name] = inspect_asset(combined)
@@ -420,14 +529,20 @@ def release_body(notes, expected_sha, ci_run_id, package_run_id, assets):
     return notes.rstrip() + (
         '\n\n## Verified publication\n\n'
         f'- Source: [{expected_sha}](https://github.com/{REPOSITORY}/commit/{expected_sha})\n'
-        f'- Successful source CI: https://github.com/{REPOSITORY}/actions/runs/{ci_run_id}\n'
+        f'- Reviewed release PR: https://github.com/{REPOSITORY}/pull/{PR_NUMBER}\n'
+        f'- Successful source CI (four native targets and Linux ASan/UBSan): https://github.com/{REPOSITORY}/actions/runs/{ci_run_id}\n'
         f'- Four-platform packaging: https://github.com/{REPOSITORY}/actions/runs/{package_run_id}\n'
+        '- All four packaging targets passed the exact 21-suite native CTest inventory, supplied all 21 granular QtTest reports, and passed deployed-app startup checks.\n'
+        '- Linux and Windows additionally reran all 21 suites in the bundled Qt runtime.\n'
+        '- RELEASE-PROOF.json records observed testcase totals and every explicitly allowed platform-specific skip; SHA256SUMS.txt covers all five packages and that proof.\n'
         '- Windows packages are unsigned. macOS packages are ad-hoc signed and are not notarized.\n'
         f'\n<!-- photodeck-one-release:{expected_sha}:{fingerprint} -->\n')
 
 
 def publish(api, expected_sha, assets, body, reguard):
     """No deletion or overwrite; failed uploads leave an unpublished draft."""
+    require(set(assets) == RELEASE_ASSET_NAMES,
+            'Only the complete five packages, exact release proof and checksums may publish')
     existing_tag = tag_commit(api)
     require(existing_tag in {None, expected_sha}, 'Existing tag points elsewhere; never moved')
     releases = [release for release in api.pages('/releases') if release.get('tag_name') == TAG]
@@ -497,9 +612,11 @@ def main():
                 target.write(f'source_sha={expected_sha}\nci_run_id={ci_run_id}\n')
         print(f'Authorized reviewed PR #{PR_NUMBER} merge {expected_sha}; CI run {ci_run_id}')
         return
-    assets = verify_artifacts(args.artifacts, Path('release-upload'), expected_sha)
+    package_run_id = os.environ.get('GITHUB_RUN_ID', '')
+    assets = verify_artifacts(args.artifacts, Path('release-upload'), expected_sha,
+                              ci_run_id=ci_run_id, package_run_id=package_run_id)
     body = release_body(NOTES_PATH.read_text(encoding='utf-8'), expected_sha, ci_run_id,
-                        os.environ.get('GITHUB_RUN_ID', ''), assets)
+                        package_run_id, assets)
     publish(api, expected_sha, assets, body, lambda: verify_guard(api, expected_sha))
 
 

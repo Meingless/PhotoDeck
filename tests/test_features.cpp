@@ -670,15 +670,12 @@ class FeatureAudit : public QObject {
         QCOMPARE(d->state.active, 2);
         command(w, "deleteLayer")->trigger();
         QCOMPARE(d->state.layers.size(), 2);
-        QVERIFY(driveModal([&] { command(w, "rename")->trigger(); },
-                           [](QDialog *dialog) {
-                               auto *input = qobject_cast<QInputDialog *>(dialog);
-                               if (!input)
-                                   return false;
-                               input->setTextValue("Renamed");
-                               input->accept();
-                               return true;
-                           }));
+        command(w, "rename")->trigger();
+        auto *nameEditor = w.findChild<QLineEdit *>("layerNameEditor");
+        QVERIFY(nameEditor);
+        nameEditor->setText("Renamed");
+        QTest::keyClick(nameEditor, Qt::Key_Return);
+        QTRY_COMPARE(d->state.layers[1].name, QString("Renamed"));
         QCOMPARE(d->state.layers[1].name, QString("Renamed"));
         command(w, "selectAll")->trigger();
         QCOMPARE(d->selection, QRect(0, 0, 80, 60));

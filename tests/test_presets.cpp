@@ -7,9 +7,12 @@
 #include <QInputDialog>
 #include <QJsonArray>
 #include <QJsonDocument>
+#include <QLayout>
 #include <QMessageBox>
 #include <QMouseEvent>
 #include <QPushButton>
+#include <QScrollArea>
+#include <QScrollBar>
 #include <QStandardPaths>
 #include <QTemporaryDir>
 #include <QUuid>
@@ -495,6 +498,370 @@ class PresetTests : public QObject {
             QVERIFY((qMax(a, b) + .05) / (qMin(a, b) + .05) >= 4.5);
             QVERIFY(!settings.styleSheet().contains('@'));
         }
+    }
+    void inspectorsFitWideNativeText_data() {
+        QTest::addColumn<QString>("preset");
+        for (const auto &entry : uiPresets())
+            QTest::newRow(qPrintable(entry.id)) << entry.id;
+    }
+    void inspectorsFitWideNativeText() {
+        QFETCH(QString, preset);
+        MainWindow w(false, false);
+        auto *d = new Document;
+        QVERIFY(d->create({24, 24}, true));
+        d->markSaved();
+        w.addDocument(d);
+        w.applyUiPreset(preset, false);
+        w.resize(900, 620);
+        w.show();
+        QTest::qWait(30);
+        auto *color = w.findChild<QScrollArea *>("colorPanelScroll");
+        QScrollArea *layer = nullptr;
+        for (auto *scroll : w.findChildren<QScrollArea *>())
+            if (scroll->widget() && scroll->widget()->objectName() == "layerPanel")
+                layer = scroll;
+        QVERIFY(color && layer);
+        // Widen action text using actual native fonts. Other controls retain
+        // their real platform metrics; no installed fonts need to change.
+        for (auto *scroll : {color, layer})
+            for (auto *button : scroll->widget()->findChildren<QAbstractButton *>()) {
+                QFont font = button->font();
+                font.setStretch(qMax(100, font.stretch()) * 2);
+                button->setFont(font);
+            }
+        QTest::qWait(30);
+        // Font fallback/stretch resolution is not proportional on every
+        // platform. Keep each synthetic button individually feasible using its
+        // actual polished hint, while retaining at least its native font width.
+        // 200 px fits individually in the 212 px content width of Compact.
+        constexpr int maximumSyntheticButtonWidth = 200;
+        for (auto *scroll : {color, layer}) {
+            if (!scroll->isVisible())
+                continue;
+            for (auto *button : scroll->widget()->findChildren<QAbstractButton *>())
+                for (int pass = 0; pass < 8 &&
+                     button->minimumSizeHint().width() > maximumSyntheticButtonWidth; ++pass) {
+                    QFont font = button->font();
+                    const int stretch = qMax(100, font.stretch());
+                    if (stretch == 100)
+                        break;
+                    font.setStretch(qMax(100, qMin(stretch - 1,
+                        qFloor(stretch * double(maximumSyntheticButtonWidth) /
+                               button->minimumSizeHint().width()))));
+                    button->setFont(font);
+                    button->ensurePolished();
+                    QCoreApplication::processEvents();
+                }
+        }
+        for (auto *scroll : {color, layer}) {
+            if (!scroll->isVisible())
+                continue;
+            QTRY_VERIFY2(scroll->widget()->minimumSizeHint().width() <= scroll->viewport()->width(),
+                         qPrintable(QString("%1 %2 minimum=%3 viewport=%4")
+                                        .arg(preset, scroll->widget()->objectName())
+                                        .arg(scroll->widget()->minimumSizeHint().width())
+                                        .arg(scroll->viewport()->width())));
+            // Layout constraints and QScrollArea ranges settle on queued
+            // LayoutRequest events after the final font calibration.
+            QTRY_COMPARE(scroll->horizontalScrollBar()->maximum(), 0);
+        }
+        for (const auto *id : {"quickPosition", "quickAlign", "quickTransform", "quickTones",
+                               "layerMaskButton"}) {
+            auto *button = w.findChild<QWidget *>(id);
+            QVERIFY(button);
+            layer->ensureWidgetVisible(button, 0, 0);
+            QTRY_VERIFY(button->visibleRegion().contains(button->rect()));
+            const auto dimensions = [&] {
+                const QSize hint = button->minimumSizeHint();
+                return QString("%1 %2 actual=%3x%4 minimumHint=%5x%6 row=%7x%8 viewport=%9x%10")
+                    .arg(preset, id).arg(button->width()).arg(button->height())
+                    .arg(hint.width()).arg(hint.height())
+                    .arg(button->parentWidget()->width()).arg(button->parentWidget()->height())
+                    .arg(layer->viewport()->width()).arg(layer->viewport()->height());
+            };
+            QVERIFY2(button->width() >= button->minimumSizeHint().width(),
+                     qPrintable(dimensions()));
+            QVERIFY2(button->height() >= button->minimumSizeHint().height(),
+                     qPrintable(dimensions()));
+        }
+    }
+    void actionRowsWrapBeforeSqueezingAButton() {
+        MainWindow w(false, false);
+        auto *d = new Document;
+        QVERIFY(d->create({24, 24}, true));
+        d->markSaved();
+        w.addDocument(d);
+        w.applyUiPreset("touch", false);
+        w.resize(900, 620);
+        w.show();
+        QTest::qWait(30);
+        for (const auto &pair : {qMakePair("quickPosition", "quickAlign"),
+                                 qMakePair("quickTransform", "quickTones")}) {
+            auto *first = w.findChild<QWidget *>(pair.first);
+            auto *second = w.findChild<QWidget *>(pair.second);
+            QVERIFY(first && second);
+            auto *row = second->parentWidget();
+            // One pixel short of fitting both honest hints and the 6 px gap.
+            // Both controls fit individually, so this must choose two rows.
+            row->setFixedWidth(first->sizeHint().width() + second->minimumSizeHint().width() + 5);
+            QTRY_VERIFY(first->mapTo(row, QPoint()).y() + first->height() <= second->y());
+            for (auto *button : {first, second}) {
+                QVERIFY2(button->width() >= button->minimumSizeHint().width(),
+                         qPrintable(button->objectName()));
+                const QRect bounds(button->mapTo(row, QPoint()), button->size());
+                QVERIFY(row->rect().contains(bounds));
+            }
+        }
+    }
+    void colorInspectorKeepsControlsReachable_data() {
+        QTest::addColumn<QString>("preset");
+        QTest::addColumn<int>("fontSize");
+        QTest::addColumn<QSize>("windowSize");
+        for (const auto &preset : uiPresets())
+            for (int fontSize : {preset.fontSize, 20})
+                for (QSize size : {QSize(900, 620), QSize(1280, 800)})
+                    QTest::newRow(qPrintable(QString("%1-%2px-%3x%4")
+                                                .arg(preset.id).arg(fontSize)
+                                                .arg(size.width()).arg(size.height())))
+                        << preset.id << fontSize << size;
+    }
+    void colorInspectorKeepsControlsReachable() {
+        QFETCH(QString, preset);
+        QFETCH(int, fontSize);
+        QFETCH(QSize, windowSize);
+        MainWindow w(false, false);
+        auto *d = new Document;
+        QVERIFY(d->create({24, 24}));
+        d->beginEdit();
+        d->state.layers[0].pixels.fill(QColor(80, 120, 160));
+        d->commit("Test color");
+        d->markSaved();
+        w.addDocument(d);
+        const QImage pixels = d->composite();
+        const auto revision = d->revision();
+        const auto history = d->historyLabels();
+        UiSettings settings = UiSettings::forPreset(preset);
+        settings.fontSize = fontSize;
+        w.applyUiSettings(settings, true, false);
+        w.resize(windowSize);
+        w.show();
+        w.activateWindow();
+        // Exercise crowded dock stacks even in presets which initially hide Color.
+        for (const auto &name : {"ui.panel.color", "ui.panel.layers"}) {
+            auto *action = w.findChild<QAction *>(name);
+            QVERIFY(action);
+            action->setChecked(true);
+        }
+        if (preset == "paper")
+            w.findChild<QAction *>("ui.panel.history")->setChecked(true);
+        QTest::qWait(30);
+        QCOMPARE(w.size(), windowSize);
+        auto *dock = w.findChild<QDockWidget *>("colorDock");
+        auto *scroll = w.findChild<QScrollArea *>("colorPanelScroll");
+        QVERIFY(dock && scroll);
+        QCOMPARE(dock->widget(), scroll);
+        QVERIFY(scroll->isVisible());
+        QVERIFY(dock->rect().contains(QRect(scroll->mapTo(dock, QPoint()), scroll->size())));
+        for (auto *other : w.findChildren<QDockWidget *>())
+            if (other != dock && other->isVisible() && !other->isFloating())
+                QVERIFY2(!dock->geometry().intersects(other->geometry()),
+                         qPrintable("Color overlaps " + other->objectName()));
+        auto *brightness = w.findChild<QSlider *>("brightness");
+        auto *contrast = w.findChild<QSlider *>("contrast");
+        auto *saturation = w.findChild<QSlider *>("saturation");
+        auto *reset = w.findChild<QPushButton *>("resetColorAdjustments");
+        auto *advanced = w.findChild<QPushButton *>("advancedTones");
+        QVERIFY(brightness && contrast && saturation && reset && advanced);
+        const auto reachable = [&](QWidget *control) {
+            const QPoint center = control->mapTo(scroll->viewport(), control->rect().center());
+            return control->isVisible() && scroll->viewport()->rect().contains(center) &&
+                   w.childAt(control->mapTo(&w, control->rect().center())) == control;
+        };
+        const auto focusWithTabs = [&](QWidget *control) {
+            w.activateWindow();
+            if (!QTest::qWaitForWindowActive(&w))
+                return false;
+            w.currentCanvas()->setFocus();
+            for (int count = 0; count < 100 && !control->hasFocus(); ++count) {
+                auto *focused = QApplication::focusWidget();
+                if (!focused)
+                    return false;
+                QTest::keyClick(focused, Qt::Key_Tab);
+            }
+            return control->hasFocus();
+        };
+        // Real Tab traversal must reveal lower controls without explicit ensureWidgetVisible.
+        QVERIFY(focusWithTabs(brightness));
+        QTRY_VERIFY(reachable(brightness));
+        for (auto *control : QList<QWidget *>{contrast, saturation, reset, advanced}) {
+            QTest::keyClick(QApplication::focusWidget(), Qt::Key_Tab);
+            QTRY_COMPARE(QApplication::focusWidget(), control);
+            QTRY_VERIFY(reachable(control));
+            QVERIFY(control->visibleRegion().contains(control->rect().center()));
+        }
+        // Scrolling and relayout are presentation-only operations.
+        scroll->verticalScrollBar()->setValue(0);
+        if (scroll->verticalScrollBar()->maximum() > 0) {
+            auto *bar = scroll->verticalScrollBar();
+            QTest::mouseClick(bar, Qt::LeftButton, {}, QPoint(bar->width() / 2, bar->height() - 3));
+            QVERIFY(bar->value() > 0);
+            QTest::keyClick(bar, Qt::Key_End);
+            QCOMPARE(bar->value(), bar->maximum());
+        }
+        scroll->horizontalScrollBar()->setValue(scroll->horizontalScrollBar()->maximum());
+        QCOMPARE(d->composite(), pixels);
+        QCOMPARE(d->revision(), revision);
+        QCOMPARE(d->historyLabels(), history);
+        QVERIFY(!d->dirty);
+        // Keyboard adjustment, reset and the advanced dialog still act on this document.
+        QVERIFY(focusWithTabs(saturation));
+        QTRY_VERIFY(reachable(saturation));
+        QTest::keyClick(saturation, Qt::Key_PageUp);
+        QCOMPARE(d->state.layers[0].saturation, saturation->pageStep());
+        QVERIFY(d->composite() != pixels);
+        QTest::keyClick(saturation, Qt::Key_Tab);
+        QTRY_VERIFY(reset->hasFocus());
+        QTRY_VERIFY(reachable(reset));
+        QTest::keyClick(reset, Qt::Key_Space);
+        QCOMPARE(d->state.layers[0].saturation, 0);
+        QCOMPARE(d->composite(), pixels);
+        QTest::keyClick(reset, Qt::Key_Tab);
+        QTRY_VERIFY(advanced->hasFocus());
+        QTRY_VERIFY(reachable(advanced));
+        QAction open;
+        connect(&open, &QAction::triggered, [&] { QTest::keyClick(advanced, Qt::Key_Space); });
+        const auto beforeDialog = d->revision();
+        QVERIFY(modal(&open, [&](QDialog *dialog) {
+            auto *black = dialog->findChild<QSpinBox *>("inputBlack");
+            QVERIFY(black);
+            black->setValue(12);
+            click(dialog, QDialogButtonBox::Cancel);
+        }));
+        QCOMPARE(d->revision(), beforeDialog);
+        QCOMPARE(d->composite(), pixels);
+        QVERIFY(modal(&open, [&](QDialog *dialog) {
+            auto *black = dialog->findChild<QSpinBox *>("inputBlack");
+            QVERIFY(black);
+            black->setValue(12);
+            click(dialog, QDialogButtonBox::Ok);
+        }));
+        QCOMPARE(d->state.layers[0].tones.inputBlack, 12);
+        QVERIFY(focusWithTabs(reset));
+        QTRY_VERIFY(reachable(reset));
+        QTest::keyClick(reset, Qt::Key_Space);
+        QVERIFY(d->state.layers[0].tones == ToneSettings{});
+        QCOMPARE(d->composite(), pixels);
+        d->markSaved();
+        w.close();
+    }
+    void colorInspectorAllocatesWrappedPreferredHeight() {
+        MainWindow w(false, false);
+        auto *d = new Document;
+        QVERIFY(d->create({24, 24}, true));
+        d->markSaved();
+        w.addDocument(d);
+        auto *panel = w.findChild<QWidget *>("colorPanel");
+        QVERIFY(panel);
+        auto *description = new QLabel(
+            "A wrapping inspector description keeps every color adjustment visible "
+            "within the available panel width. The preferred height must include "
+            "every line of this description.");
+        description->setWordWrap(true);
+        panel->layout()->addWidget(description);
+        auto settings = UiSettings::forPreset("paper");
+        w.applyUiSettings(settings, true, false);
+        w.resize(1280, 1000);
+        w.show();
+        auto *scroll = w.findChild<QScrollArea *>("colorPanelScroll");
+        QVERIFY(scroll);
+        QTest::qWait(30);
+        // An individually fitting, native-font description exercises real
+        // height-for-width wrapping without platform-specific font proportions.
+        QVERIFY(description->minimumSizeHint().width() <
+                scroll->maximumViewportSize().width());
+        QVERIFY(scroll->widget()->minimumSizeHint().width() <=
+                scroll->maximumViewportSize().width());
+        QVERIFY(scroll->widget()->heightForWidth(scroll->maximumViewportSize().width()) >
+                scroll->widget()->minimumSizeHint().height());
+        const auto geometry = [&] {
+            return QString("dock=%1x%2 viewport=%3x%4 maximumViewport=%5x%6 "
+                           "content=%7x%8 minimumHint=%9x%10 hfw(current)=%11 "
+                           "hfw(maximum)=%12 verticalRange=%13 horizontalRange=%14")
+                .arg(w.findChild<QDockWidget *>("colorDock")->width())
+                .arg(w.findChild<QDockWidget *>("colorDock")->height())
+                .arg(scroll->viewport()->width()).arg(scroll->viewport()->height())
+                .arg(scroll->maximumViewportSize().width())
+                .arg(scroll->maximumViewportSize().height())
+                .arg(panel->width()).arg(panel->height())
+                .arg(panel->minimumSizeHint().width()).arg(panel->minimumSizeHint().height())
+                .arg(panel->heightForWidth(scroll->viewport()->width()))
+                .arg(panel->heightForWidth(scroll->maximumViewportSize().width()))
+                .arg(scroll->verticalScrollBar()->maximum())
+                .arg(scroll->horizontalScrollBar()->maximum());
+        };
+        QTRY_VERIFY2(scroll->verticalScrollBar()->maximum() == 0, qPrintable(geometry()));
+        QTRY_COMPARE(scroll->horizontalScrollBar()->maximum(), 0);
+        auto *advanced = w.findChild<QPushButton *>("advancedTones");
+        QVERIFY(advanced->visibleRegion().contains(advanced->rect()));
+        QVERIFY(!d->dirty);
+    }
+    void colorInspectorPreservesRoomyAndSavedLayouts() {
+        {
+            MainWindow transient(false, false);
+            transient.applyUiPreset("paper", false);
+            transient.applyUiPreset("modular", false);
+        }
+        QCoreApplication::processEvents();
+        MainWindow w(false, false);
+        auto *d = new Document;
+        QVERIFY(d->create({24, 24}, true));
+        d->markSaved();
+        w.addDocument(d);
+        const auto revision = d->revision();
+        w.applyUiPreset("paper", false);
+        w.resize(1280, 800);
+        w.show();
+        w.activateWindow();
+        QTest::qWait(30);
+        auto *dock = w.findChild<QDockWidget *>("colorDock");
+        auto *scroll = w.findChild<QScrollArea *>("colorPanelScroll");
+        auto *advanced = w.findChild<QPushButton *>("advancedTones");
+        QVERIFY(dock && scroll && advanced);
+        QTRY_COMPARE(scroll->verticalScrollBar()->maximum(), 0);
+        QCOMPARE(scroll->horizontalScrollBar()->maximum(), 0);
+        QVERIFY(advanced->visibleRegion().contains(advanced->rect()));
+        dock->setFloating(true);
+        dock->resize(292, 180);
+        QTest::qWait(30);
+        QVERIFY(dock->isFloating());
+        QVERIFY(scroll->verticalScrollBar()->maximum() > 0);
+        const QSize floatingSize = dock->size();
+        UiSettings saved = w.uiSettings();
+        saved.dockState = w.saveState(2);
+        QVERIFY(!saved.dockState.isEmpty());
+        auto largerFont = saved;
+        largerFont.fontSize = 20;
+        w.applyUiSettings(largerFont, false, false);
+        QTest::qWait(30);
+        QCOMPARE(dock->size(), floatingSize);
+        w.applyUiPreset("graphite", false);
+        QVERIFY(!dock->isFloating());
+        w.applyUiSettings(saved, true, false);
+        QTest::qWait(30);
+        QVERIFY(dock->isFloating());
+        QCOMPARE(dock->size(), floatingSize);
+        QCOMPARE(dock->widget(), scroll);
+        QCOMPARE(scroll->widget()->objectName(), QString("colorPanel"));
+        dock->setFloating(false);
+        auto *panelAction = w.findChild<QAction *>("ui.panel.color");
+        QVERIFY(panelAction);
+        panelAction->setChecked(false);
+        QVERIFY(!dock->isVisible());
+        panelAction->setChecked(true);
+        QTRY_VERIFY(scroll->isVisible());
+        QCOMPARE(d->revision(), revision);
+        QVERIFY(!d->dirty);
+        w.close();
     }
     void librarySurvivesRestart() {
         const QString oldName = QCoreApplication::applicationName(),

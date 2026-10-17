@@ -19,6 +19,21 @@ SHA = 'a' * 40
 HEAD = 'b' * 40
 TREE = 'c' * 40
 
+RECOVERY_WINDOWS_SKIPS = {
+    'acceptsCanonicalDirectoryAliases':
+        'Creating native directory symlinks may require Windows developer privileges.',
+    'rejectsSymlinksWithoutFollowingThem':
+        'QFile::link creates a Windows shortcut, not a native symlink.',
+    'preservesForeignOrIncompleteActualOwnership(foreign-machine-matching-boot)':
+        'This platform does not expose a boot identity.',
+    'preservesForeignOrIncompleteActualOwnership(matching-boot-changed-host-without-machine)':
+        'This platform does not expose a boot identity.',
+    'localBootIdentityStillRequiresDeadPid(dead-pid)':
+        'This platform does not expose a boot identity.',
+    'localBootIdentityStillRequiresDeadPid(live-pid)':
+        'This platform does not expose a boot identity.',
+}
+
 
 def environment():
     return {'GITHUB_REPOSITORY': publisher.REPOSITORY, 'GITHUB_REF': 'refs/heads/main',
@@ -36,9 +51,19 @@ def ci_run():
             'conclusion': 'success', 'head_repository': {'full_name': publisher.REPOSITORY}}
 
 
-def junit_xml(count):
+def junit_xml(count, names=None):
     return (f'<testsuite tests="{count}" failures="0" errors="0" skipped="0">' +
-            ''.join(f'<testcase name="test{index}"/>' for index in range(count)) + '</testsuite>')
+            ''.join(f'<testcase name="{name}"/>' for name in
+                    (names if names is not None else [f'test{index}' for index in range(count)])) + '</testsuite>')
+
+
+def qt_xml(executable, count=3):
+    classname = publisher.TEST_CLASSES[executable]
+    root = publisher.ET.Element('testsuite', name=classname, tests=str(count),
+                                failures='0', errors='0', skipped='0')
+    for index in range(count):
+        publisher.ET.SubElement(root, 'testcase', name=f'test{index}', classname=classname)
+    return publisher.ET.tostring(root, encoding='unicode')
 
 
 def save_safety_xml(skipped=True):
@@ -65,15 +90,28 @@ def save_safety_xml(skipped=True):
     return publisher.ET.tostring(root, encoding='unicode')
 
 
+def recovery_files_xml(skipped=True):
+    names = list(RECOVERY_WINDOWS_SKIPS)
+    names += [f'otherRecoveryCase{index}' for index in range(70 - len(names))]
+    root = publisher.ET.Element('testsuite', name='RecoveryFilesTests', tests='70',
+                                failures='0', errors='0', skipped=str(len(RECOVERY_WINDOWS_SKIPS) if skipped else 0))
+    for name in names:
+        case = publisher.ET.SubElement(root, 'testcase', name=name, classname='RecoveryFilesTests')
+        if skipped and name in RECOVERY_WINDOWS_SKIPS:
+            publisher.ET.SubElement(case, 'skipped', message=RECOVERY_WINDOWS_SKIPS[name])
+    return publisher.ET.tostring(root, encoding='unicode')
+
+
 class FakeAPI:
     def __init__(self):
         self.main = SHA
-        self.pull = {'number': 2, 'merged': True, 'merge_commit_sha': SHA,
+        self.pull = {'number': publisher.PR_NUMBER, 'merged': True, 'merge_commit_sha': SHA,
                      'base': {'ref': 'main', 'repo': {'full_name': publisher.REPOSITORY}},
-                     'head': {'sha': HEAD, 'repo': {'full_name': publisher.REPOSITORY}}}
+                     'head': {'sha': HEAD, 'ref': publisher.PR_HEAD_REF,
+                              'repo': {'full_name': publisher.REPOSITORY}}}
         self.runs = [ci_run()]
         self.pr_runs = [dict(ci_run(), id=41, event='pull_request', head_sha=HEAD,
-                             pull_requests=[{'number': 2, 'head': {'sha': HEAD}}])]
+                             pull_requests=[{'number': publisher.PR_NUMBER, 'head': {'sha': HEAD}}])]
         self.jobs = [{'name': name, 'status': 'completed', 'conclusion': 'success'}
                      for name in publisher.CI_JOBS]
         self.tag = None
@@ -87,7 +125,7 @@ class FakeAPI:
             self.writes.append((method, path, copy.deepcopy(data)))
         if path == '/git/ref/heads/main':
             return {'object': {'type': 'commit', 'sha': self.main}}
-        if path == '/pulls/2':
+        if path == f'/pulls/{publisher.PR_NUMBER}':
             return copy.deepcopy(self.pull)
         if path == '/git/ref/tags/' + publisher.TAG:
             return None if self.tag is None else {'object': {'type': 'commit', 'sha': self.tag}}
@@ -140,16 +178,24 @@ class GuardTests(unittest.TestCase):
     def test_valid_exact_merge(self):
         self.assertEqual(self.check(), '42')
 
-    def test_publisher_is_pinned_to_corrective_pr_and_original_reviewed_merge(self):
-        self.assertEqual(publisher.PR_NUMBER, 2)
-        self.assertEqual(publisher.BASE_SHA, 'd2d1b1335d9333d1ad9480e4ad7d955c78eac717')
+    def test_publisher_is_pinned_to_release_pr_and_reviewed_main(self):
+        self.assertEqual(publisher.PR_NUMBER, 3)
+        self.assertEqual(publisher.PR_HEAD_REF, 'release/0.10.0-ea.1')
+        self.assertEqual(publisher.TAG, 'v0.10.0-ea.1')
+        self.assertEqual(set(publisher.TEST_CLASSES), publisher.TEST_EXECUTABLES)
+        self.assertEqual(len(publisher.TEST_EXECUTABLES), 21)
+        self.assertEqual(publisher.BASE_SHA, 'e209345d91690ba091e535b13f2f6b5a4cb7aa4f')
         calls = []
         def recording_git(*args):
             calls.append(args)
             return fake_git(*args)
         self.check(git_fn=recording_git)
-        for target in (HEAD, SHA):
-            self.assertIn(('merge-base', '--is-ancestor', publisher.BASE_SHA, target), calls)
+        ancestry = [args for args in calls if args[:2] == ('merge-base', '--is-ancestor')]
+        self.assertEqual(ancestry, [
+            ('merge-base', '--is-ancestor', publisher.BASE_SHA, HEAD),
+            ('merge-base', '--is-ancestor', publisher.BASE_SHA, SHA),
+            ('merge-base', '--is-ancestor', HEAD, SHA),
+        ])
 
     def test_full_sha_only(self):
         for value in ('a' * 7, 'A' * 40, 'main', None):
@@ -185,7 +231,7 @@ class GuardTests(unittest.TestCase):
                 self.check(env=env, payload=bad)
 
     def test_reject_moved_main_and_wrong_pr_merge(self):
-        for target in ('main', 'merge', 'unmerged', 'headrepo'):
+        for target in ('main', 'merge', 'unmerged', 'headrepo', 'headbranch'):
             api = FakeAPI()
             if target == 'main':
                 api.main = HEAD
@@ -193,8 +239,10 @@ class GuardTests(unittest.TestCase):
                 api.pull['merge_commit_sha'] = HEAD
             elif target == 'unmerged':
                 api.pull['merged'] = False
-            else:
+            elif target == 'headrepo':
                 api.pull['head']['repo']['full_name'] = 'attacker/PhotoDeck'
+            else:
+                api.pull['head']['ref'] = 'unreviewed-branch'
             with self.subTest(target=target), self.assertRaises(publisher.GuardError):
                 self.check(api=api)
             self.assertFalse(api.writes)
@@ -248,7 +296,7 @@ class GuardTests(unittest.TestCase):
             root = Path(temp)
             (root / 'src').mkdir()
             (root / 'src/version.h').write_text('inline const char *Version = "0.9.0-ea.1";')
-            (root / 'CMakeLists.txt').write_text('project(PhotoDeck VERSION 0.9.1 LANGUAGES CXX)')
+            (root / 'CMakeLists.txt').write_text('project(PhotoDeck VERSION 0.10.0 LANGUAGES CXX)')
             with self.assertRaises(publisher.GuardError):
                 publisher.verify_source_version(root)
 
@@ -282,12 +330,14 @@ class ArtifactTests(unittest.TestCase):
                 'version': publisher.VERSION, 'source_commit': SHA, 'platform': platform}))
             (folder / 'package-version.txt').write_text('PhotoDeck ' + publisher.VERSION + '\n')
             (folder / 'packaged-test-list.txt').write_text('\n'.join(sorted(publisher.TEST_EXECUTABLES)) + '\n')
-            (folder / 'packaged-test-count.txt').write_text('14\n')
+            (folder / 'packaged-test-count.txt').write_text('21\n')
             (folder / 'build-release').mkdir()
-            (folder / 'build-release/tests.xml').write_text(junit_xml(14))
+            (folder / 'build-release/tests.xml').write_text(junit_xml(21, sorted(publisher.CTEST_NAMES)))
+            for name in publisher.TEST_EXECUTABLES:
+                (folder / 'build-release' / (name + '-native.xml')).write_text(qt_xml(name))
             if label in {'linux-x86_64', 'windows-x64'}:
                 for name in publisher.TEST_EXECUTABLES:
-                    (folder / (name + '-packaged.xml')).write_text(junit_xml(3))
+                    (folder / (name + '-packaged.xml')).write_text(qt_xml(name))
             startup = 'linux' if label == 'linux-x86_64' else 'windows' if label == 'windows-x64' else 'macos'
             (folder / (startup + '-startup.png')).write_bytes(b'fake-startup-image')
             if label == 'linux-x86_64':
@@ -300,12 +350,86 @@ class ArtifactTests(unittest.TestCase):
         self.temp.cleanup()
 
     def verify(self):
-        return publisher.verify_artifacts(self.artifacts, self.output, SHA)
+        return publisher.verify_artifacts(self.artifacts, self.output, SHA,
+                                          ci_run_id='42', package_run_id='99')
 
-    def test_complete_five_packages_and_combined_checksum(self):
+    def test_complete_five_packages_release_proof_and_combined_checksum(self):
         assets = self.verify()
-        self.assertEqual(len(assets), 6)
-        self.assertEqual(len((self.output / 'SHA256SUMS.txt').read_text().splitlines()), 5)
+        self.assertEqual(len(assets), 7)
+        self.assertEqual(len((self.output / 'SHA256SUMS.txt').read_text().splitlines()), 6)
+        self.assertIn('RELEASE-PROOF.json', assets)
+        proof = json.loads(assets['RELEASE-PROOF.json'].path.read_text())
+        self.assertEqual(proof['source_commit'], SHA)
+        self.assertEqual(proof['source_ci_run_id'], '42')
+        self.assertEqual(proof['package_run_id'], '99')
+        self.assertEqual(set(proof['packages']), {name for names in publisher.PLATFORMS.values() for name in names})
+        self.assertEqual(len(proof['test_executables']), 21)
+        for label, result in proof['platforms'].items():
+            self.assertEqual(result['native_ctest']['executed'], 21)
+            self.assertEqual(len(result['native_qt']), 21)
+            expected = 21 if label in {'linux-x86_64', 'windows-x64'} else 0
+            self.assertEqual(len(result['bundled_runtime']), expected)
+
+    def test_reject_missing_granular_native_qt_proof_on_every_platform(self):
+        for label in publisher.PLATFORMS:
+            proof = self.artifacts / ('PhotoDeck-' + label) / 'build-release/photodeck-recovery-files-tests-native.xml'
+            content = proof.read_text()
+            proof.unlink()
+            with self.subTest(platform=label), self.assertRaisesRegex(publisher.GuardError, 'Incomplete native QtTest'):
+                self.verify()
+            proof.write_text(content)
+
+    def test_granular_native_results_record_only_the_explicit_windows_skips(self):
+        folder = self.artifacts / 'PhotoDeck-windows-x64/build-release'
+        (folder / 'photodeck-save-safety-tests-native.xml').write_text(save_safety_xml())
+        (folder / 'photodeck-recovery-files-tests-native.xml').write_text(recovery_files_xml())
+        assets = self.verify()
+        proof = json.loads(assets['RELEASE-PROOF.json'].path.read_text())
+        windows = proof['platforms']['windows-x64']['native_qt']
+        self.assertEqual(sum(suite['skipped'] for suite in windows.values()), 7)
+        linux = self.artifacts / 'PhotoDeck-linux-x86_64/build-release/photodeck-recovery-files-tests-native.xml'
+        linux.write_text(recovery_files_xml())
+        with self.assertRaisesRegex(publisher.GuardError, 'Unexpected JUnit skip'):
+            self.verify()
+
+    def test_reject_copied_native_report_from_another_suite(self):
+        folder = self.artifacts / 'PhotoDeck-macos-intel/build-release'
+        (folder / 'photodeck-recovery-files-tests-native.xml').write_text(qt_xml('photodeck-tests'))
+        with self.assertRaisesRegex(publisher.GuardError, 'suite identity'):
+            self.verify()
+
+    def test_reject_duplicate_or_substituted_native_suite_inventory(self):
+        proof = self.artifacts / 'PhotoDeck-windows-x64/build-release/tests.xml'
+        names = sorted(publisher.CTEST_NAMES)
+        names[-1] = names[0]
+        proof.write_text(junit_xml(21, names))
+        with self.assertRaises(publisher.GuardError):
+            self.verify()
+        names[-1] = 'unrelated-test-suite'
+        proof.write_text(junit_xml(21, names))
+        with self.assertRaisesRegex(publisher.GuardError, 'suite inventory'):
+            self.verify()
+
+    def test_reject_incomplete_twenty_one_suite_inventory(self):
+        folder = self.artifacts / 'PhotoDeck-windows-x64'
+        (folder / 'packaged-test-count.txt').write_text('14\n')
+        with self.assertRaisesRegex(publisher.GuardError, '21-suite inventory'):
+            self.verify()
+
+    def test_release_proof_reports_all_seven_explicit_windows_skips(self):
+        folder = self.artifacts / 'PhotoDeck-windows-x64'
+        (folder / 'photodeck-save-safety-tests-packaged.xml').write_text(save_safety_xml())
+        (folder / 'photodeck-recovery-files-tests-packaged.xml').write_text(recovery_files_xml())
+        assets = self.verify()
+        proof = json.loads(assets['RELEASE-PROOF.json'].path.read_text())
+        windows = proof['platforms']['windows-x64']['bundled_runtime']
+        self.assertEqual(sum(suite['skipped'] for suite in windows.values()), 7)
+        self.assertEqual(windows['photodeck-recovery-files-tests']['testcases'], 70)
+        self.assertEqual(windows['photodeck-recovery-files-tests']['executed'], 64)
+        self.assertEqual(len(windows['photodeck-recovery-files-tests']['skipped_cases']), 6)
+        checksums = publisher.parse_checksums((self.output / 'SHA256SUMS.txt').read_text(),
+                                             set(assets) - {'SHA256SUMS.txt'})
+        self.assertEqual(checksums['RELEASE-PROOF.json'], assets['RELEASE-PROOF.json'].sha256)
 
     def test_missing_or_unexpected_package_and_checksum_mismatch(self):
         folder = self.artifacts / 'PhotoDeck-windows-x64/dist'
@@ -346,10 +470,10 @@ class ArtifactTests(unittest.TestCase):
 
     def test_reject_skipped_disabled_or_non_run_junit(self):
         proof = self.artifacts / 'PhotoDeck-windows-x64/build-release/tests.xml'
-        for value in ('<testsuite tests="14" skipped="1"/>',
-                      '<testsuite tests="14" disabled="1"/>',
-                      '<testsuite tests="14"><testcase><skipped/></testcase></testsuite>',
-                      '<testsuite tests="14"><testcase status="notrun"/></testsuite>'):
+        for value in ('<testsuite tests="21" skipped="1"/>',
+                      '<testsuite tests="21" disabled="1"/>',
+                      '<testsuite tests="21"><testcase><skipped/></testcase></testsuite>',
+                      '<testsuite tests="21"><testcase status="notrun"/></testsuite>'):
             proof.write_text(value)
             with self.subTest(value=value), self.assertRaises(publisher.GuardError):
                 self.verify()
@@ -359,7 +483,7 @@ class ArtifactTests(unittest.TestCase):
         source = publisher.NOTES_PATH.read_bytes()
         self.assertNotIn(b'\r', source)
         notes.write_bytes(source.replace(b'\n', b'\r\n'))
-        self.assertEqual(len(self.verify()), 6)
+        self.assertEqual(len(self.verify()), 7)
 
     def test_notes_content_bom_bare_cr_and_whitespace_changes_are_rejected(self):
         notes = self.artifacts / 'PhotoDeck-windows-x64' / publisher.NOTES_PATH
@@ -376,7 +500,7 @@ class ArtifactTests(unittest.TestCase):
     def test_artifact_context_accepts_only_known_windows_bundled_skip(self):
         proof = self.artifacts / 'PhotoDeck-windows-x64/photodeck-save-safety-tests-packaged.xml'
         proof.write_text(save_safety_xml())
-        self.assertEqual(len(self.verify()), 6)
+        self.assertEqual(len(self.verify()), 7)
         linux_proof = self.artifacts / 'PhotoDeck-linux-x86_64/photodeck-save-safety-tests-packaged.xml'
         linux_proof.write_text(save_safety_xml())
         with self.assertRaisesRegex(publisher.GuardError, 'Unexpected JUnit skip'):
@@ -482,12 +606,73 @@ class JUnitSkipTests(unittest.TestCase):
                 self.verify(publisher.ET.tostring(root, encoding='unicode'))
 
 
+class RecoveryFilesSkipTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.path = Path(self.temp.name) / 'photodeck-recovery-files-tests-packaged.xml'
+
+    def tearDown(self):
+        self.temp.cleanup()
+
+    def verify(self, xml=None, platform='windows-x64', executable='photodeck-recovery-files-tests'):
+        self.path.write_text(recovery_files_xml() if xml is None else xml)
+        return publisher.verify_junit(self.path, platform=platform, executable=executable)
+
+    def test_exact_six_windows_recovery_exceptions_are_accepted_and_reported(self):
+        self.assertEqual(
+            publisher.ALLOWED_SKIPS[('windows-x64', 'photodeck-recovery-files-tests')],
+            {'suite': 'RecoveryFilesTests', 'tests': 70, 'cases': RECOVERY_WINDOWS_SKIPS})
+        proof = self.verify()
+        self.assertEqual(proof['testcases'], 70)
+        self.assertEqual(proof['executed'], 64)
+        self.assertEqual(proof['skipped'], 6)
+
+    def test_linux_full_recovery_inventory_without_skips_is_accepted(self):
+        self.assertEqual(self.verify(recovery_files_xml(False), platform='linux-x86_64')['executed'], 70)
+
+    def test_reject_windows_skips_on_other_targets(self):
+        for platform, executable in [('linux-x86_64', 'photodeck-recovery-files-tests'),
+                                     ('macos-intel', 'photodeck-recovery-files-tests'),
+                                     ('macos-apple-silicon', 'photodeck-recovery-files-tests'),
+                                     ('windows-x64', 'photodeck-recovery-tests'), (None, None)]:
+            with self.subTest(platform=platform, executable=executable), self.assertRaises(publisher.GuardError):
+                self.verify(platform=platform, executable=executable)
+
+    def test_reject_extra_conditional_skip_and_changed_context(self):
+        for target in ('machine-identity', 'hard-link', 'case', 'reason', 'count', 'class', 'suite'):
+            root = publisher.ET.fromstring(recovery_files_xml())
+            case = root.find('testcase')
+            skipped = case.find('skipped')
+            if target in {'machine-identity', 'hard-link'}:
+                case = root.find("testcase[@name='otherRecoveryCase0']")
+                case.set('name', 'matchingMachineAndChangedHostnameStillRequireDeadPid'
+                         if target == 'machine-identity' else 'rejectsHardLinkedSameFile')
+                publisher.ET.SubElement(case, 'skipped', message=
+                    'This platform does not expose a machine identity.' if target == 'machine-identity'
+                    else 'The temporary filesystem does not support creating hard links.')
+                root.set('skipped', '7')
+            elif target == 'case':
+                case.set('name', 'unrelatedCase')
+            elif target == 'reason':
+                skipped.set('message', 'Different reason')
+            elif target == 'count':
+                root.set('tests', '71')
+                publisher.ET.SubElement(root, 'testcase', name='extra', classname='RecoveryFilesTests')
+            elif target == 'class':
+                case.set('classname', 'OtherTests')
+            else:
+                root.set('name', 'OtherTests')
+            with self.subTest(target=target), self.assertRaises(publisher.GuardError):
+                self.verify(publisher.ET.tostring(root, encoding='unicode'))
+
+
 class PublicationTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         root = Path(self.temp.name)
         self.assets = {}
-        for name in ('package.zip', 'SHA256SUMS.txt'):
+        self.package_name = publisher.PLATFORMS['windows-x64'][0]
+        for name in sorted(publisher.RELEASE_ASSET_NAMES):
             path = root / name
             path.write_text(name)
             self.assets[name] = publisher.inspect_asset(path)
@@ -510,6 +695,18 @@ class PublicationTests(unittest.TestCase):
                               'target_commitish': SHA, 'name': 'PhotoDeck ' + publisher.VERSION,
                               'body': self.body, 'draft': draft, 'prerelease': True,
                               'html_url': 'https://github.com/example/release'}]
+
+    def test_rejects_incomplete_release_asset_set_before_any_write(self):
+        self.assets.pop('RELEASE-PROOF.json')
+        with self.assertRaisesRegex(publisher.GuardError, 'complete five packages'):
+            self.publish()
+        self.assertFalse(self.api.writes)
+
+    def test_release_body_describes_exact_proof_scope(self):
+        self.assertIn('exact 21-suite native CTest', self.body)
+        self.assertIn('Linux and Windows additionally reran all 21 suites', self.body)
+        self.assertIn('RELEASE-PROOF.json', self.body)
+        self.assertIn('/pull/3', self.body)
 
     def test_creates_draft_uploads_verified_set_then_publishes(self):
         result = self.publish()
@@ -536,11 +733,12 @@ class PublicationTests(unittest.TestCase):
 
     def test_draft_resume_uploads_only_missing_assets(self):
         self.existing()
-        first = self.assets['package.zip']
+        first = self.assets[self.package_name]
         self.api.upload(7, first)
         self.api.writes.clear()
         self.publish()
-        self.assertEqual([write[1] for write in self.api.writes if write[0] == 'UPLOAD'], ['SHA256SUMS.txt'])
+        self.assertEqual({write[1] for write in self.api.writes if write[0] == 'UPLOAD'},
+                         set(self.assets) - {self.package_name})
 
     def test_same_published_release_is_read_only_idempotent(self):
         self.publish()
@@ -553,7 +751,7 @@ class PublicationTests(unittest.TestCase):
             api = FakeAPI()
             self.api = api
             self.existing()
-            api.upload(7, self.assets['package.zip'])
+            api.upload(7, self.assets[self.package_name])
             api.writes.clear()
             if target == 'digest':
                 api.remote[0]['digest'] = 'sha256:' + '0' * 64

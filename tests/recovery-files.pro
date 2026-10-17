@@ -1,0 +1,9 @@
+QT += core testlib
+QT -= gui
+CONFIG += c++17 testcase release thread
+CONFIG -= debug
+TARGET = photodeck-recovery-files-tests
+SOURCES += test_recovery_files.cpp ../src/recoveryfiles.cpp
+HEADERS += ../src/recoveryfiles.h
+INCLUDEPATH += ../src
+msvc:QMAKE_CXXFLAGS += /utf-8

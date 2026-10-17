@@ -40,6 +40,90 @@ Selection Selection::fromMask(QImage image) {
     result.nonzero = right >= 0;
     return result;
 }
+bool Selection::equivalent(const Selection &other, QSize canvas) const {
+    if (isEmpty() || other.isEmpty())
+        return isEmpty() == other.isEmpty();
+    if (coverage.isNull() && other.coverage.isNull()) {
+        if (!validCanvas(canvas))
+            return true; // Both mask(canvas) results would be null for an invalid canvas.
+        const QRect canvasRect(QPoint(), canvas);
+        const QRect a = rectangle.intersected(canvasRect), b = other.rectangle.intersected(canvasRect);
+        return (a.isEmpty() && b.isEmpty()) || a == b;
+    }
+    if (rectangle == other.rectangle && coverage == other.coverage)
+        return true;
+    return mask(canvas) == other.mask(canvas);
+}
+Selection Selection::clipped(QSize canvas) const {
+    if (isEmpty() || !validCanvas(canvas))
+        return *this;
+    if (!coverage.isNull())
+        return coverage.size() == canvas ? *this : translated({}, canvas);
+    QRect clipped = rectangle.intersected(QRect(QPoint(), canvas));
+    if (!clipped.isEmpty())
+        return Selection(clipped);
+    QImage zero(canvas, QImage::Format_Grayscale8);
+    zero.fill(0);
+    return fromMask(zero);
+}
+Selection Selection::translated(QPoint delta, QSize target) const {
+    if (isEmpty() || !validCanvas(target))
+        return *this;
+    if (coverage.isNull())
+        return Selection(rectangle.translated(delta)).clipped(target);
+    QImage image(target, QImage::Format_Grayscale8);
+    image.fill(0);
+    QRect region = coverage.rect().translated(delta).intersected(image.rect());
+    for (int y = region.top(); y <= region.bottom(); ++y)
+        std::copy_n(coverage.constScanLine(y - delta.y()) + region.left() - delta.x(),
+                    region.width(), image.scanLine(y) + region.left());
+    return fromMask(image);
+}
+Selection Selection::cropped(QRect region, QSize source) const {
+    if (isEmpty() || !validCanvas(region.size()))
+        return *this;
+    if (coverage.isNull())
+        return translated(-region.topLeft(), region.size());
+    return fromMask(mask(source).copy(region));
+}
+Selection Selection::resized(QSize source, QSize target) const {
+    if (isEmpty() || !validCanvas(source) || !validCanvas(target))
+        return *this;
+    if (source == target)
+        return *this;
+    return fromMask(mask(source).scaled(target, Qt::IgnoreAspectRatio, Qt::SmoothTransformation));
+}
+Selection Selection::rotated(bool clockwise, QSize source) const {
+    if (isEmpty() || !validCanvas(source))
+        return *this;
+    if (coverage.isNull()) {
+        const QRect &r = rectangle;
+        return Selection(clockwise
+                             ? QRect(source.height() - r.y() - r.height(), r.x(), r.height(), r.width())
+                             : QRect(r.y(), source.width() - r.x() - r.width(), r.height(), r.width()))
+            .clipped(source.transposed());
+    }
+    QTransform transform;
+    transform.rotate(clockwise ? 90 : -90);
+    return fromMask(mask(source).transformed(transform));
+}
+Selection Selection::flipped(bool horizontal, QSize canvas) const {
+    if (isEmpty() || !validCanvas(canvas))
+        return *this;
+    if (coverage.isNull()) {
+        QRect r = rectangle;
+        if (horizontal)
+            r.moveLeft(canvas.width() - rectangle.x() - rectangle.width());
+        else
+            r.moveTop(canvas.height() - rectangle.y() - rectangle.height());
+        return Selection(r).clipped(canvas);
+    }
+#if QT_VERSION >= QT_VERSION_CHECK(6, 9, 0)
+    return fromMask(mask(canvas).flipped(horizontal ? Qt::Horizontal : Qt::Vertical));
+#else
+    return fromMask(mask(canvas).mirrored(horizontal, !horizontal));
+#endif
+}
 Selection Selection::fromPath(const QPainterPath &path, QSize size) {
     if (!validCanvas(size))
         return {};

@@ -28,3 +28,7 @@ HEADERS += ../src/outputdialog.h
 
 SOURCES += ../src/brushpreset.cpp
 HEADERS += ../src/brushpreset.h
+
+CONFIG += thread
+SOURCES += ../src/recoverymanager.cpp ../src/recoveryfiles.cpp
+HEADERS += ../src/recoverymanager.h ../src/recoveryfiles.h

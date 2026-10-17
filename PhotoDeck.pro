@@ -1,11 +1,11 @@
 QT += widgets
-CONFIG += c++17 release
+CONFIG += c++17 release thread
 CONFIG -= debug
 TEMPLATE = app
 TARGET = photodeck
 DESTDIR = bin
 SOURCES += src/main.cpp src/document.cpp src/canvas.cpp src/mainwindow.cpp
-HEADERS += src/document.h src/canvas.h src/mainwindow.h src/version.h
+HEADERS += src/document.h src/canvas.h src/transformhandles.h src/mainwindow.h src/version.h
 !msvc:QMAKE_CXXFLAGS += -Wall -Wextra
 msvc:QMAKE_CXXFLAGS += /utf-8
 unix:!macx:target.path = /usr/local/bin
@@ -40,3 +40,6 @@ HEADERS += src/outputdialog.h
 
 SOURCES += src/brushpreset.cpp
 HEADERS += src/brushpreset.h
+
+SOURCES += src/recoverymanager.cpp src/recoveryfiles.cpp
+HEADERS += src/recoverymanager.h src/recoveryfiles.h
