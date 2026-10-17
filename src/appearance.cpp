@@ -247,10 +247,10 @@ QPalette UiSettings::palette() const {
     pal.setColor(QPalette::Highlight, p.accent);
     pal.setColor(QPalette::HighlightedText, readable(QColor(Qt::white), p.accent));
     pal.setColor(QPalette::Mid, p.line);
-    pal.setColor(QPalette::PlaceholderText, p.muted);
+    pal.setColor(QPalette::PlaceholderText, readable(p.muted, p.canvas));
     pal.setColor(QPalette::ToolTipBase, p.raised);
-    pal.setColor(QPalette::ToolTipText, p.text);
-    pal.setColor(QPalette::Disabled, QPalette::Text, p.muted);
+    pal.setColor(QPalette::ToolTipText, readable(p.text, p.raised));
+    pal.setColor(QPalette::Disabled, QPalette::Text, readable(p.muted, p.canvas));
     pal.setColor(QPalette::Disabled, QPalette::WindowText, p.muted);
     pal.setColor(QPalette::Disabled, QPalette::ButtonText, p.muted);
     return pal;
@@ -270,6 +270,7 @@ QString UiSettings::styleSheet() const {
       QWidget {color:@text; font-size:@fontpx;}
       QWidget[pdSurface="true"] {background:@panel;}
       QMainWindow,QDialog,QMessageBox {background:@bg;}
+      QWidget[pdSurface="dialog"] {background:@bg; color:@bgText;}
       QWidget#workspace {background:@canvas;}
       QMainWindow::separator {background:@bg; width:7px; height:7px;}
       QMainWindow::separator:hover {background:@accent;}
@@ -306,7 +307,7 @@ QString UiSettings::styleSheet() const {
       QScrollArea#toolPaletteScroll QScrollBar:vertical {width:6px; margin:0;}
       QTabWidget::pane {border:0;}
       QTabBar {background:@bg;}
-      QTabBar::tab {background:@bg; color:@muted; padding:11px 18px; margin:0 2px 0 0; border:0; border-bottom:2px solid transparent;}
+      QTabBar::tab {background:@bg; color:@bgMuted; padding:11px 18px; margin:0 2px 0 0; border:0; border-bottom:2px solid transparent;}
       QTabBar::tab:selected {background:@panel; color:@text; border-bottom:2px solid @accent;}
       QTabBar::tab:hover:!selected {background:@hover; color:@text;}
       QTabBar::close-button {image:url(:/close.png); width:12px; height:12px;}

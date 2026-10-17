@@ -1,10 +1,14 @@
 # PhotoDeck erken erişim ve geliştirme notları
 
-Bu kaynak dalı **0.10.0-ea.1** erken erişim adayını hazırlar. Aşağıdaki 0.9.1 ve önceki sürüm kayıtları tarihsel kapsamı anlatır; 0.10 için platform/paket doğrulaması sayılmaz. Yeni davranışlar ve doğrulama sınırları [geliştirme notlarında](docs/DEVELOPMENT-0.10.md) izlenir.
+Bu kaynak dalı **0.10.0-ea.2** erken erişim adayını hazırlar. Aşağıdaki 0.9.1 ve önceki sürüm kayıtları tarihsel kapsamı anlatır; 0.10 için platform/paket doğrulaması sayılmaz. Yeni davranışlar ve doğrulama sınırları [geliştirme notlarında](docs/DEVELOPMENT-0.10.md) izlenir.
 
 AI içermeyen yerel fotoğraf ve katman düzenleyici. Erken erişim sürümüdür; önemli orijinalleri koruyun ve ayrı proje kopyalarıyla çalışın.
 
-## 0.10.0-ea.1 — güncel kapsam
+## 0.10.0-ea.2 — güncel kapsam
+
+- Tuvalden görünür piksele göre hedef katman seçimi ve görünüm sınırı; canlı kaynak/görünüm ölçüleri, açık sayısal oran kilidi ve dar pencerede okunur dönüşüm eylemleri eklendi.
+- Seçimi kopyala ve dönüştür, görünen seçili pikselleri bağımsız kopyada önizler; özgün yerinde kalır. Esc kopyayı iptal eder, Uygula kopya ile dönüşümü tek geri alma adımı yapar.
+- Dönüşümden boyamaya geçişte kalıcı açıklama, onaylı rasterleştirme veya özgünü koruyan yeni boş boya katmanı sunulur. Görüntü içe aktarma ve dar Dokunmatik düzeni iyileştirildi.
 
 - Seçim işlemleri geri alınır; Ctrl+D seçimi kaldırır, Ctrl+Shift+D yeniden seçer. Seçim menüsünde açıkça adlandırılmış seçimler kaydedilir/yüklenir/silinir. [Seçim kılavuzu](docs/SELECTION-WORKFLOW.md).
 - Ctrl+T bütün etkin katmanda tuval üstü taşıma/ölçek/dönüş tutamaçlarını; Ctrl+Alt+T sayısal/perspektif ayarlarını açar. Enter uygular, Esc iptal eder. [Dönüşüm kılavuzu](docs/ON-CANVAS-TRANSFORM.md).
@@ -14,11 +18,11 @@ AI içermeyen yerel fotoğraf ve katman düzenleyici. Erken erişim sürümüdü
 
 Normal projeler adlandırılmış seçim yoksa v5 olarak kalır; yalnız geçici seçim dosyayı yükseltmez. Adlandırılmış seçimler v6 gerektirir ve yayımlanan 0.9.1 bunları açamaz. İlk v6 kaydında uyarı verilir; eski orijinal ayrı kopyayla korunur. Son adlandırılmış seçim silinince normal kayıt yeniden v5 olur. Kurtarma seçim bağlamı için ayrıca v6 kullanabilir; normal projenin kayıt kimliğini değiştirmez.
 
-Bu kapsam PSD/RAW, CMYK/yüksek bit, grup veya ayar katmanları eklemez. Kayıtlı seçimler genel amaçlı alfa Channels paneli değildir; dönüşüm bütün etkin katmanı kapsar, seçili piksel warp'ı sağlamaz. Bu sürüm tam Photoshop eşdeğeri değildir. Kaynak testleri [özellik denetiminden](docs/FEATURE-AUDIT.md), gerçekten çalıştırılan commit/ortam ve sınırlar [0.10 geliştirme notlarından](docs/DEVELOPMENT-0.10.md) izlenir. Aşağıdaki tarihsel paket sonuçları 0.10'u doğrulamaz.
+Bu kapsam PSD/RAW, CMYK/yüksek bit, grup veya ayar katmanları eklemez. Kayıtlı seçimler genel amaçlı alfa Channels paneli değildir; dönüşüm varsayılan olarak bütün etkin katmanı kapsar; seçimi kopyala ve dönüştür özgünü koruyan ayrı raster kopya oluşturur. Yerinde seçili piksel dönüşümü ve warp sağlamaz. Bu sürüm tam Photoshop eşdeğeri değildir. Kaynak testleri [özellik denetiminden](docs/FEATURE-AUDIT.md), gerçekten çalıştırılan commit/ortam ve sınırlar [0.10 geliştirme notlarından](docs/DEVELOPMENT-0.10.md) izlenir. Aşağıdaki tarihsel paket sonuçları 0.10'u doğrulamaz.
 
-## 0.10.0-ea.1 paketleri ve doğrulama
+## 0.10.0-ea.2 paketleri ve doğrulama
 
-[Sürüm kaydı](https://github.com/Meingless/PhotoDeck/releases/tag/v0.10.0-ea.1), test edilen tam kaynak commit'ini, başarılı CI/paket akışlarını, SHA256SUMS.txt ve RELEASE-PROOF.json dosyalarını içerir. Yayımlayıcı dört platformda 21/21 native CTest grubu ve ayrı Linux ASan/UBSan işi başarılı olmadan yayını açmaz. Linux/Windows'ta 21 grubun tamamı paketlenmiş Qt ile ayrıca çalışır; macOS'ta native CTest, dağıtılmış uygulama açılışı ve ad hoc imza kontrolü yapılır. Atlanan platforma özgü vakalar kanıt dosyasında ad ve gerekçeyle listelenir; bunlar başarılı vaka sayılmaz.
+[Sürüm kaydı](https://github.com/Meingless/PhotoDeck/releases/tag/v0.10.0-ea.2), test edilen tam kaynak commit'ini, başarılı CI/paket akışlarını, SHA256SUMS.txt ve RELEASE-PROOF.json dosyalarını içerir. Yayımlayıcı dört platformda 22/22 native CTest grubu ve ayrı Linux ASan/UBSan işi başarılı olmadan yayını açmaz. Linux/Windows'ta 22 grubun tamamı paketlenmiş Qt ile ayrıca çalışır; macOS'ta native CTest, dağıtılmış uygulama açılışı ve ad hoc imza kontrolü yapılır. Atlanan platforma özgü vakalar kanıt dosyasında ad ve gerekçeyle listelenir; bunlar başarılı vaka sayılmaz.
 
 - Linux x86_64 portable arşivi: tamamen açıp launch.sh çalıştırın. AppImage için çalıştırma izni gerekir; FUSE yoksa APPIMAGE_EXTRACT_AND_RUN=1 kullanılabilir. CI paketi Ubuntu 22.04 tabanında yeniden derlenir; önceki glibc 2.39 isteyen bulut geliştirme paketi yayımlanmaz.
 - Windows x64: ZIP'i tamamen açıp PhotoDeck.exe çalıştırın. Qt ve VC++ çalışma zamanı DLL'leri yanındadır. Yayıncı sertifikasıyla imzalı değildir.

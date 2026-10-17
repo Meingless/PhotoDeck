@@ -743,6 +743,32 @@ bool Document::insertLayer(Layer layer, const QString &label, QString *error) {
     commit(label);
     return true;
 }
+bool Document::insertLayerAboveClippingGroup(Layer layer, const QString &label, QString *error) {
+    if (inEdit || state.layers.isEmpty() || state.active < 0 || state.active >= state.layers.size() ||
+        !validSize(layer.pixels.size()) || (!layer.mask.isNull() && layer.mask.size() != layer.pixels.size())) {
+        if (error)
+            *error = "Katman eklemeden önce geçerli belgedeki düzenlemeyi tamamlayın.";
+        return false;
+    }
+    layer.pixels = Output::workingRgb(layer.pixels);
+    if (!layer.mask.isNull())
+        layer.mask = layer.mask.convertToFormat(QImage::Format_ARGB32_Premultiplied);
+    layer.cache = {};
+    layer.clipped = false;
+    State pending = state;
+    int at = state.active + 1;
+    while (at < pending.layers.size() && pending.layers[at].clipped)
+        ++at;
+    pending.layers.insert(at, layer);
+    pending.active = at;
+    if (!validState(pending, error))
+        return false;
+    beginEdit();
+    state = pending;
+    editingMask = false;
+    commit(label);
+    return true;
+}
 bool Document::importImage(const QString &file, bool asLayer, QString *error) {
     QImage image = readImage(file, error);
     if (image.isNull())
@@ -768,6 +794,15 @@ bool Document::addLayer(const QString &name, QString *error) {
     layer.pixels = QImage(state.size, QImage::Format_ARGB32_Premultiplied);
     layer.pixels.fill(Qt::transparent);
     return insertLayer(layer, "Yeni katman", error);
+}
+bool Document::addPaintLayer(const QString &name, QString *error) {
+    if (!validSize(state.size) || !allows(qint64(state.size.width()) * state.size.height() * 4, error))
+        return false;
+    Layer layer;
+    layer.name = name;
+    layer.pixels = QImage(state.size, QImage::Format_ARGB32_Premultiplied);
+    layer.pixels.fill(Qt::transparent);
+    return insertLayerAboveClippingGroup(layer, "Yeni boya katmanı", error);
 }
 bool Document::duplicate(QString *error) {
     if (state.layers.isEmpty()) {
@@ -1300,10 +1335,9 @@ bool Document::setClipping(bool clipped, QString *error) {
     commit(clipped ? "Kırpma maskesi oluşturuldu" : "Kırpma maskesi kaldırıldı");
     return true;
 }
-bool Document::layerViaSelection(bool cut, QString *error) {
-    if (selection.isEmpty() && !cut)
-        return duplicate(error);
-    if (state.layers.isEmpty() || !selection.hasPixels()) {
+bool Document::prepareSelectionLayer(bool cut, State &pending, QString *error) const {
+    if (state.layers.isEmpty() || state.active < 0 || state.active >= state.layers.size() ||
+        !selection.hasPixels()) {
         if (error)
             *error = "Önce piksel içeren bir seçim yapın.";
         return false;
@@ -1345,7 +1379,7 @@ bool Document::layerViaSelection(bool cut, QString *error) {
             p.setCompositionMode(QPainter::CompositionMode_Clear);
             p.fillRect(raster.pixels.rect(), Qt::transparent);
         });
-    State pending = state;
+    pending = state;
     if (cut)
         pending.layers[index] = raster;
     // A new independent copy belongs above the active clipping stack, not inside its base/child
@@ -1358,6 +1392,58 @@ bool Document::layerViaSelection(bool cut, QString *error) {
     pending.layers.insert(at, copied);
     pending.active = at;
     if (!validState(pending, error))
+        return false;
+    return true;
+}
+bool Document::selectionCopyState(State &pending, QString *error) const {
+    if (!prepareSelectionLayer(false, pending, error))
+        return false;
+    if (!state.layers[state.active].clipped)
+        return true;
+    // The explicit copy-and-transform route creates an independent pixel layer.
+    // Bake only the clipping coverage that currently reveals this source, so moving
+    // the copy cannot reveal previously clipped-away pixels or lose the whole copy.
+    Layer copy = pending.layers[pending.active];
+    int baseIndex = state.active - 1;
+    while (baseIndex > 0 && state.layers[baseIndex].clipped)
+        --baseIndex;
+    const Layer &base = state.layers[baseIndex];
+    const QImage coverage = base.visible && base.opacity > 0 ? base.rendered() : QImage();
+    const QPoint origin = base.renderedOffset();
+    bool hasPixels = false;
+    for (int y = 0; y < copy.pixels.height(); ++y) {
+        auto *row = reinterpret_cast<QRgb *>(copy.pixels.scanLine(y));
+        for (int x = 0; x < copy.pixels.width(); ++x) {
+            const QPoint at = copy.offset + QPoint(x, y) - origin;
+            const int weight = coverage.rect().contains(at)
+                                   ? qRound(qAlpha(coverage.pixel(at)) * base.opacity)
+                                   : 0;
+            const QRgb pixel = row[x];
+            const auto covered = [weight](int channel) { return (channel * weight + 127) / 255; };
+            row[x] = qRgba(covered(qRed(pixel)), covered(qGreen(pixel)), covered(qBlue(pixel)),
+                           covered(qAlpha(pixel)));
+            hasPixels |= qAlpha(row[x]) != 0;
+        }
+    }
+    if (!hasPixels) {
+        if (error)
+            *error = "Seçimde kırpma temelinin gösterdiği piksel yok. Görünür bölgeyi seçin veya kırpma temelini görünür yapın.";
+        return false;
+    }
+    copy.clipped = false;
+    pending = state;
+    int at = state.active + 1;
+    while (at < pending.layers.size() && pending.layers[at].clipped)
+        ++at;
+    pending.layers.insert(at, copy);
+    pending.active = at;
+    return validState(pending, error);
+}
+bool Document::layerViaSelection(bool cut, QString *error) {
+    if (selection.isEmpty() && !cut)
+        return duplicate(error);
+    State pending;
+    if (!prepareSelectionLayer(cut, pending, error))
         return false;
     beginEdit();
     state = pending;
@@ -1625,9 +1711,10 @@ void Document::beginEdit() {
         return;
     before = state;
     clearCaches(before);
-    // Legacy callers can still assign Document::selection directly. Capture that context
-    // at the operation boundary so undoing a pixel/layer edit never discards it.
+    // Active-target changes and legacy direct selection assignments are navigation
+    // context. Capture them at the edit boundary so Undo returns to the visible target.
     if (cursor >= 0) {
+        history[cursor].state.active = before.active;
         history[cursor].state.selection = before.selection;
         history[cursor].state.previousSelection = before.previousSelection;
     }

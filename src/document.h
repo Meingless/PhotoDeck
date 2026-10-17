@@ -86,7 +86,10 @@ class Document : public QObject {
     bool create(QSize size, bool white = false);
     bool importImage(const QString &path, bool asLayer, QString *error);
     bool addLayer(const QString &name, QString *error = nullptr);
+    // Independent transparent painting layer above the active clipping group.
+    bool addPaintLayer(const QString &name, QString *error = nullptr);
     bool insertLayer(Layer layer, const QString &label, QString *error = nullptr);
+    bool insertLayerAboveClippingGroup(Layer layer, const QString &label, QString *error = nullptr);
     bool duplicate(QString *error);
     void deleteLayer();
     void reorder(int delta);
@@ -119,6 +122,8 @@ class Document : public QObject {
     bool flatten(QString *error = nullptr);
     bool setClipping(bool clipped, QString *error = nullptr);
     bool layerViaSelection(bool cut, QString *error = nullptr);
+    // Detached copy preview: no document, editing context or history mutations.
+    bool selectionCopyState(State &pending, QString *error = nullptr) const;
     bool mergeDown(QString *error = nullptr);
     void adjust(int b, int c, int s);
     bool adjustTones(const ToneSettings &settings, QString *error = nullptr);
@@ -218,4 +223,5 @@ class Document : public QObject {
     void resetHistory(const QString &label);
     void trimHistory();
     bool allows(qint64 extra, QString *error, int addedLayers = 1) const;
+    bool prepareSelectionLayer(bool cut, State &pending, QString *error) const;
 };

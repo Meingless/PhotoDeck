@@ -427,6 +427,7 @@ class PositioningTests : public QObject {
         w.show();
         QTest::qWait(35);
         auto *canvas = w.currentCanvas();
+        canvas->setAutoSelectLayers(false); // This scenario moves an explicitly selected sparse layer.
         canvas->actualSize();
         auto *canvasRight = w.findChild<QAction *>("alignCanvasRight");
         auto *selectionLeft = w.findChild<QAction *>("alignSelectionLeft");
@@ -488,6 +489,7 @@ class PositioningTests : public QObject {
         w.show();
         QTest::qWait(35);
         auto *canvas = w.currentCanvas();
+        canvas->setAutoSelectLayers(false); // The gesture exercises pending-move settlement, not hit testing.
         canvas->actualSize();
         const QPoint before = d->state.layers[0].offset;
         mouse(canvas, QEvent::MouseButtonPress, {17, 12});

@@ -68,6 +68,7 @@
 #include <cmath>
 
 namespace {
+QString uiSettingsPath();
 // These editor dialogs use action verbs even when the system Qt translations are absent.
 // Retain the standard button roles so Enter, Escape and existing modal drivers still work.
 void labelEditorDialogButtons(QDialogButtonBox *buttons, const QString &acceptText) {
@@ -552,14 +553,17 @@ QByteArray layerIdentityKey(const Layer &layer) {
         << layer.font << layer.color;
     return key;
 }
-QByteArray layerStackKey(const Document *document, int ignore = -1) {
+QByteArray layerStackKey(const State &state, int ignore = -1) {
     QByteArray key;
     QDataStream out(&key, QIODevice::WriteOnly);
-    out << document->state.size << qint32(document->state.layers.size());
-    for (int i = 0; i < document->state.layers.size(); ++i)
+    out << state.size << qint32(state.layers.size());
+    for (int i = 0; i < state.layers.size(); ++i)
         if (i != ignore)
-            out << qint32(i) << layerIdentityKey(document->state.layers[i]);
+            out << qint32(i) << layerIdentityKey(state.layers[i]);
     return key;
+}
+QByteArray layerStackKey(const Document *document, int ignore = -1) {
+    return layerStackKey(document->state, ignore);
 }
 struct LayerDragTarget {
     QPointer<Document> document;
@@ -941,6 +945,7 @@ MainWindow::MainWindow(bool recovery, bool useSettings) {
     buildMenus();
     buildTools();
     buildInspector();
+    buildWorkflowBanners();
     status = new QLabel("Hazır");
     status->setMinimumWidth(80);
     info = new QLabel;
@@ -1019,7 +1024,12 @@ QAction *MainWindow::action(const QString &id, const QString &text, const QKeySe
         const QPointer<Canvas> canvas = currentCanvas();
         const QPointer<Document> target = canvas ? canvas->document : nullptr;
         const int active = target ? target->state.active : -1;
-        if (canvas) {
+        const bool wasTransforming = canvas && canvas->isTransforming();
+        const State expected = wasTransforming ? canvas->pendingTransformState() : State{};
+        const QByteArray expectedStack = wasTransforming ? layerStackKey(expected) : QByteArray{};
+        // These commands own a chooser/confirmation. Their cancellation must not
+        // apply a pending transform, so settle only after the user accepts.
+        if (canvas && id != "import" && id != "rasterize") {
             if ((id == "undo" || id == "redo") && canvas->isTransforming()) {
                 canvas->cancelTransform();
                 return;
@@ -1029,9 +1039,15 @@ QAction *MainWindow::action(const QString &id, const QString &text, const QKeySe
                                          id == "transformAdvanced" || id == "help" ||
                                          id == "about" || id.startsWith("ui.");
             if (!canvas->isTransforming() || !preservePreview) {
-                canvas->finishPendingGesture();
+                const bool settled = canvas->finishPendingGesture();
                 if (!self || !canvas || !target || currentCanvas() != canvas ||
-                    canvas->document != target || target->state.active != active ||
+                    canvas->document != target ||
+                    (wasTransforming && !settled) ||
+                    (wasTransforming
+                         ? (target->state.active != expected.active ||
+                            layerStackKey(target) != expectedStack || target->isEditing() ||
+                            !target->selection.equivalent(expected.selection, expected.size))
+                         : target->state.active != active) ||
                     canvas->hasPendingGesture())
                     return;
             }
@@ -1047,7 +1063,7 @@ void MainWindow::buildMenus() {
     auto *file = menuBar()->addMenu("&Dosya");
     file->addAction(action("new", "Yeni belge…", QKeySequence::New, [this] { newDocument(); }));
     file->addAction(action("open", "Aç…", QKeySequence::Open, [this] { chooseOpen(); }));
-    file->addAction(action("import", "Görüntüyü katman olarak ekle…", QKeySequence("Ctrl+Shift+O"),
+    file->addAction(action("import", "Görüntü katmanı ekle…", QKeySequence("Ctrl+Shift+O"),
                            [this] { importLayer(); }));
     file->addSeparator();
     file->addAction(action("save", "Projeyi kaydet", QKeySequence::Save,
@@ -1359,6 +1375,7 @@ void MainWindow::buildMenus() {
         }
     }));
     auto *layer = menuBar()->addMenu("&Katman");
+    layer->setToolTipsVisible(true);
     layer->addAction(action("positionLayer", "Etkin katman konumu…", {}, [this] { positionLayer(); }));
     actions["positionLayer"]->setIconText("Konum…");
     auto *alignment = layer->addMenu("Etkin katmanı hizala");
@@ -1395,8 +1412,9 @@ void MainWindow::buildMenus() {
         updateActionAvailability();
     });
     layer->addSeparator();
-    layer->addAction(action("transform", "Kaynak koruyan serbest dönüşüm…", QKeySequence("Ctrl+T"),
+    layer->addAction(action("transform", "Katmanın tamamını dönüştür…", QKeySequence("Ctrl+T"),
                             [this] { transformLayer(); }));
+    actions["transform"]->setIconText("Dönüştür…");
     layer->addAction(action("transformAdvanced", "Sayısal dönüşüm / perspektif…",
                             QKeySequence("Ctrl+Alt+T"), [this] { transformLayerNumerically(); }));
     layer->addAction(action("resetTransform", "Dönüşümü sıfırla", {}, [this] {
@@ -1411,13 +1429,10 @@ void MainWindow::buildMenus() {
             }
         }
     }));
-    layer->addAction(action("rasterize", "Görünümü rasterleştir (maske/ayarlar dahil)", {}, [this] {
-        if (auto *d = currentDocument()) {
-            QString e;
-            if (!d->rasterizeLayer(&e))
-                error(e);
-        }
-    }));
+    layer->addAction(action("rasterize", "Görünümü rasterleştir…", {}, [this] { rasterizeLayer(); }));
+    layer->addAction(action("newPaintLayer", "Yeni boş katmana boya", {}, [this] { newPaintLayer(); }));
+    actions["newPaintLayer"]->setToolTip(
+        "Kaynak katmanı değiştirmeden yeni, saydam bir piksel katmanı ekler ve Fırça aracına geçer.");
     layer->addAction(
         action("mergeVisible", "Görünür katmanları birleştir", QKeySequence("Ctrl+Alt+Shift+E"), [this] {
             if (auto *d = currentDocument()) {
@@ -1621,9 +1636,14 @@ void MainWindow::buildTools() {
     top->addWidget(brand);
     top->addSeparator();
     actions["open"]->setIconText("Aç");
+    actions["import"]->setIconText("Görüntü katmanı ekle…");
+    actions["import"]->setToolTip(
+        "Açık belgeye bir görüntüyü ayrı katman olarak ekleyin; ardından Ctrl+T ile boyutlandırın. "
+        "Ctrl+Shift+O");
     actions["save"]->setIconText("Kaydet");
     actions["export"]->setIconText("Dışa aktar");
     top->addAction(actions["open"]);
+    top->addAction(actions["import"]);
     top->addAction(actions["save"]);
     top->addSeparator();
     top->addAction(actions["undo"]);
@@ -1651,6 +1671,32 @@ void MainWindow::buildTools() {
     contextLabel->setObjectName("toolbarCaption");
     options->addWidget(contextLabel);
     options->addSeparator();
+    auto *moveControls = new QWidget;
+    moveControls->setObjectName("moveControls");
+    auto *moveLayout = new QHBoxLayout(moveControls);
+    moveLayout->setContentsMargins(0, 0, 0, 0);
+    moveLayout->setSpacing(10);
+    moveAutoSelectInput = new QCheckBox("Tuvalden katman seç");
+    moveAutoSelectInput->setObjectName("moveAutoSelect");
+    moveAutoSelectInput->setToolTip(
+        "Tıkladığınız görünür, kilidi açık katmanı seçer. Saydam alanları atlar; üstteki katman önceliklidir.");
+    moveShowBoundsInput = new QCheckBox("Katman sınırlarını göster");
+    moveShowBoundsInput->setObjectName("moveShowBounds");
+    moveShowBoundsInput->setChecked(true);
+    moveShowBoundsInput->setToolTip("Taşı aracında etkin hedefin adını ve kaynak alanı sınırını gösterir.");
+    moveLayout->addWidget(moveAutoSelectInput);
+    moveLayout->addWidget(moveShowBoundsInput);
+    actions["ui.options.move"] = options->addWidget(moveControls);
+    connect(moveAutoSelectInput, &QCheckBox::toggled, this, [this](bool checked) {
+        if (!refreshing && currentCanvas()) {
+            currentCanvas()->setAutoSelectLayers(checked);
+            updateToolOptions();
+        }
+    });
+    connect(moveShowBoundsInput, &QCheckBox::toggled, this, [this](bool checked) {
+        if (!refreshing && currentCanvas())
+            currentCanvas()->setShowLayerBounds(checked);
+    });
     addToolBarBreak(Qt::TopToolBarArea);
     addToolBar(Qt::TopToolBarArea, options);
     auto *brushControls = new QWidget;
@@ -1730,6 +1776,8 @@ void MainWindow::buildTools() {
     actions["ui.options.contiguous"] = options->addWidget(contiguous);
     auto *hint = new QLabel;
     hint->setObjectName("toolOptionsHint");
+    hint->setMinimumWidth(0);
+    hint->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
     options->addWidget(hint);
     auto syncSelection = [this, selectionMode, tolerance, contiguous] {
         if (refreshing)
@@ -1859,6 +1907,12 @@ void MainWindow::updateToolOptions() {
     actions["ui.options.selectionMode"]->setVisible(selection);
     actions["ui.options.tolerance"]->setVisible(canvas && !transforming && tool == Canvas::Wand);
     actions["ui.options.contiguous"]->setVisible(canvas && !transforming && tool == Canvas::Wand);
+    actions["ui.options.move"]->setVisible(canvas && !transforming && tool == Canvas::Move);
+    if (canvas) {
+        QSignalBlocker selectBlock(moveAutoSelectInput), boundsBlock(moveShowBoundsInput);
+        moveAutoSelectInput->setChecked(canvas->autoSelectLayers());
+        moveShowBoundsInput->setChecked(canvas->showsLayerBounds());
+    }
     auto *caption = optionsToolbar->findChild<QLabel *>("toolbarCaption");
     caption->setText(transforming ? "DÖNÜŞTÜR"
                      : canvas ? actions["tool" + QString::number(tool)]->iconText().toUpper()
@@ -1871,7 +1925,10 @@ void MainWindow::updateToolOptions() {
     else if (selection)
         hint = "Shift: ekle · Alt: çıkar";
     else if (tool == Canvas::Move)
-        hint = "Sürükle · Ok: 1 px · Shift+ok: 10 px · Ctrl+T: dönüştür";
+        hint = canvas->autoSelectLayers()
+                   ? "Tıklanan katmanı taşı · Ok: 1 px · Shift+ok: 10 px · Ctrl+T: dönüştür"
+                   : QString("Hedef: %1 · Sürükle: taşı · Ctrl+T: dönüştür")
+                         .arg(canvas->activeLayerTargetName());
     else if (tool == Canvas::Crop)
         hint = "Alanı sürükleyin, ardından Kırp";
     else if (tool == Canvas::Clone)
@@ -1886,7 +1943,12 @@ void MainWindow::updateToolOptions() {
         hint = "Shift: kare veya daire · X: renkleri değiştir";
     else if (!brush)
         hint = "Tuvalde uygulayın · X: renkleri değiştir";
-    optionsToolbar->findChild<QLabel *>("toolOptionsHint")->setText(hint);
+    auto *hintLabel = optionsToolbar->findChild<QLabel *>("toolOptionsHint");
+    hintLabel->setText(hint);
+    hintLabel->setToolTip(hint);
+    hintLabel->setAccessibleName(hint);
+    caption->setToolTip(hint);
+    updatePaintAvailability();
 }
 
 void MainWindow::buildInspector() {
@@ -2042,6 +2104,22 @@ void MainWindow::buildInspector() {
         if (currentDocument())
             currentDocument()->commit("Katman opaklığı");
     });
+    auto *importButton = new QToolButton;
+    importButton->setObjectName("addImageLayer");
+    importButton->setDefaultAction(actions["import"]);
+    importButton->setToolButtonStyle(Qt::ToolButtonTextOnly);
+    importButton->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+    layout->addWidget(importButton);
+    auto *transformButton = new QToolButton;
+    transformButton->setObjectName("quickTransform");
+    transformButton->setDefaultAction(actions["transform"]);
+    transformButton->setToolButtonStyle(Qt::ToolButtonTextOnly);
+    transformButton->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+    transformButton->setAttribute(Qt::WA_AlwaysShowToolTips);
+    auto *toneButton = new QPushButton("Renk / ton…");
+    toneButton->setObjectName("quickTones");
+    connect(toneButton, &QPushButton::clicked, actions["tones"], &QAction::trigger);
+    layout->addWidget(wrappingRow(transformButton, toneButton));
     auto *layerList = new LayerListWidget;
     layers = layerList;
     layers->setObjectName("layers");
@@ -2286,13 +2364,6 @@ void MainWindow::buildInspector() {
     alignButton->setPopupMode(QToolButton::InstantPopup);
     alignButton->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
     layout->addWidget(wrappingRow(positionButton, alignButton));
-    auto *transformButton = new QPushButton("Dönüştür…");
-    transformButton->setObjectName("quickTransform");
-    connect(transformButton, &QPushButton::clicked, actions["transform"], &QAction::trigger);
-    auto *toneButton = new QPushButton("Renk / ton…");
-    toneButton->setObjectName("quickTones");
-    connect(toneButton, &QPushButton::clicked, actions["tones"], &QAction::trigger);
-    layout->addWidget(wrappingRow(transformButton, toneButton));
     auto *scroll = new QScrollArea;
     scroll->setWidgetResizable(true);
     scroll->setFrameShape(QFrame::NoFrame);
@@ -2323,11 +2394,134 @@ void MainWindow::buildInspector() {
     addDockWidget(Qt::RightDockWidgetArea, historyDock);
 }
 
+void MainWindow::buildWorkflowBanners() {
+    auto *workspaceLayout = qobject_cast<QVBoxLayout *>(workspace->layout());
+    paintBlockedBanner = new QFrame;
+    paintBlockedBanner->setObjectName("paintBlockedBanner");
+    paintBlockedBanner->setFrameShape(QFrame::StyledPanel);
+    auto *paintLayout = new QVBoxLayout(paintBlockedBanner);
+    paintLayout->setContentsMargins(9, 6, 9, 6);
+    paintLayout->setSpacing(5);
+    paintBlockedReason = new QLabel;
+    paintBlockedReason->setObjectName("paintBlockedReason");
+    paintBlockedReason->setTextFormat(Qt::PlainText);
+    paintBlockedReason->setWordWrap(true);
+    paintLayout->addWidget(paintBlockedReason);
+    auto *rasterize = new QToolButton;
+    rasterize->setObjectName("paintRasterize");
+    rasterize->setDefaultAction(actions["rasterize"]);
+    rasterize->setToolButtonStyle(Qt::ToolButtonTextOnly);
+    auto *paint = new QToolButton;
+    paint->setObjectName("newPaintLayer");
+    paint->setDefaultAction(actions["newPaintLayer"]);
+    paint->setToolButtonStyle(Qt::ToolButtonTextOnly);
+    paintLayout->addWidget(wrappingRow(rasterize, paint));
+    workspaceLayout->insertWidget(0, paintBlockedBanner);
+    paintBlockedBanner->hide();
+
+    layerImportHelp = new QFrame;
+    layerImportHelp->setObjectName("layerImportHelp");
+    layerImportHelp->setFrameShape(QFrame::StyledPanel);
+    auto *helpLayout = new QHBoxLayout(layerImportHelp);
+    helpLayout->setContentsMargins(9, 6, 9, 6);
+    auto *help = new QLabel(
+        "Görüntü katmanı ekle → Hedef katmanı seç → Ctrl+T ile boyutlandır. "
+        "Aç, görüntüyü ayrı belge olarak açar.");
+    help->setTextFormat(Qt::PlainText);
+    help->setWordWrap(true);
+    helpLayout->addWidget(help, 1);
+    auto *dismiss = new QToolButton;
+    dismiss->setObjectName("dismissLayerImportHelp");
+    dismiss->setText("×");
+    dismiss->setAccessibleName("Katman ekleme yardımını kapat");
+    dismiss->setToolTip("Bu yardımı kapat; tekrar gösterilmez");
+    helpLayout->addWidget(dismiss);
+    connect(dismiss, &QToolButton::clicked, this, [this] {
+        layerImportHelpVisible = false;
+        layerImportHelp->hide();
+    });
+    workspaceLayout->insertWidget(0, layerImportHelp);
+    layerImportHelp->hide();
+    if (persistSettings) {
+        QSettings settings(uiSettingsPath(), QSettings::IniFormat);
+        layerImportHelpSeen = settings.value("workflow/layerImportHelpSeen", false).toBool();
+    }
+}
+
+void MainWindow::showLayerImportHelp() {
+    if (layerImportHelpSeen || !layerImportHelp)
+        return;
+    layerImportHelpSeen = layerImportHelpVisible = true;
+    layerImportHelp->show();
+    if (persistSettings) {
+        QSettings settings(uiSettingsPath(), QSettings::IniFormat);
+        settings.setValue("workflow/layerImportHelpSeen", true);
+        settings.sync();
+    }
+}
+
+void MainWindow::updatePaintAvailability() {
+    if (!paintBlockedBanner)
+        return;
+    const auto *canvas = currentCanvas();
+    const auto *document = currentDocument();
+    const bool present = canvas && document && !document->state.layers.isEmpty();
+    const bool painting = present && !canvas->isTransforming() &&
+                          (canvas->tool == Canvas::Brush || canvas->tool == Canvas::Pencil ||
+                           canvas->tool == Canvas::Eraser || canvas->tool == Canvas::Clone ||
+                           canvas->tool == Canvas::Fill || canvas->tool == Canvas::Gradient ||
+                           canvas->tool == Canvas::Rectangle || canvas->tool == Canvas::Ellipse);
+    QString reason;
+    if (painting) {
+        const auto &layer = document->state.layers[document->state.active];
+        if (layer.locked)
+            reason = QString("“%1” kilitli. Boyamak için kilidi açın veya yeni boş katmana geçin.")
+                         .arg(layer.name);
+        else if (!layer.visible)
+            reason = QString("“%1” gizli. Boyamak için katmanı görünür yapın veya yeni boş katmana geçin.")
+                         .arg(layer.name);
+        else if (!layer.geometry.isIdentity())
+            reason = QString("“%1” kaynak koruyan dönüşüm içeriyor. Piksel veya maske boyamak için "
+                             "görünümü rasterleştirin ya da yeni boş katmana geçin.")
+                         .arg(layer.name);
+    }
+    paintBlockedReason->setText(reason);
+    paintBlockedBanner->setAccessibleName(reason);
+    paintBlockedBanner->setVisible(!reason.isEmpty());
+    optionsToolbar->findChild<QWidget *>("brushControls")->setEnabled(reason.isEmpty());
+    optionsToolbar->findChild<QWidget *>("flowControls")->setEnabled(reason.isEmpty());
+    layerImportHelp->setVisible(present && layerImportHelpVisible && reason.isEmpty());
+}
+
+void MainWindow::updateLayerDetails() {
+    const auto *canvas = currentCanvas();
+    const auto *document = currentDocument();
+    if (!canvas || !document || document->state.layers.isEmpty())
+        return;
+    const auto &active = document->state.layers[document->state.active];
+    const QSize source = canvas->activeLayerSourceSize();
+    const QRect bounds = canvas->activeLayerDisplayBounds();
+    QString description = QString("Hedef: %1\nKaynak: %2 × %3 px\n"
+                                  "Görünüm: %4 × %5 px (tuvale hizalı sınır)\nKonum: %6, %7")
+                              .arg(canvas->activeLayerTargetName())
+                              .arg(source.width()).arg(source.height())
+                              .arg(bounds.width()).arg(bounds.height())
+                              .arg(bounds.x()).arg(bounds.y());
+    if (document->editingMask)
+        description += "\nMASKE · Beyaz gösterir, siyah gizler. X: renkleri değiştir.";
+    else if (!active.text.isEmpty() && !canvas->isTransforming())
+        description += "\nDüzenlenebilir metin";
+    layerDetails->setTextFormat(Qt::PlainText);
+    layerDetails->setText(description);
+    layerDetails->setToolTip(description);
+}
+
 void MainWindow::addDocument(Document *d) {
     d->setParent(this);
     recoveryManager->registerDocument(d);
     auto *canvas = new Canvas(d);
     canvas->showRulers = appearance.rulers;
+    canvas->setAutoSelectLayers(true);
     {
         auto p = appearance.resolved();
         canvas->setUiColors(p.canvas, p.panel, p.muted, p.accent);
@@ -2350,6 +2544,11 @@ void MainWindow::addDocument(Document *d) {
         static_cast<LayerListWidget *>(layers)->invalidateDrag();
         updateActionAvailability();
         updateToolOptions();
+        updateLayerDetails();
+    });
+    connect(canvas, &Canvas::transformPreviewChanged, this, [this, canvas] {
+        if (currentCanvas() == canvas)
+            updateLayerDetails();
     });
     connect(canvas, &Canvas::colorPicked, this, [this, canvas](QColor c) {
         canvas->foreground = c;
@@ -2422,7 +2621,8 @@ void MainWindow::updateActionAvailability() {
     const auto *d = currentDocument();
     bool present = d && !d->state.layers.isEmpty();
     for (auto it = actions.begin(); it != actions.end(); ++it)
-        if (it.key() != "new" && it.key() != "open" && it.key() != "quit" && it.key() != "demo" &&
+        if (it.key() != "new" && it.key() != "open" && it.key() != "import" &&
+            it.key() != "quit" && it.key() != "demo" &&
             it.key() != "help" && it.key() != "about" && it.key() != "batch" &&
             it.key() != "brushLibrary" && !it.key().startsWith("ui."))
             it.value()->setEnabled(present);
@@ -2462,8 +2662,38 @@ void MainWindow::updateActionAvailability() {
     actions["resetFilters"]->setEnabled(present && !d->state.layers[d->state.active].locked);
     actions["maskSettings"]->setEnabled(present && !d->state.layers[d->state.active].locked &&
                                         !d->state.layers[d->state.active].mask.isNull());
-    for (const auto &id : {"transform", "transformAdvanced", "resetTransform", "rasterize"})
-        actions[id]->setEnabled(present && !d->state.layers[d->state.active].locked);
+    QString transformReason;
+    if (!activePresent)
+        transformReason = "Dönüştürmek için önce bir belge açın veya oluşturun.";
+    else if (d->state.layers[d->state.active].locked)
+        transformReason = "Dönüştürmek için önce katmanın kilidini açın.";
+    else if (!d->state.layers[d->state.active].visible)
+        transformReason = "Dönüştürmek için önce katmanı görünür yapın.";
+    else if (!d->state.layers[d->state.active].validGeometry())
+        transformReason = "Bu katmanın geometrisi geçersiz; dönüşüm başlatılamıyor.";
+    for (const auto &id : {"transform", "transformAdvanced"}) {
+        actions[id]->setEnabled(transformReason.isEmpty());
+        actions[id]->setToolTip(
+            transformReason.isEmpty()
+                ? (id == QString("transform")
+                       ? "Etkin katmanın tamamını kaynak korunarak dönüştürür. Seçim kapsamı dönüşüm alanında gösterilir. Ctrl+T"
+                       : "Etkin katmanın sayısal ölçek, açı ve perspektif ayarlarını açar. Ctrl+Alt+T")
+                : transformReason);
+        actions[id]->setStatusTip(actions[id]->toolTip());
+    }
+    for (const auto &id : {"resetTransform", "rasterize"})
+        actions[id]->setEnabled(activePresent && !d->state.layers[d->state.active].locked &&
+                                d->state.layers[d->state.active].visible);
+    actions["rasterize"]->setToolTip(
+        !activePresent ? "Önce bir belge açın veya oluşturun."
+        : d->state.layers[d->state.active].locked ? "Önce katmanın kilidini açın."
+        : !d->state.layers[d->state.active].visible ? "Önce katmanı görünür yapın."
+        : "Görünümü piksele çevirir: dönüşüm, maske, renk ve filtre ayarları piksellere işlenir; metin düzenlenebilirliği kalkar. Önce onayınız istenir.");
+    actions["import"]->setEnabled(true);
+    actions["import"]->setToolTip(
+        present
+            ? "Açık belgeye görüntüyü ayrı katman olarak ekler; önceki katmanları korur. Ctrl+Shift+O"
+            : "Belge yoksa görüntü yeni belge olarak açılır. Ctrl+Shift+O");
     actions["redo"]->setEnabled(present && (d->canRedo() || transforming));
     actions["deleteLayer"]->setEnabled(present && d->state.layers.size() > 1);
     actions["layerUp"]->setEnabled(present && d->state.active + 1 < d->state.layers.size());
@@ -2657,14 +2887,7 @@ void MainWindow::refresh() {
     }
     layers->item(0)->setData(LayerStackRole, layerStackKey(d));
     layers->setCurrentRow(d->state.layers.size() - 1 - d->state.active);
-    layerDetails->setText(
-        d->editingMask ? "MASKE DÜZENLEME · Beyaz gösterir, siyah gizler. X: renkleri değiştir."
-                       : QString("%1 × %2 px · %3\nKonum: %4, %5")
-                             .arg(active.pixels.width())
-                             .arg(active.pixels.height())
-                             .arg(active.text.isEmpty() ? "Piksel katmanı" : "Düzenlenebilir metin")
-                             .arg(active.renderedOffset().x())
-                             .arg(active.renderedOffset().y()));
+    updateLayerDetails();
     maskButton->setText(active.mask.isNull() ? "◧  Katman\nmaskesi ekle"
                         : d->editingMask     ? "◧  Piksele\ngeri dön"
                                              : "◧  Maskeyi\ndüzenle");
@@ -2786,16 +3009,163 @@ void MainWindow::chooseOpen() {
         openFile(file);
 }
 void MainWindow::importLayer() {
-    if (!currentDocument())
+    const QPointer<MainWindow> self(this);
+    const QPointer<Canvas> canvas = currentCanvas();
+    const QPointer<Document> document = currentDocument();
+    const quint64 revision = document ? document->revision() : 0;
+    const int active = document ? document->state.active : -1;
+    const QByteArray stack = document ? layerStackKey(document) : QByteArray{};
+    const bool transforming = canvas && canvas->isTransforming();
+    const QTransform preview = transforming ? canvas->transformGeometry() : QTransform{};
+    const State expected = transforming ? canvas->pendingTransformState() : State{};
+    QFileDialog dialog(this, "Görüntü katmanı ekle", {},
+                       "Görüntüler (*.png *.jpg *.jpeg *.webp *.bmp *.gif *.tif *.tiff)");
+    dialog.setObjectName("importLayerDialog");
+    dialog.setAcceptMode(QFileDialog::AcceptOpen);
+    dialog.setFileMode(QFileDialog::ExistingFile);
+    if (dialog.exec() != QDialog::Accepted || dialog.selectedFiles().isEmpty())
         return;
-    QString file =
-        QFileDialog::getOpenFileName(this, "Katman olarak ekle", {},
-                                     "Görüntüler (*.png *.jpg *.jpeg *.webp *.bmp *.gif *.tif *.tiff)");
-    if (file.isEmpty())
+    if (!self || currentCanvas() != canvas || currentDocument() != document)
         return;
-    QString e;
-    if (!currentDocument()->importImage(file, true, &e))
-        error(e);
+    const QString file = dialog.selectedFiles().first();
+    if (!document) {
+        const bool opened = openFile(file);
+        if (self && opened)
+            showLayerImportHelp();
+        return;
+    }
+    // A chooser must never silently retarget an import after a tab, layer or
+    // history change. Read the image before settling a source-preserving preview.
+    if (!canvas || document->revision() != revision || document->state.active != active ||
+        layerStackKey(document) != stack || canvas->isTransforming() != transforming ||
+        (transforming && canvas->transformGeometry() != preview)) {
+        status->setText("Hedef değişti; görüntü eklenmedi. Görüntü katmanı ekle işlemini yeniden açın.");
+        return;
+    }
+    QString message;
+    QImage image = Document::readImage(file, &message);
+    if (image.isNull()) {
+        error(message);
+        return;
+    }
+    Layer layer;
+    layer.name = QFileInfo(file).completeBaseName();
+    layer.pixels = image;
+    // Validate the entire insertion, including the pending selection-copy layer,
+    // before a failed import could commit an unrelated transform preview.
+    Document candidate;
+    candidate.state = transforming ? expected : document->state;
+    if (!candidate.insertLayerAboveClippingGroup(layer, "Görüntü katmanı eklendi", &message)) {
+        error(message);
+        return;
+    }
+    finishLayerRename();
+    const bool settled = canvas->finishPendingGesture();
+    if (!self || !canvas || !document || currentCanvas() != canvas || currentDocument() != document ||
+        canvas->hasPendingGesture() || document->isEditing() || (transforming && !settled) ||
+        (transforming && (document->state.active != expected.active ||
+                          layerStackKey(document) != layerStackKey(expected) ||
+                          !document->selection.equivalent(expected.selection, expected.size))) ||
+        (!transforming && (document->state.active != active || layerStackKey(document) != stack)))
+        return;
+    const bool inserted = document->insertLayerAboveClippingGroup(layer, "Görüntü katmanı eklendi", &message);
+    if (!self)
+        return;
+    if (!inserted) {
+        error(message);
+        return;
+    }
+    if (document && currentDocument() == document)
+        showLayerImportHelp();
+}
+
+void MainWindow::rasterizeLayer() {
+    const QPointer<MainWindow> self(this);
+    const QPointer<Canvas> canvas = currentCanvas();
+    const QPointer<Document> document = currentDocument();
+    if (!canvas || !document || document->state.layers.isEmpty())
+        return;
+    const int active = document->state.active;
+    const auto &layer = document->state.layers[active];
+    if (layer.locked || !layer.visible)
+        return;
+    const quint64 revision = document->revision();
+    const QByteArray stack = layerStackKey(document);
+    const bool transforming = canvas->isTransforming();
+    const QTransform preview = transforming ? canvas->transformGeometry() : QTransform{};
+    const State expected = transforming ? canvas->pendingTransformState() : document->state;
+    const QString targetName = canvas->activeLayerTargetName();
+    QMessageBox confirm(QMessageBox::Warning, "Görünümü rasterleştir",
+                        QString("“%1” katmanının görünümü piksele çevrilsin mi?\n\n"
+                                "Dönüşüm, katman maskesi, renk/ton ve filtre ayarları görünür "
+                                "sonuca işlenir; ayrı ayrı düzenlenemez. Metin varsa metin "
+                                "olarak düzenlenebilirliği kalkar. Katman opaklığı, karışım "
+                                "modu ve kırpma ilişkisi korunur.\n\n"
+                                "Sonra bu piksel katmanında boyayabilirsiniz. Geri al ile "
+                                "rasterleştirme öncesine dönebilirsiniz.")
+                            .arg(targetName),
+                        QMessageBox::Yes | QMessageBox::Cancel, this);
+    confirm.setObjectName("rasterizeLayerDialog");
+    confirm.setTextFormat(Qt::PlainText);
+    confirm.button(QMessageBox::Yes)->setText("&Rasterleştir");
+    confirm.button(QMessageBox::Yes)->setAccessibleName("Görünümü rasterleştir");
+    confirm.button(QMessageBox::Cancel)->setText("İ&ptal");
+    confirm.setDefaultButton(QMessageBox::Cancel);
+    confirm.setEscapeButton(QMessageBox::Cancel);
+    if (confirm.exec() != QMessageBox::Yes)
+        return;
+    if (!self || !canvas || !document || currentCanvas() != canvas || currentDocument() != document ||
+        document->revision() != revision || document->state.active != active ||
+        layerStackKey(document) != stack || canvas->isTransforming() != transforming ||
+        (transforming && canvas->transformGeometry() != preview)) {
+        if (self)
+            status->setText("Hedef değişti; rasterleştirme uygulanmadı. İşlemi yeniden açın.");
+        return;
+    }
+    finishLayerRename();
+    const bool settled = canvas->finishPendingGesture();
+    if (!self || !canvas || !document || currentCanvas() != canvas || currentDocument() != document ||
+        canvas->hasPendingGesture() || document->isEditing() || (transforming && !settled) ||
+        document->state.active != expected.active ||
+        layerStackKey(document) != layerStackKey(expected) ||
+        !document->selection.equivalent(expected.selection, expected.size))
+        return;
+    QString message;
+    const bool rasterized = document->rasterizeLayer(&message);
+    if (!self)
+        return;
+    if (!rasterized)
+        error(message);
+    if (self)
+        refresh();
+}
+
+void MainWindow::newPaintLayer() {
+    const QPointer<MainWindow> self(this);
+    const QPointer<Document> document = currentDocument();
+    const QPointer<Canvas> canvas = currentCanvas();
+    if (!document || !canvas)
+        return;
+    int active = document->state.active + 1;
+    while (active < document->state.layers.size() && document->state.layers[active].clipped)
+        ++active;
+    const int count = document->state.layers.size() + 1;
+    QString message;
+    if (!document->addPaintLayer(QString("Boya katmanı %1").arg(document->state.layers.size() + 1), &message)) {
+        if (self)
+            error(message);
+        return;
+    }
+    if (!self || !document || !canvas || currentDocument() != document || currentCanvas() != canvas ||
+        document->state.active != active || document->state.layers.size() != count ||
+        canvas->hasPendingGesture())
+        return;
+    canvas->setTool(Canvas::Brush);
+    if (!self || !canvas || currentCanvas() != canvas)
+        return;
+    refresh();
+    if (self)
+        status->setText("Yeni boş katmanda boyayın; kaynak katman korundu.");
 }
 bool MainWindow::saveDocument(Document *d, bool saveAs) {
     if (!d)
@@ -4234,6 +4604,9 @@ void MainWindow::applyAppearanceColors() {
     setPalette(appearance.palette());
     setStyleSheet(appearance.styleSheet());
     auto p = appearance.resolved();
+    // Touch's bottom tool grid leaves a short inspector at 900 × 620. Keep
+    // its first layer row reachable; the same import action stays beside Open.
+    findChild<QToolButton *>("addImageLayer")->setVisible(appearance.preset != "touch");
     histogram->setUiPalette(appearance.palette());
     brandLabel->setText("Photo<span style='color:" + p.accent.name() + "'>Deck</span>");
     for (int i = 0; i < Canvas::ToolCount; ++i)
