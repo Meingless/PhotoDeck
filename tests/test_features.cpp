@@ -614,10 +614,13 @@ class FeatureAudit : public QObject {
         QString png = dir.filePath("export.png");
         QVERIFY(driveModal([&] { command(w, "export")->trigger(); },
                            [&](QDialog *dialog) {
-                               auto *file = qobject_cast<QFileDialog *>(dialog);
-                               if (!file)
+                               if (dialog->objectName() != "exportDialog")
                                    return false;
-                               chooseFile(file, png);
+                               auto *path = dialog->findChild<QLineEdit *>("exportPath");
+                               if (!path)
+                                   return false;
+                               path->setText(png);
+                               dialog->accept();
                                return true;
                            }));
         QCOMPARE(QImage(png).pixelColor(20, 20), QColor(Qt::red));

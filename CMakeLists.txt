@@ -84,7 +84,8 @@ if(BUILD_TESTING)
     add_test(NAME photodeck-transforms COMMAND photodeck-transforms-tests
         -o "${CMAKE_CURRENT_BINARY_DIR}/photodeck-transforms-tests-native.xml,junitxml"
         -o "${CMAKE_CURRENT_BINARY_DIR}/photodeck-transforms-tests-native.txt,txt")
-    set_tests_properties(photodeck-transforms PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 60)
+    # Instrumented runs of the full UI transform matrix can exceed one minute.
+    set_tests_properties(photodeck-transforms PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 120)
     qt_add_executable(photodeck-layer-ops-tests tests/test_layer_ops.cpp resources.qrc)
     target_link_libraries(photodeck-layer-ops-tests PRIVATE photodeck-core Qt6::Test)
     add_test(NAME photodeck-layer-ops COMMAND photodeck-layer-ops-tests
@@ -191,5 +192,15 @@ if(BUILD_TESTING)
         -o "${CMAKE_CURRENT_BINARY_DIR}/photodeck-smart-objects-tests-native.xml,junitxml"
         -o "${CMAKE_CURRENT_BINARY_DIR}/photodeck-smart-objects-tests-native.txt,txt")
     set_tests_properties(photodeck-smart-objects PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 120)
+endif()
+
+if(BUILD_TESTING)
+    qt_add_executable(photodeck-export-dialog-tests tests/test_export_dialog.cpp resources.qrc)
+    target_link_libraries(photodeck-export-dialog-tests PRIVATE photodeck-core Qt6::Test)
+    add_test(NAME photodeck-export-dialog COMMAND photodeck-export-dialog-tests
+        -o "${CMAKE_CURRENT_BINARY_DIR}/photodeck-export-dialog-tests-native.xml,junitxml"
+        -o "${CMAKE_CURRENT_BINARY_DIR}/photodeck-export-dialog-tests-native.txt,txt")
+    set_tests_properties(photodeck-export-dialog PROPERTIES
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 120)
 endif()

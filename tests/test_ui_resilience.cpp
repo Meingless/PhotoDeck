@@ -233,7 +233,7 @@ class UiResilienceTests : public QObject {
                                     Qt::ControlModifier | Qt::ShiftModifier);
                 },
                 [&](QDialog *dialog) {
-                    exportDialog = qobject_cast<QFileDialog *>(dialog) &&
+                    exportDialog = dialog->objectName() == "exportDialog" &&
                                    dialog->windowTitle() == "Görüntüyü dışa aktar";
                     dialog->reject();
                 }));

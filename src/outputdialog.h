@@ -5,6 +5,9 @@ class QSpinBox;
 class QComboBox;
 class QCheckBox;
 class QDoubleSpinBox;
+class QLineEdit;
+class QLabel;
+class RasterOutputOptionsWidget;
 class RasterOutputDialog : public QDialog {
     Q_OBJECT
   public:
@@ -13,10 +16,24 @@ class RasterOutputDialog : public QDialog {
     void accept() override;
 
   private:
-    QSize original;
-    QSpinBox *width, *height, *quality, *dpi;
-    QComboBox *profile;
-    QCheckBox *embedded, *ratio;
+    RasterOutputOptionsWidget *settings;
+};
+class ExportDialog : public QDialog {
+    Q_OBJECT
+  public:
+    explicit ExportDialog(QSize source, const QString &initialFile, QWidget *parent = nullptr);
+    QString filePath() const;
+    RasterExportOptions options() const;
+    void accept() override;
+
+  private:
+    void synchronizeFormat();
+    void browse();
+    QLineEdit *path;
+    QComboBox *format;
+    QLabel *formatNote, *validation;
+    RasterOutputOptionsWidget *settings;
+    bool checking = false;
 };
 class PdfOutputDialog : public QDialog {
     Q_OBJECT

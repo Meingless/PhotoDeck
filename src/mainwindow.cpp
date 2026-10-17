@@ -1030,7 +1030,8 @@ QAction *MainWindow::action(const QString &id, const QString &text, const QKeySe
         const QByteArray expectedStack = wasTransforming ? layerStackKey(expected) : QByteArray{};
         // These commands own a chooser/confirmation. Their cancellation must not
         // apply a pending transform, so settle only after the user accepts.
-        if (canvas && id != "import" && id != "rasterize" && id != "replaceSmartObjectContents") {
+        if (canvas && id != "import" && id != "rasterize" && id != "replaceSmartObjectContents" &&
+            id != "export" && id != "advancedRaster") {
             if ((id == "undo" || id == "redo") && canvas->isTransforming()) {
                 canvas->cancelTransform();
                 return;
@@ -1610,7 +1611,7 @@ void MainWindow::buildMenus() {
             "farklı en-boy oranı sabit çerçeveyi dolduracak şekilde esnetilir. Önceki EA2 v7 projeleri açamaz.\n"
             "Tekerlek: işaretçinin çevresinde yakınlaştırma. Orta tuş: gezinme.\n\n.pdeck "
             "proje dosyası katmanları, maskeleri ve renk ayarlarını korur.\nPNG/WebP saydamlığı korur; "
-            "JPEG beyaz arka planla düzleştirilir.\nCtrl+Shift+E dışa aktarım penceresini açar. "
+            "JPEG beyaz arka planla düzleştirilir.\nCtrl+Shift+E konum, biçim, kalite ve boyut seçeneklerini tek dışa aktarım penceresinde açar. "
             "Ctrl+E alta, Ctrl+Alt+Shift+E görünür katmanları birleştirir.\n"
             "Ctrl+T katman dönüşümü, metni ve kaynak pikselleri korur. Enter dönüşümü uygular, "
             "Esc iptal eder. Ctrl+Alt+T sayısal dönüşüm ve perspektif ayarlarını açar. "
@@ -3533,24 +3534,8 @@ void MainWindow::customizeBrush() {
     c->update();
 }
 void MainWindow::exportAdvancedRaster() {
-    auto *d = currentDocument();
-    if (!d)
-        return;
-    RasterOutputDialog dialog(d->state.size, this);
-    if (dialog.exec() != QDialog::Accepted)
-        return;
-    QString filters = "PNG (*.png);;JPEG (*.jpg)";
-    if (QImageWriter::supportedImageFormats().contains("webp"))
-        filters += ";;WebP (*.webp)";
-    if (QImageWriter::supportedImageFormats().contains("tiff"))
-        filters += ";;TIFF (*.tiff)";
-    QString file = chooseSaveTarget(this, "Raster görüntüyü dışa aktar",
-                                    QFileInfo(d->title).completeBaseName() + ".png", filters);
-    if (file.isEmpty())
-        return;
-    QString e;
-    if (!d->exportRaster(file, dialog.options(), &e))
-        error(e);
+    // The regular export screen now includes the advanced raster settings.
+    exportDocument();
 }
 void MainWindow::exportPdfDocument() {
     auto *d = currentDocument();
@@ -3585,33 +3570,45 @@ void MainWindow::printDocument() {
         error("Yazdırma tamamlanamadı. Yazıcı bağlantısını ve sürücüyü kontrol edin.");
 }
 void MainWindow::exportDocument() {
-    auto *d = currentDocument();
-    if (!d)
+    const QPointer<MainWindow> self(this);
+    const QPointer<Canvas> canvas = currentCanvas();
+    const QPointer<Document> document = currentDocument();
+    if (!canvas || !document)
         return;
-    currentCanvas()->finishPendingGesture();
-    QString filters = "PNG · saydam (*.png);;JPEG · beyaz arka plan (*.jpg)";
-    if (QImageWriter::supportedImageFormats().contains("webp"))
-        filters += ";;WebP · saydam (*.webp)";
-    filters += ";;BMP (*.bmp)";
-    if (QImageWriter::supportedImageFormats().contains("tiff"))
-        filters += ";;TIFF · RGB 8 bit (*.tiff)";
-    QString selected;
-    QString file = chooseSaveTarget(this, "Görüntüyü dışa aktar",
-                                    QFileInfo(d->title).completeBaseName() + ".png", filters, &selected);
-    if (file.isEmpty())
+    const quint64 revision = document->revision();
+    const QByteArray stack = layerStackKey(document);
+    const bool transforming = canvas->isTransforming();
+    const QTransform preview = transforming ? canvas->transformGeometry() : QTransform{};
+    // Export what is currently previewed without committing a transform or changing
+    // the layered document, its dirty state, selection or undo/redo history.
+    State snapshot = transforming ? canvas->pendingTransformState() : document->state;
+    for (auto &layer : snapshot.layers)
+        layer.cache = {};
+    const QString title = document->title;
+    QString initial = QFileInfo(title).completeBaseName() + ".png";
+    if (!document->path.isEmpty())
+        initial = QFileInfo(document->path).dir().filePath(initial);
+    const QPointer<ExportDialog> dialog = new ExportDialog(snapshot.size, initial, this);
+    auto cleanup = qScopeGuard([dialog] {
+        if (dialog)
+            dialog->deleteLater();
+    });
+    if (dialog->exec() != QDialog::Accepted || !self || !dialog)
         return;
-    int quality = 95;
-    if (QFileInfo(file).suffix().toLower() == "jpg" || QFileInfo(file).suffix().toLower() == "jpeg" ||
-        QFileInfo(file).suffix().toLower() == "webp") {
-        bool ok;
-        quality =
-            QInputDialog::getInt(this, "Dışa aktarım kalitesi", "Kalite (1–100)", 95, 1, 100, 1, &ok);
-        if (!ok)
-            return;
+    if (!canvas || !document || currentCanvas() != canvas || currentDocument() != document ||
+        document->revision() != revision || layerStackKey(document) != stack ||
+        canvas->isTransforming() != transforming ||
+        (transforming && canvas->transformGeometry() != preview)) {
+        status->setText("Çalışma değişti; görüntü dışa aktarılmadı. Dışa aktar penceresini yeniden açın.");
+        return;
     }
-    QString e;
-    if (!d->exportImage(file, quality, &e))
-        error(e);
+    const QString file = dialog->filePath();
+    Document output;
+    output.state = std::move(snapshot);
+    output.title = title;
+    QString message;
+    if (!output.exportRaster(file, dialog->options(), &message))
+        error(message);
     else
         status->setText("Dışa aktarıldı · " + QFileInfo(file).fileName());
 }

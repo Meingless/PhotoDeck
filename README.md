@@ -6,6 +6,8 @@ AI içermeyen, tamamen yerel, C++/Qt 6 ile geliştirilen fotoğraf ve katman dü
 
 Bu yayımlanmamış çalışma, EA2 üzerine gömülü akıllı nesneler ekler. Kaynak pikseller, sabit yerleştirme çerçevesi ve geri alınabilir içerik değiştirme korunur. Akıllı nesneler v7 proje biçimi gerektirir; EA2 bu dosyaları açamaz. Kapsam, kullanım ve sınırlar: [Akıllı nesneler](docs/SMART-OBJECTS.md).
 
+Üstteki Dışa aktar düğmesi artık konum, biçim, kalite, boyut ve DPI/ICC ayarlarını tek PhotoDeck ekranında toplar. [Dışa aktarım](docs/EXPORT.md).
+
 ## Yayımlanmış EA2 temeli
 
 Bu dal 0.10.0-ea.2 kullanılabilirlik güncellemesini hazırlar. Tuvalden hedef katman seçimi, canlı dönüşüm ölçüleri, açık oran kilidi, özgünü koruyan seçimi kopyala ve dönüştür yolu, güvenli boyamaya geçiş ve dar pencere düzeni iyileştirmelerini içerir. Seçim geçmişi/adlandırılmış seçimler, tuval üstü dönüşüm tutamaçları, hassas katman konumlandırma ve ok tuşlarıyla taşıma, liste içinde sürükleyerek katman sıralama, etkileşimli geçmiş paneli ve arka planda kurtarma kaydı içerir. Paketler yalnızca son PR ve main kaynağının dört platform doğrulaması ile Linux sanitizer işi başarılı olduktan sonra yayımlanır. Çalıştırılan kaynak, CI bağlantıları ve paket SHA-256 değerleri [sürüm kaydında](https://github.com/Meingless/PhotoDeck/releases/tag/v0.10.0-ea.2) ve RELEASE-PROOF.json dosyasında bulunur. Güncel kapsam ve yerel ölçüm sınırları [geliştirme notlarında](docs/DEVELOPMENT-0.10.md).
