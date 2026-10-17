@@ -96,6 +96,21 @@ class SmartObjectTests : public QObject {
         QApplication::setAttribute(Qt::AA_DontUseNativeDialogs);
         QImageReader::setAllocationLimit(128);
     }
+    void readOnlyCanvasDetailsDoNotDetachSharedLayers() {
+        Document document;
+        fixture(document);
+        Canvas canvas(&document);
+        const State snapshot = document.state;
+        const Layer *storage = document.state.layers.constData();
+        QCOMPARE(snapshot.layers.constData(), storage);
+        QCOMPARE(canvas.activeLayerSourceSize(), QSize(8, 6));
+        QVERIFY(!canvas.activeLayerDisplayBounds().isEmpty());
+        QCOMPARE(canvas.activeLayerTargetName(), QString("Photo"));
+        // A const UI query must not detach the live QList: refresh() can still hold
+        // a reference to its active layer while a displayed-state copy shares it.
+        QCOMPARE(document.state.layers.constData(), storage);
+        QCOMPARE(snapshot.layers.constData(), storage);
+    }
     void conversionAndReplacementAreSingleUndoableSteps() {
         Document document;
         fixture(document);

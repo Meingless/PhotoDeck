@@ -1370,7 +1370,8 @@ const Layer *Canvas::previewLayer() const {
         return &transformSource;
     }
     const int active = document->state.active;
-    return active >= 0 && active < document->state.layers.size() ? &document->state.layers[active] : nullptr;
+    // Read-only access must not detach a layer list shared with a preview snapshot.
+    return active >= 0 && active < document->state.layers.size() ? &document->state.layers.at(active) : nullptr;
 }
 State Canvas::previewState() const {
     State state = document->state;

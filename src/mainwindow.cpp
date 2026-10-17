@@ -2524,8 +2524,15 @@ void MainWindow::updateLayerDetails() {
     const auto *document = currentDocument();
     if (!canvas || !document || document->state.layers.isEmpty())
         return;
-    const State displayed = canvas->isTransforming() ? canvas->pendingTransformState() : document->state;
-    const auto &active = displayed.layers[displayed.active];
+    // Copy only the displayed layer. Sharing the complete live layer list here can
+    // detach it during downstream UI reads and invalidate refresh() references.
+    const Layer active = [canvas, document] {
+        if (canvas->isTransforming()) {
+            const State displayed = canvas->pendingTransformState();
+            return displayed.layers.at(displayed.active);
+        }
+        return document->state.layers.at(document->state.active);
+    }();
     const QSize source = canvas->activeLayerSourceSize();
     const QRect bounds = canvas->activeLayerDisplayBounds();
     QString description = QString("Hedef: %1\n%8: %2 × %3 px\n"
