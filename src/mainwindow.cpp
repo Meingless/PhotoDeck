@@ -2107,6 +2107,16 @@ void MainWindow::buildInspector() {
     auto *importButton = new QToolButton;
     importButton->setObjectName("addImageLayer");
     importButton->setDefaultAction(actions["import"]);
+    // A native/fallback font can make the full action label wider than the
+    // narrow inspector. Keep every word, and leave the toolbar's label alone.
+    // QAction changes reapply iconText to a default-action button, so restore
+    // this control's line break after availability/tooltip updates as well.
+    const auto setImportLabel = [importButton] {
+        importButton->setText("Görüntü katmanı\nekle…");
+        importButton->setAccessibleName("Görüntü katmanı ekle…");
+    };
+    connect(actions["import"], &QAction::changed, importButton, setImportLabel);
+    setImportLabel();
     importButton->setToolButtonStyle(Qt::ToolButtonTextOnly);
     importButton->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
     layout->addWidget(importButton);

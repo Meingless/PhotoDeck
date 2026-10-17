@@ -681,6 +681,55 @@ class UsabilityTests : public QObject {
         d->changed();
         QTRY_VERIFY(quick->isEnabled());
     }
+    void imageLayerShortcutFitsEveryInspector_data() {
+        QTest::addColumn<QString>("preset");
+        for (const auto &entry : uiPresets())
+            QTest::newRow(qPrintable(entry.id)) << entry.id;
+    }
+    void imageLayerShortcutFitsEveryInspector() {
+        QFETCH(QString, preset);
+        MainWindow window(false, false);
+        auto *d = new Document;
+        fixture(*d);
+        window.addDocument(d);
+        window.applyUiPreset(preset, false);
+        window.resize(900, 620);
+        window.show();
+        QTest::qWait(30);
+        QCOMPARE(window.size(), QSize(900, 620));
+        auto *command = window.findChild<QAction *>("import");
+        auto *button = window.findChild<QToolButton *>("addImageLayer");
+        QVERIFY(command && button);
+        QCOMPARE(button->defaultAction(), command);
+        const QString fullLabel = "Görüntü katmanı ekle…";
+        QCOMPARE(command->iconText(), fullLabel);
+        for (bool enabled : {false, true}) {
+            command->setEnabled(enabled); // QAction updates must retain the narrow label.
+            QCOMPARE(button->isEnabled(), enabled);
+            QCOMPARE(button->text().simplified(), fullLabel);
+            QCOMPARE(button->accessibleName(), fullLabel);
+            QCOMPARE(command->iconText(), fullLabel);
+        }
+        if (preset == "touch") {
+            QVERIFY(button->isHidden()); // This preset exposes the same action beside Open.
+            return;
+        }
+        QScrollArea *scroll = nullptr;
+        for (auto *parent = button->parentWidget(); parent && !scroll; parent = parent->parentWidget())
+            scroll = qobject_cast<QScrollArea *>(parent);
+        QVERIFY(scroll);
+        QTRY_VERIFY2(scroll->widget()->minimumSizeHint().width() <= scroll->viewport()->width(),
+                     qPrintable(QString("%1 inspector minimum=%2 viewport=%3 import=%4")
+                                    .arg(preset).arg(scroll->widget()->minimumSizeHint().width())
+                                    .arg(scroll->viewport()->width())
+                                    .arg(button->minimumSizeHint().width())));
+        scroll->ensureWidgetVisible(button, 0, 0);
+        QTRY_VERIFY(button->visibleRegion().contains(button->rect()));
+        QVERIFY(button->width() >= button->minimumSizeHint().width());
+        QVERIFY(button->height() >= button->minimumSizeHint().height());
+        QCOMPARE(scroll->horizontalScrollBar()->maximum(), 0);
+        QVERIFY(!d->dirty);
+    }
     void transformedPaintRecoveryCancelAndBlankLayerPreserveSource() {
         MainWindow window(false, false);
         auto *d = new Document;
