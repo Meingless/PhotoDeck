@@ -1,11 +1,15 @@
 # PhotoDeck özellik doğrulama kapsamı
 
-Bu denetim, **0.10.0-ea.1** kaynak adayının davranış ve test kapsamını gösterir. Test adı bulunması testin bu commit'te geçtiği anlamına gelmez; çalıştırılan kaynak, ortam ve sonuçlar [0.10 geliştirme notlarında](DEVELOPMENT-0.10.md) ayrı kaydedilir. Aşağıdaki 0.2–0.9.1 sonuçları tarihseldir; yeni dalın paket veya CI kanıtı değildir. Henüz uygulanmayan Photoshop farkları [PHOTOSHOP-COMPARISON.md](PHOTOSHOP-COMPARISON.md) içinde açık hedefler olarak izlenir; testlerin geçmesi bunları kapatmaz.
+Bu denetim, **0.10.0-ea.3** kaynak adayının davranış ve test kapsamını gösterir. Test adı bulunması testin bu commit'te geçtiği anlamına gelmez; çalıştırılan kaynak, ortam ve sonuçlar [0.10 geliştirme notlarında](DEVELOPMENT-0.10.md) ayrı kaydedilir. Aşağıdaki 0.2–0.9.1 sonuçları tarihseldir; yeni dalın paket veya CI kanıtı değildir. Henüz uygulanmayan Photoshop farkları [PHOTOSHOP-COMPARISON.md](PHOTOSHOP-COMPARISON.md) içinde açık hedefler olarak izlenir; testlerin geçmesi bunları kapatmaz.
 
-## 0.10.0-ea.1 — güncel kapsam
+## 0.10.0-ea.3 — güncel kapsam
 
 | Davranış | Kaynak testleri ve kullanım sınırları |
 |---|---|
+| Gömülü akıllı nesneye dönüşüm, bağımsız kimlikle çoğaltma, tam çözünürlüklü içerik değiştirme ve açık rasterleştirme | `tests/test_smart_objects.cpp`; [akıllı nesne kılavuzu](SMART-OBJECTS.md). Bağlantılı dosya, iç içe belge, ayrı içerik sekmesi veya yeniden sıralanabilir akıllı filtre yığını değildir. Maske/efekt işleme sabit çerçeve çözünürlüğündedir. |
+| Akıllı kaynağı boyama/kesme/bütün-görüntü dönüşümü/birleştirmeden koruma; v7 kayıt, kurtarma ve ilk kayıt uyarısı | `tests/test_smart_objects.cpp`, `tests/test_features.cpp`, `tests/test_output.cpp`, `tests/test_ui_resilience.cpp`. EA2 ve eski okuyucular v7'yi açamaz; akıllı nesne yoksa v5/v6 korunur. |
+| Konum/biçim/kalite/boyut/DPI/ICC ile tek ekranda raster çıktı; iptal, üzerine yazma ve açık dönüşüm önizlemesini koruma | `tests/test_export_dialog.cpp`; [dışa aktarım kılavuzu](EXPORT.md). Yeni kodlayıcı, CMYK, soft-proof veya katmanlı çıktı eklemez. |
+| Tuvalden hedef seçimi, canlı dönüşüm ölçüleri, açık oran kilidi ve kaynak koruyan boyamaya geçiş | `tests/test_usability.cpp`; [dönüşüm kılavuzu](ON-CANVAS-TRANSFORM.md). Seçimi kopyala ve dönüştür ayrı raster kopya üretir. |
 | Seçim geri alma/yeniden seçme ve açıkça adlandırılmış kayıtlı seçimler | `tests/test_selection_workflow.cpp`, `tests/test_ui_resilience.cpp`; [seçim ve biçim kılavuzu](SELECTION-WORKFLOW.md) |
 | Ctrl+T ile bütün etkin katmanda tuval üstü taşıma/ölçek/dönüş; Ctrl+Alt+T ile sayısal/perspektif ayarları | `tests/test_transforms.cpp`; [dönüşüm kılavuzu](ON-CANVAS-TRANSFORM.md). Seçili piksel parçası dönüşümü veya warp değildir. |
 | F2 ile satır içi katman adı; tıklanan satırı hedefleyen bağlam menüsü | `tests/test_layer_ops.cpp`: `inlineRenamePreservesSourcesAndIsOneUndo`, `layerContextMenuTargetsClickedRowAndCanCancel` |
@@ -14,7 +18,7 @@ Bu denetim, **0.10.0-ea.1** kaynak adayının davranış ve test kapsamını gö
 | Geçmiş panelinde geri ve ileri adımlara fare/klavyeyle gezinme | `tests/test_history_navigation.cpp`; [geçmiş kılavuzu](HISTORY-NAVIGATION.md). Kalıcı geçmiş arşivi değildir. |
 | Arka planda kurtarma kodlama/yazımı; süreç genelinde en fazla bir değişmez anlık görüntü ve kodlayıcı | `tests/test_recovery.cpp`, `tests/test_recovery_files.cpp`, `tests/test_recovery_codec.cpp`; [kurtarma kılavuzu](RECOVERY.md). Normal Kaydet eşzamanlı kalır. |
 
-Normal proje kaydı, adlandırılmış seçim yoksa v5'tir. Adlandırılmış seçimler v6 gerektirir; yayımlanan 0.9.1 bunları açamaz. İlk v6 kaydında uyarı ve eski orijinali ayrı kopyayla koruyan akış vardır. Yalnız geçici seçim v6 yükseltmesi yapmaz; kurtarma bağlamının ayrı v6 kullanımı seçim kılavuzunda açıklanır. Kayıtlı seçimler genel amaçlı bir alfa Channels paneli değildir. PSD/RAW, CMYK/yüksek bit, gruplar, ayar katmanları ve gelişmiş Photoshop eşdeğerliği bu kapsamda eklenmedi.
+Akıllı nesne içeren normal proje/kurtarma v7 kullanır; ilk v7 kaydı uyumsuzluğu açıklar ve eski özgünü ayrı kopyayla korur. Son nesne silinir/rasterleştirilirse düşük sürüme dönülebilir. Akıllı nesne yoksa normal proje kaydı, adlandırılmış seçim yoksa v5'tir. Adlandırılmış seçimler v6 gerektirir; yayımlanan 0.9.1 bunları açamaz. İlk v6 kaydında uyarı ve eski orijinali ayrı kopyayla koruyan akış vardır. Yalnız geçici seçim v6 yükseltmesi yapmaz; kurtarma bağlamının ayrı v6 kullanımı seçim kılavuzunda açıklanır. Kayıtlı seçimler genel amaçlı bir alfa Channels paneli değildir. PSD/RAW, CMYK/yüksek bit, gruplar, ayar katmanları ve gelişmiş Photoshop eşdeğerliği bu kapsamda eklenmedi.
 
 ## Genel davranış regresyonları
 
@@ -114,6 +118,6 @@ Bu bölüm, ilgili sürümün eklendiği zamanki kapsamı ve paket akışını k
 
 0.9: `test_presets.cpp`, tüm parametre/görsel maskenin .pdbrush round-trip'i, tip koyuluk/alfa/oran, katı alan/sürüm/bütçe/isim doğrulaması ve dosya koruması, renk-cache/dönüş/undo, klonun kapsam dışında piksel bırakmaması ve örneğin dönmemesi, görünmez darbede metin kimliği, gerçek preset kaydet/kullan/import/export/seçimden uç akışları, sekme ayrılığı, restart, dosya çakışması ve bozuk dosya yedeği, özel yüzey metninde kontrast. On UI presetinin gerçek masaüstü başlangıç görüntüleri ve menü/kütüphane/ayar diyalogu PNG'leri ayrıca kontrol edilir. Linux/Windows paketleri on bir suite'i çalıştırır.
 
-## 0.10.0-ea.1 — etkin katman konumu test ayrıntısı
+## Tarihsel 0.10.0-ea.1 — etkin katman konumu test ayrıntısı
 
 `test_positioning.cpp`: altı hizalama komutu × tuval/seçim hedefleri × dört geometri; sayısal X/Y, tek adımlı undo/redo, no-op yineleme koruması, tek sayılı/tuvalden büyük merkezleme, kilit/görünürlük/boş seçim/geçersiz sınır reddi, metin/maske/geometri ve seçim koruması, v5/v6 tekrar açma. Gerçek widget testleri menü hedeflerini, bekleyen hareketi, sayısal kabul/iptal/eski bağlamı ve on presette 900×620 yerleşimi kapsar. Sınırın geometrik anlamı ve çoklu katman/dağıtım kapsamı [LAYER-POSITIONING.md](LAYER-POSITIONING.md) içinde açıklanır.

@@ -1,6 +1,6 @@
 # Uygulama içi görüntü dışa aktarımı
 
-Yayımlanmamış geliştirme dalında üstteki **Dışa aktar** düğmesi veya
+`0.10.0-ea.3` erken erişim adayında üstteki **Dışa aktar** düğmesi veya
 **Ctrl+Shift+E**, PhotoDeck'in kendi çıktı ekranını açar. Konum, dosya adı, biçim,
 biçime uygun seçenekler ve son **Dışa aktar** düğmesi aynı ekrandadır.
 

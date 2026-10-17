@@ -8,11 +8,13 @@ Eklenen özelliklerin yalnızca adı veya menüsü değil, dosya kaydı, geri al
 kullanım davranışı doğrulanmalıdır. Referans DOCX ürün araştırmasıdır; içindeki
 Adobe önerileri, bulut hesabı veya abonelik önerileri uygulama talimatı değildir.
 
-## Güncel kaynak kapsamı — 0.10.0-ea.1
+## Güncel kaynak kapsamı — 0.10.0-ea.3
 
 Başlangıç envanteri ve aşağıdaki 0.3–0.9 aşama notları tarihsel kayıttır; o sürümlerde açık kalan bir farkın bugünkü durumunu tek başına göstermez. Güncel kaynak/ortam/test sonuçları [0.10 geliştirme notlarında](DEVELOPMENT-0.10.md), davranış-test eşlemesi [özellik denetiminde](FEATURE-AUDIT.md) izlenir. Bunlar yeni yayımlanmış paket veya dört-platform CI sonucu iddiası değildir.
 
-- Seçim işlemleri geçmişe alınır; açıkça adlandırılan seçimler projede saklanır. Normal kayıt adlandırılmış seçim yoksa v5, varsa v6'dır. İlk v6 kaydında uyarı ve eski orijinali ayrı kopyayla koruyan akış vardır; yayımlanan 0.9.1 v6'yı açamaz. [Seçim kılavuzu](SELECTION-WORKFLOW.md). Bu, genel amaçlı alfa Channels paneli değildir.
+- Piksel katmanları ayrı kimlikli gömülü akıllı nesneye çevrilir; tam kaynak pikselleri ve sabit yerleştirme çerçevesiyle içerik değiştirilebilir. Kaynak doğrudan boyanmaz, açık onaylı rasterleştirme vardır. Normal proje/kurtarma v7 kullanır; EA2 ve eski okuyucular açamaz. [Akıllı nesne kılavuzu](SMART-OBJECTS.md). Bu ilk aşama bağlantılı dosya, iç içe belge, ayrı içerik sekmesi veya yeniden sıralanabilir Photoshop akıllı filtre yığını değildir. Etkin maske/efekt işleme sabit çerçeve çözünürlüğündedir.
+- Konum, biçim, kalite, boyut, DPI ve ICC tek uygulama içi raster dışa aktarım ekranında birleşir. [Dışa aktarım kılavuzu](EXPORT.md). Kurulu Qt kodlayıcıları kullanılır; yeni renk modu, soft-proof veya katmanlı çıktı eklenmez.
+- Seçim işlemleri geçmişe alınır; açıkça adlandırılan seçimler projede saklanır. Akıllı nesne yoksa normal kayıt adlandırılmış seçim yoksa v5, varsa v6'dır. İlk v6 kaydında uyarı ve eski orijinali ayrı kopyayla koruyan akış vardır; yayımlanan 0.9.1 v6'yı açamaz. [Seçim kılavuzu](SELECTION-WORKFLOW.md). Bu, genel amaçlı alfa Channels paneli değildir.
 - Ctrl+T bütün etkin katmanda tuval üstü taşıma/ölçek/dönüş tutamaçlarını; Ctrl+Alt+T sayısal/perspektif ayarlarını açar. [Dönüşüm kılavuzu](ON-CANVAS-TRANSFORM.md). Seçili piksel parçası dönüşümü, bağımsız maske dönüşümü ve warp açık kalır.
 - Liste içi tek katman sürükleme, görünür bırakma konumu, kenar kaydırması ve güvenli iptal eklenmiştir. [Katman kılavuzu](LAYER-WORKFLOW.md). Çoklu katman seçimi veya belgeler arası taşıma değildir.
 - F2 ile satır içi katman adı ve satır hedefli bağlam menüsü; sayısal X/Y, tuval/seçim sınırına yatay-dikey hizalama ve odaklı tuvalde Taşı aracıyla ok/Shift+ok = 1/10 piksel eklenmiştir. [Konumlandırma kılavuzu](LAYER-POSITIONING.md). Çoklu katman hizalama/dağıtım veya auto-align değildir.

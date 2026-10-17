@@ -38,7 +38,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     env:
-      PHOTO_VERSION: 0.10.0-smart-dev
+      PHOTO_VERSION: 0.10.0-ea.3
       PHOTO_TEST_SUITES: 24
       QT_QPA_PLATFORM: offscreen
     steps:
@@ -302,7 +302,7 @@ jobs:
             packaged-test-count.txt
             package-version.txt
             release-source.json
-            docs/releases/0.10.0-ea.2.md
+            docs/releases/0.10.0-ea.3.md
             docs/DEVELOPMENT-0.10.md
             *-startup.png
             *-startup*.log

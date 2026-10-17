@@ -1,7 +1,7 @@
 name: Publish reviewed 0.10.0 early access
 
-# This workflow is deliberately limited to reviewed release PR #4, the previously
-# reviewed v0.10.0-ea.1 merge ancestry, and this single release.
+# This workflow is deliberately limited to reviewed release PR #5, the previously
+# reviewed v0.10.0-ea.2 merge ancestry, and this single release.
 on:
   workflow_run:
     workflows: ['Build and test']
@@ -13,10 +13,10 @@ on:
         description: The only authorized release
         required: true
         type: choice
-        options: ['v0.10.0-ea.2']
-        default: 'v0.10.0-ea.2'
+        options: ['v0.10.0-ea.3']
+        default: 'v0.10.0-ea.3'
       expected_sha:
-        description: Full reviewed release PR 4 merge SHA, already successful on main CI
+        description: Full reviewed release PR 5 merge SHA, already successful on main CI
         required: true
         type: string
 
@@ -25,7 +25,7 @@ permissions:
   actions: read
 
 concurrency:
-  group: publish-photodeck-v0.10.0-ea.2
+  group: publish-photodeck-v0.10.0-ea.3
   cancel-in-progress: false
 
 jobs:
@@ -59,7 +59,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           EXPECTED_SHA: ${{ inputs.expected_sha || github.event.workflow_run.head_sha }}
-          REQUESTED_TAG: ${{ inputs.version || 'v0.10.0-ea.2' }}
+          REQUESTED_TAG: ${{ inputs.version || 'v0.10.0-ea.3' }}
         run: python3 scripts/publish-early-access.py check
 
   packages:
@@ -96,5 +96,5 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           EXPECTED_SHA: ${{ needs.guard.outputs.source_sha }}
           EXPECTED_CI_RUN_ID: ${{ needs.guard.outputs.ci_run_id }}
-          REQUESTED_TAG: 'v0.10.0-ea.2'
+          REQUESTED_TAG: 'v0.10.0-ea.3'
         run: python3 scripts/publish-early-access.py publish --artifacts release-artifacts

@@ -1,6 +1,6 @@
-# Gömülü akıllı nesneler: ilk geliştirme aşaması
+# Gömülü akıllı nesneler: ilk erken erişim aşaması
 
-Bu belge yayımlanmamış `0.10.0-smart-dev` çalışmasını anlatır. Temel, yayımlanmış
+Bu belge `0.10.0-ea.3` erken erişim adayının kaynak kapsamını anlatır. Temel, yayımlanmış
 `0.10.0-ea.2` kaynağıdır. Bu özellik EA2 paketlerinde yoktur.
 
 ## Kullanım
@@ -85,5 +85,6 @@ tamponları ve Qt ek maliyeti vardır. Belirli bir cihazda 100 MB sözü verilme
 Bu aşama bağlantılı dosyalar, iç içe belgeler, ayrı içerik-düzenleme sekmesi,
 vektör/RAW/PSD gömme veya yeniden sıralanabilir Photoshop akıllı filtre yığını
 eklemez. Mevcut katman renk/ton/filtre değerleri korunur ve düzenlenebilir.
-Çalışma yerel geliştirmedir; yeni sürüm/paket yayımı ve Windows/macOS doğrulaması
-ayrı onay ve kontrol gerektirir.
+Son EA3 kaynağının dört platform CI/paket kanıtı yayım sırasında ayrıca üretilir;
+önceki geliştirme sonucu yeni metadata kaynağının doğrulaması değildir.
+[Yayın kapıları ve sürüm notları](releases/0.10.0-ea.3.md).
