@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Fail-closed publisher for reviewed PhotoDeck release PR #3 and v0.10.0-ea.1 only.
+"""Fail-closed publisher for reviewed PhotoDeck release PR #4 and v0.10.0-ea.2 only.
 
 Uses only the job's ephemeral token and GitHub's official HTTPS API. There is no
 force, delete, asset replacement, arbitrary-version, or credential-storage path.
@@ -22,14 +22,14 @@ from urllib.request import HTTPRedirectHandler, Request, build_opener
 import xml.etree.ElementTree as ET
 
 REPOSITORY = 'Meingless/PhotoDeck'
-TAG = 'v0.10.0-ea.1'
+TAG = 'v0.10.0-ea.2'
 VERSION = TAG[1:]
 # Fixed release authorization. Update PR_NUMBER only to the assigned release PR;
 # no workflow input can change the approved repository, ancestry, branch or tag.
-BASE_SHA = 'e209345d91690ba091e535b13f2f6b5a4cb7aa4f'
-PR_NUMBER = 3
-PR_HEAD_REF = 'release/0.10.0-ea.1'
-NOTES_PATH = Path('docs/releases/0.10.0-ea.1.md')
+BASE_SHA = '49ff11fb17b2ad72d1d035917e02f4739b37d8d5'
+PR_NUMBER = 4
+PR_HEAD_REF = 'release/0.10.0-ea.2'
+NOTES_PATH = Path('docs/releases/0.10.0-ea.2.md')
 PLATFORMS = {
     'linux-x86_64': (f'PhotoDeck-{VERSION}-linux-x86_64.tar.gz',
                      f'PhotoDeck-{VERSION}-x86_64.AppImage'),
@@ -50,8 +50,9 @@ TEST_EXECUTABLES = frozenset({
     'photodeck-selection-workflow-tests', 'photodeck-positioning-tests',
     'photodeck-history-navigation-tests', 'photodeck-recovery-tests',
     'photodeck-recovery-files-tests', 'photodeck-recovery-codec-tests',
+    'photodeck-usability-tests',
 })
-TEST_SUITE_COUNT = 21
+TEST_SUITE_COUNT = 22
 TEST_CLASSES = {
     'photodeck-tests': 'PhotoDeckTests',
     'photodeck-feature-audit': 'FeatureAudit',
@@ -74,6 +75,7 @@ TEST_CLASSES = {
     'photodeck-recovery-tests': 'RecoveryTests',
     'photodeck-recovery-files-tests': 'RecoveryFilesTests',
     'photodeck-recovery-codec-tests': 'RecoveryCodecTests',
+    'photodeck-usability-tests': 'UsabilityTests',
 }
 CTEST_NAMES = frozenset(
     'photodeck-functional' if name == 'photodeck-tests' else
@@ -215,7 +217,7 @@ def validate_context(env, event, expected_sha):
     require(env.get('GITHUB_REPOSITORY') == REPOSITORY, 'Wrong repository')
     require(env.get('GITHUB_REF') == 'refs/heads/main', 'Only main may publish')
     require(env.get('GITHUB_SHA') == expected_sha, 'Workflow source is not the requested main SHA')
-    require(env.get('REQUESTED_TAG', TAG) == TAG, 'Only the authorized v0.10.0-ea.1 release is allowed')
+    require(env.get('REQUESTED_TAG', TAG) == TAG, 'Only the authorized v0.10.0-ea.2 release is allowed')
     name = env.get('GITHUB_EVENT_NAME')
     require(name in {'workflow_run', 'workflow_dispatch'}, 'Unsupported publication trigger')
     if name == 'workflow_run':
@@ -404,7 +406,7 @@ def verify_junit(path, expected_count=None, *, expected_names=None, platform=Non
             f'Unexpected JUnit test count: {path.name}')
     if expected_names is not None:
         require(len(case_names) == len(expected_names) and set(case_names) == set(expected_names),
-                f'JUnit suite inventory differs from the authorized 21 suites: {path.name}')
+                f'JUnit suite inventory differs from the authorized 22 suites: {path.name}')
     result = {'testcases': count, 'executed': count - skipped_count,
               'skipped': skipped_count, 'skipped_cases': skipped_cases}
     if expected_names is not None:
@@ -448,7 +450,7 @@ def verify_artifacts(artifacts, output, expected_sha, *, ci_run_id, package_run_
         inventory = (folder / 'packaged-test-list.txt').read_text(encoding='utf-8-sig').splitlines()
         require(len(inventory) == TEST_SUITE_COUNT and set(inventory) == TEST_EXECUTABLES and
                 (folder / 'packaged-test-count.txt').read_text(encoding='utf-8-sig').strip() == str(TEST_SUITE_COUNT),
-                f'Expected complete 21-suite inventory: {label}')
+                f'Expected complete 22-suite inventory: {label}')
         native = verify_junit(folder / 'build-release/tests.xml', TEST_SUITE_COUNT,
                               expected_names=CTEST_NAMES)
         platform_proof = {'native_ctest': native, 'native_qt': {}, 'bundled_runtime': {}}
@@ -532,8 +534,8 @@ def release_body(notes, expected_sha, ci_run_id, package_run_id, assets):
         f'- Reviewed release PR: https://github.com/{REPOSITORY}/pull/{PR_NUMBER}\n'
         f'- Successful source CI (four native targets and Linux ASan/UBSan): https://github.com/{REPOSITORY}/actions/runs/{ci_run_id}\n'
         f'- Four-platform packaging: https://github.com/{REPOSITORY}/actions/runs/{package_run_id}\n'
-        '- All four packaging targets passed the exact 21-suite native CTest inventory, supplied all 21 granular QtTest reports, and passed deployed-app startup checks.\n'
-        '- Linux and Windows additionally reran all 21 suites in the bundled Qt runtime.\n'
+        '- All four packaging targets passed the exact 22-suite native CTest inventory, supplied all 22 granular QtTest reports, and passed deployed-app startup checks.\n'
+        '- Linux and Windows additionally reran all 22 suites in the bundled Qt runtime.\n'
         '- RELEASE-PROOF.json records observed testcase totals and every explicitly allowed platform-specific skip; SHA256SUMS.txt covers all five packages and that proof.\n'
         '- Windows packages are unsigned. macOS packages are ad-hoc signed and are not notarized.\n'
         f'\n<!-- photodeck-one-release:{expected_sha}:{fingerprint} -->\n')

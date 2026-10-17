@@ -179,12 +179,12 @@ class GuardTests(unittest.TestCase):
         self.assertEqual(self.check(), '42')
 
     def test_publisher_is_pinned_to_release_pr_and_reviewed_main(self):
-        self.assertEqual(publisher.PR_NUMBER, 3)
-        self.assertEqual(publisher.PR_HEAD_REF, 'release/0.10.0-ea.1')
-        self.assertEqual(publisher.TAG, 'v0.10.0-ea.1')
+        self.assertEqual(publisher.PR_NUMBER, 4)
+        self.assertEqual(publisher.PR_HEAD_REF, 'release/0.10.0-ea.2')
+        self.assertEqual(publisher.TAG, 'v0.10.0-ea.2')
         self.assertEqual(set(publisher.TEST_CLASSES), publisher.TEST_EXECUTABLES)
-        self.assertEqual(len(publisher.TEST_EXECUTABLES), 21)
-        self.assertEqual(publisher.BASE_SHA, 'e209345d91690ba091e535b13f2f6b5a4cb7aa4f')
+        self.assertEqual(len(publisher.TEST_EXECUTABLES), 22)
+        self.assertEqual(publisher.BASE_SHA, '49ff11fb17b2ad72d1d035917e02f4739b37d8d5')
         calls = []
         def recording_git(*args):
             calls.append(args)
@@ -330,9 +330,9 @@ class ArtifactTests(unittest.TestCase):
                 'version': publisher.VERSION, 'source_commit': SHA, 'platform': platform}))
             (folder / 'package-version.txt').write_text('PhotoDeck ' + publisher.VERSION + '\n')
             (folder / 'packaged-test-list.txt').write_text('\n'.join(sorted(publisher.TEST_EXECUTABLES)) + '\n')
-            (folder / 'packaged-test-count.txt').write_text('21\n')
+            (folder / 'packaged-test-count.txt').write_text('22\n')
             (folder / 'build-release').mkdir()
-            (folder / 'build-release/tests.xml').write_text(junit_xml(21, sorted(publisher.CTEST_NAMES)))
+            (folder / 'build-release/tests.xml').write_text(junit_xml(22, sorted(publisher.CTEST_NAMES)))
             for name in publisher.TEST_EXECUTABLES:
                 (folder / 'build-release' / (name + '-native.xml')).write_text(qt_xml(name))
             if label in {'linux-x86_64', 'windows-x64'}:
@@ -363,11 +363,11 @@ class ArtifactTests(unittest.TestCase):
         self.assertEqual(proof['source_ci_run_id'], '42')
         self.assertEqual(proof['package_run_id'], '99')
         self.assertEqual(set(proof['packages']), {name for names in publisher.PLATFORMS.values() for name in names})
-        self.assertEqual(len(proof['test_executables']), 21)
+        self.assertEqual(len(proof['test_executables']), 22)
         for label, result in proof['platforms'].items():
-            self.assertEqual(result['native_ctest']['executed'], 21)
-            self.assertEqual(len(result['native_qt']), 21)
-            expected = 21 if label in {'linux-x86_64', 'windows-x64'} else 0
+            self.assertEqual(result['native_ctest']['executed'], 22)
+            self.assertEqual(len(result['native_qt']), 22)
+            expected = 22 if label in {'linux-x86_64', 'windows-x64'} else 0
             self.assertEqual(len(result['bundled_runtime']), expected)
 
     def test_reject_missing_granular_native_qt_proof_on_every_platform(self):
@@ -402,18 +402,18 @@ class ArtifactTests(unittest.TestCase):
         proof = self.artifacts / 'PhotoDeck-windows-x64/build-release/tests.xml'
         names = sorted(publisher.CTEST_NAMES)
         names[-1] = names[0]
-        proof.write_text(junit_xml(21, names))
+        proof.write_text(junit_xml(22, names))
         with self.assertRaises(publisher.GuardError):
             self.verify()
         names[-1] = 'unrelated-test-suite'
-        proof.write_text(junit_xml(21, names))
+        proof.write_text(junit_xml(22, names))
         with self.assertRaisesRegex(publisher.GuardError, 'suite inventory'):
             self.verify()
 
-    def test_reject_incomplete_twenty_one_suite_inventory(self):
+    def test_reject_incomplete_twenty_two_suite_inventory(self):
         folder = self.artifacts / 'PhotoDeck-windows-x64'
         (folder / 'packaged-test-count.txt').write_text('14\n')
-        with self.assertRaisesRegex(publisher.GuardError, '21-suite inventory'):
+        with self.assertRaisesRegex(publisher.GuardError, '22-suite inventory'):
             self.verify()
 
     def test_release_proof_reports_all_seven_explicit_windows_skips(self):
@@ -470,10 +470,10 @@ class ArtifactTests(unittest.TestCase):
 
     def test_reject_skipped_disabled_or_non_run_junit(self):
         proof = self.artifacts / 'PhotoDeck-windows-x64/build-release/tests.xml'
-        for value in ('<testsuite tests="21" skipped="1"/>',
-                      '<testsuite tests="21" disabled="1"/>',
-                      '<testsuite tests="21"><testcase><skipped/></testcase></testsuite>',
-                      '<testsuite tests="21"><testcase status="notrun"/></testsuite>'):
+        for value in ('<testsuite tests="22" skipped="1"/>',
+                      '<testsuite tests="22" disabled="1"/>',
+                      '<testsuite tests="22"><testcase><skipped/></testcase></testsuite>',
+                      '<testsuite tests="22"><testcase status="notrun"/></testsuite>'):
             proof.write_text(value)
             with self.subTest(value=value), self.assertRaises(publisher.GuardError):
                 self.verify()
@@ -703,10 +703,10 @@ class PublicationTests(unittest.TestCase):
         self.assertFalse(self.api.writes)
 
     def test_release_body_describes_exact_proof_scope(self):
-        self.assertIn('exact 21-suite native CTest', self.body)
-        self.assertIn('Linux and Windows additionally reran all 21 suites', self.body)
+        self.assertIn('exact 22-suite native CTest', self.body)
+        self.assertIn('Linux and Windows additionally reran all 22 suites', self.body)
         self.assertIn('RELEASE-PROOF.json', self.body)
-        self.assertIn('/pull/3', self.body)
+        self.assertIn('/pull/4', self.body)
 
     def test_creates_draft_uploads_verified_set_then_publishes(self):
         result = self.publish()

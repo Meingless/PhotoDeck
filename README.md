@@ -1,10 +1,10 @@
-# PhotoDeck 0.10.0-ea.1
+# PhotoDeck 0.10.0-ea.2
 
 AI içermeyen, tamamen yerel, C++/Qt 6 ile geliştirilen fotoğraf ve katman düzenleyici. Linux, Windows ve macOS için ortak kaynak kullanır. Tarayıcı motoru, Python çalışma zamanı, bulut hesabı, abonelik veya ağ servisi gerekmez.
 
 ## Geliştirme dalı
 
-Bu dal 0.10.0-ea.1 erken erişim sürümünü hazırlar. Seçim geçmişi/adlandırılmış seçimler, tuval üstü dönüşüm tutamaçları, hassas katman konumlandırma ve ok tuşlarıyla taşıma, liste içinde sürükleyerek katman sıralama, etkileşimli geçmiş paneli ve arka planda kurtarma kaydı içerir. Paketler yalnızca son PR ve main kaynağının dört platform doğrulaması ile Linux sanitizer işi başarılı olduktan sonra yayımlanır. Çalıştırılan kaynak, CI bağlantıları ve paket SHA-256 değerleri [sürüm kaydında](https://github.com/Meingless/PhotoDeck/releases/tag/v0.10.0-ea.1) ve RELEASE-PROOF.json dosyasında bulunur. Güncel kapsam ve yerel ölçüm sınırları [geliştirme notlarında](docs/DEVELOPMENT-0.10.md).
+Bu dal 0.10.0-ea.2 kullanılabilirlik güncellemesini hazırlar. Tuvalden hedef katman seçimi, canlı dönüşüm ölçüleri, açık oran kilidi, özgünü koruyan seçimi kopyala ve dönüştür yolu, güvenli boyamaya geçiş ve dar pencere düzeni iyileştirmelerini içerir. Seçim geçmişi/adlandırılmış seçimler, tuval üstü dönüşüm tutamaçları, hassas katman konumlandırma ve ok tuşlarıyla taşıma, liste içinde sürükleyerek katman sıralama, etkileşimli geçmiş paneli ve arka planda kurtarma kaydı içerir. Paketler yalnızca son PR ve main kaynağının dört platform doğrulaması ile Linux sanitizer işi başarılı olduktan sonra yayımlanır. Çalıştırılan kaynak, CI bağlantıları ve paket SHA-256 değerleri [sürüm kaydında](https://github.com/Meingless/PhotoDeck/releases/tag/v0.10.0-ea.2) ve RELEASE-PROOF.json dosyasında bulunur. Güncel kapsam ve yerel ölçüm sınırları [geliştirme notlarında](docs/DEVELOPMENT-0.10.md).
 
 ## Önceki 0.9.1 erken erişim yayımı
 
@@ -59,7 +59,7 @@ Adlandırılmış seçim içermeyen projeler `.pdeck` v5 olarak kaydedilir; v1�
 
 Kırpma zinciri katman sırasına bağlıdır. Temel katmanı silmek çocukların kırpmasını kaldırır; sıralama/yeni katman yerleştirme hangi temel katmana kırpıldığını değiştirebilir. Gizli temelli gruplar görünür birleştirmede korunur. Görünür temeli ve gizli kırpılan çocuğu olan gruplar birleştirilmeden önce ayrılmalı veya görünür yapılmalıdır; ilişkiler sessizce kaybedilmez. Feather ile kesme, kısmi alfa sınırlarında iki ayrı katman oluşturduğu için sert seçim gibi piksel piksel aynı görünümü garanti etmez.
 
-Dönüşmüş katmanda piksel boyamak/silmek için Katman → Görünümü rasterleştir kullanın. Bu açık adım dönüşümü, maskeyi ve renk ayarlarını kaynak piksellere uygular; metin düzenlenebilirliği kaldırılır, görünür sonuç ve geri alma korunur. Tüm görüntüye boyutlandırma/90° dönüş/aynalama uygulanması da dönüştürülmüş katmanları önce rasterleştirir. Tuval üstü dönüşüm bütün etkin katmana uygulanır; seçim piksellerini ayrı dönüştürmez. Aynalama/eğme/perspektif sayısal pencerede sunulur; warp henüz yoktur. [Tuval üstü dönüşüm kılavuzu](docs/ON-CANVAS-TRANSFORM.md).
+Dönüşmüş katmanda piksel boyamak/silmek için Katman → Görünümü rasterleştir kullanın. Bu açık adım dönüşümü, maskeyi ve renk ayarlarını kaynak piksellere uygular; metin düzenlenebilirliği kaldırılır, görünür sonuç ve geri alma korunur. Tüm görüntüye boyutlandırma/90° dönüş/aynalama uygulanması da dönüştürülmüş katmanları önce rasterleştirir. Tuval üstü dönüşüm varsayılan olarak bütün etkin katmana uygulanır. Seçim varken Seçimi kopyala ve dönüştür, görünen seçili pikselleri yeni bağımsız katmanda önizler; özgün yerinde kalır. Esc kopyayı ve dönüşümü iptal eder; Uygula ikisini tek geri alma adımında kaydeder. Özgündeki seçili pikselleri yerinde dönüştürmez. Aynalama/eğme/perspektif sayısal pencerede sunulur; warp henüz yoktur. [Tuval üstü dönüşüm kılavuzu](docs/ON-CANVAS-TRANSFORM.md).
 
 Açılıştaki Horizon kompozisyonu PhotoDeck için kodla çizilmiş özgün bir örnektir. `examples/Horizon.pdeck` dosyası dört ayrı düzenlenebilir katman içerir.
 
@@ -83,7 +83,7 @@ Linux için `./scripts/build.sh` CMake varsa onu, yoksa qmake6 + make kullanır 
 
 Windows'ta Qt MSVC veya MinGW kitiyle derleyin; `windeployqt` Qt DLL'lerini ve eklentilerini uygulamanın yanına koyar. MSVC/CMake çıktısı `build-cmake/Release/photodeck.exe` olur. macOS'ta çıktı `build-cmake/photodeck.app`; `macdeployqt` bağımlılıkları `.app` içine yerleştirir. Dağıtım için Windows imzalama ve macOS imzalama/notarization ayrıca gerekir.
 
-`.github/workflows/validate.yml` her pull request ve `main` push'unda Qt 6.8.3 ile Linux x86_64, Windows x64, macOS Intel ve Apple Silicon hedeflerinde CMake derlemesi ve 21 CTest grubunu çalıştıracak şekilde tanımlıdır. Test raporları ve CTest günlükleri iş artifacts bölümüne yüklenir. Bu dört hedefin CI kapsamı, tüm işletim sistemi sürümleri veya fiziksel cihazlar için uyumluluk garantisi değildir. Yeni akışın eklenmesi başarılı bir run kanıtı sayılmaz; ilk GitHub run sonucu ayrıca kontrol edilmelidir.
+`.github/workflows/validate.yml` her pull request ve `main` push'unda Qt 6.8.3 ile Linux x86_64, Windows x64, macOS Intel ve Apple Silicon hedeflerinde CMake derlemesi ve 22 CTest grubunu çalıştıracak şekilde tanımlıdır. Test raporları ve CTest günlükleri iş artifacts bölümüne yüklenir. Bu dört hedefin CI kapsamı, tüm işletim sistemi sürümleri veya fiziksel cihazlar için uyumluluk garantisi değildir. Yeni akışın eklenmesi başarılı bir run kanıtı sayılmaz; ilk GitHub run sonucu ayrıca kontrol edilmelidir.
 
 Ayrı Linux işi uygulama ve test kodunu Clang AddressSanitizer/UndefinedBehaviorSanitizer ile derler; hata ilk bulguda işi durdurur. Küçük, tekrarlanabilir `.pdeck`/`.pdbrush` kesme ve byte mutasyonu corpus'u da bu işte çalışır. Bu bir kapsam güdümlü fuzzing altyapısı veya güvenlik sertifikası değildir. Önceden derlenmiş Qt SDK'sı instrument edilmez; süreç sonu leak detection kapalıdır. Aynı kontrolü Linux'ta Qt yolu tanımlı ortamda çalıştırmak için:
 
@@ -98,7 +98,7 @@ QT_QPA_PLATFORM=offscreen ASAN_OPTIONS=detect_leaks=0:halt_on_error=1 \
   ctest --test-dir build-sanitizers -C Debug --output-on-failure --timeout 120
 ```
 
-`.github/workflows/build.yml` etiket (`v*`) veya manuel çalıştırmayla erken erişim paketlerini hazırlar; PR doğrulama akışından ayrıdır. Linux x86_64, Windows x64 ve macOS Intel/Apple Silicon için paketler ve açılış görüntüleri bu akıştadır. Linux/Windows paket denetimleri CTest envanterinden bulunan 21 grubun tümünü paketlenmiş Qt ile çalıştırır; legacy proje fixture'ları test için eklenir, ardından test araçlarıyla birlikte kaldırılır. Paketler önce Actions artifacts olarak hazırlanır; GitHub Release yayımlaması ayrı adımdır. Windows yayıncı sertifikası ve macOS Developer ID/noter onayı yoktur; macOS ad hoc imza denetimi yayıncı kimliğini doğrulamaz.
+`.github/workflows/build.yml` etiket (`v*`) veya manuel çalıştırmayla erken erişim paketlerini hazırlar; PR doğrulama akışından ayrıdır. Linux x86_64, Windows x64 ve macOS Intel/Apple Silicon için paketler ve açılış görüntüleri bu akıştadır. Linux/Windows paket denetimleri CTest envanterinden bulunan 22 grubun tümünü paketlenmiş Qt ile çalıştırır; legacy proje fixture'ları test için eklenir, ardından test araçlarıyla birlikte kaldırılır. Paketler önce Actions artifacts olarak hazırlanır; GitHub Release yayımlaması ayrı adımdır. Windows yayıncı sertifikası ve macOS Developer ID/noter onayı yoktur; macOS ad hoc imza denetimi yayıncı kimliğini doğrulamaz.
 
 Linux paketleme: `./scripts/package-linux.sh` sistem Qt kullanan küçük geliştirici paketini hazırlar. Erken erişim CI paketi `scripts/package-linux-portable.py` ile gerekli Qt kütüphanelerini, Wayland bileşenlerini ve uyumlu font yapılandırmasını içerir.
 
@@ -106,12 +106,12 @@ Dağıtılmış Linux paketini tek dosyalık AppImage olarak hazırlamak için `
 
 ```sh
 python3 scripts/package-appimage.py \
-  --package dist/PhotoDeck-0.10.0-ea.1-linux-x86_64 \
+  --package dist/PhotoDeck-0.10.0-ea.2-linux-x86_64 \
   --appimagetool /path/to/appimagetool \
-  --output dist/PhotoDeck-0.10.0-ea.1-x86_64.AppImage
+  --output dist/PhotoDeck-0.10.0-ea.2-x86_64.AppImage
 ```
 
-AppImage'a çalıştırma izni verip açın: `chmod +x PhotoDeck-0.10.0-ea.1-x86_64.AppImage`. FUSE bulunmayan sistemlerde `APPIMAGE_EXTRACT_AND_RUN=1 ./PhotoDeck-0.10.0-ea.1-x86_64.AppImage` kullanılabilir. Windows taşınabilir paketindeki `PhotoDeck.exe`, yanındaki DLL ve eklenti klasörleriyle birlikte taşınmalıdır. macOS paketindeki `.app` tüm içeriğiyle korunmalıdır.
+AppImage'a çalıştırma izni verip açın: `chmod +x PhotoDeck-0.10.0-ea.2-x86_64.AppImage`. FUSE bulunmayan sistemlerde `APPIMAGE_EXTRACT_AND_RUN=1 ./PhotoDeck-0.10.0-ea.2-x86_64.AppImage` kullanılabilir. Windows taşınabilir paketindeki `PhotoDeck.exe`, yanındaki DLL ve eklenti klasörleriyle birlikte taşınmalıdır. macOS paketindeki `.app` tüm içeriğiyle korunmalıdır.
 
 ## Mevcut kapsam
 

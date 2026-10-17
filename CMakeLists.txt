@@ -173,3 +173,13 @@ if(BUILD_TESTING)
             ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 120)
     endforeach()
 endif()
+
+if(BUILD_TESTING)
+    qt_add_executable(photodeck-usability-tests tests/test_usability.cpp resources.qrc)
+    target_link_libraries(photodeck-usability-tests PRIVATE photodeck-core Qt6::Test)
+    add_test(NAME photodeck-usability COMMAND photodeck-usability-tests
+        -o "${CMAKE_CURRENT_BINARY_DIR}/photodeck-usability-tests-native.xml,junitxml"
+        -o "${CMAKE_CURRENT_BINARY_DIR}/photodeck-usability-tests-native.txt,txt")
+    set_tests_properties(photodeck-usability PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 120)
+endif()

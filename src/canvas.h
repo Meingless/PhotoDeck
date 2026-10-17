@@ -8,6 +8,7 @@
 class QFrame;
 class QLabel;
 class QToolButton;
+class QPushButton;
 
 class Canvas : public QWidget {
     Q_OBJECT
@@ -55,12 +56,22 @@ class Canvas : public QWidget {
     bool hasPendingGesture() const {
         return dragging || panning || polygonActive || tabletActive || transformActive;
     }
+    void setAutoSelectLayers(bool enabled);
+    bool autoSelectLayers() const { return autoSelectEnabled; }
+    void setShowLayerBounds(bool enabled);
+    bool showsLayerBounds() const { return layerBoundsVisible; }
+    QSize activeLayerSourceSize() const;
+    QRect activeLayerDisplayBounds() const;
+    QString activeLayerTargetName() const;
     bool beginTransform();
+    bool copySelectionAndTransform();
     bool applyTransform();
     void cancelTransform();
     void showNumericTransform();
     bool isTransforming() const { return transformActive; }
     QTransform transformGeometry() const { return transformPreview; }
+    // Exact state Apply would commit; callers must first check isTransforming().
+    State pendingTransformState() const;
     QPointF transformHandlePosition(TransformHandles::Handle handle) const;
     void deleteSelection();
   signals:
@@ -69,6 +80,7 @@ class Canvas : public QWidget {
     void colorPicked(QColor color);
     void textRequested(QPoint point);
     void transformSessionChanged(bool active);
+    void transformPreviewChanged();
 
   protected:
     void paintEvent(QPaintEvent *) override;
@@ -124,7 +136,16 @@ class Canvas : public QWidget {
     int nudgeUpdates = 0;
     bool applyingNudge = false;
     void endKeyboardNudge();
+    bool autoSelectEnabled = false, layerBoundsVisible = true;
+    int layerAt(QPointF position) const;
+    void paintMoveTarget(QPainter &painter);
+    bool numericKeepAspectRatio = true;
     bool transformActive = false, transformDragging = false;
+    bool transformSelectionCopy = false;
+    State transformCopyState;
+    Selection transformSelection;
+    const Layer *previewLayer() const;
+    State previewState() const;
     int transformLayer = -1;
     QTransform transformPreview;
     Layer transformSource;
@@ -135,7 +156,10 @@ class Canvas : public QWidget {
     TransformHandles transformGesture;
     TransformHandles::Handle transformHandle = TransformHandles::None;
     QPointF transformPress;
-    QFrame *transformControls;
+    QFrame *transformControls, *transformContext;
+    QWidget *transformContextContent;
+    QLabel *transformScope, *transformMetrics;
+    QPushButton *transformCopySelection;
     QLabel *transformCaption, *transformInfo;
     QToolButton *transformApply, *transformCancel, *transformNumeric;
     TransformHandles transformBox() const;
@@ -144,6 +168,8 @@ class Canvas : public QWidget {
     void advanceTransform(QPointF position, Qt::KeyboardModifiers modifiers);
     void endTransformSession();
     void positionTransformControls();
+    void updateTransformContext(int availableWidth = 0);
+    void positionTransformContext();
     void paintTransform(QPainter &painter);
     void updateTransformCursor(QPointF widgetPosition);
 };

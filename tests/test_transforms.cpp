@@ -828,7 +828,9 @@ class TransformTests : public QObject {
         QVERIFY(canvas.isTransforming());
         QCOMPARE(canvas.transformGeometry(), replacement);
         QCOMPARE(hints.size(), 1);
-        QVERIFY(hints.first().first().toString().startsWith("Tüm katmanı"));
+        const QString hint = hints.first().first().toString();
+        QVERIFY(hint.startsWith(target.state.layers[target.state.active].name));
+        QVERIFY(hint.contains("katmanının tamamı"));
         QCOMPARE(target.state.layers[0].geometry, QTransform());
         QCOMPARE(target.historyLabels().size(), history);
     }
@@ -868,7 +870,9 @@ class TransformTests : public QObject {
                     delete target.data();
             }
         });
-        QVERIFY(canvas->applyTransform());
+        // The completed transaction survives, but reentry invalidates this
+        // operation's continuation token so callers must not act on its old target.
+        QVERIFY(!canvas->applyTransform());
         QVERIFY(handled);
         if (action == "new-preview") {
             QVERIFY(canvas->isTransforming());

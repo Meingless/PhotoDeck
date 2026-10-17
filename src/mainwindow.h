@@ -115,8 +115,12 @@ class MainWindow : public QMainWindow {
     QComboBox *selectionModeInput = nullptr;
     QSpinBox *selectionToleranceInput = nullptr;
     QCheckBox *contiguousSelectionInput = nullptr;
+    QCheckBox *moveAutoSelectInput = nullptr, *moveShowBoundsInput = nullptr;
     QToolButton *colorButton = nullptr, *maskButton = nullptr;
     QLabel *info = nullptr, *status = nullptr, *zoomLabel = nullptr, *layerDetails = nullptr;
+    QFrame *paintBlockedBanner = nullptr, *layerImportHelp = nullptr;
+    QLabel *paintBlockedReason = nullptr;
+    bool layerImportHelpSeen = false, layerImportHelpVisible = false;
     Histogram *histogram = nullptr;
     QTimer refreshTimer, autosaveTimer, recoverySaveTimer;
     struct PreviewCache {
@@ -135,7 +139,11 @@ class MainWindow : public QMainWindow {
     void buildMenus();
     void buildTools();
     void buildInspector();
+    void buildWorkflowBanners();
     void updateToolOptions();
+    void updatePaintAvailability();
+    void updateLayerDetails();
+    void showLayerImportHelp();
     QAction *action(const QString &id, const QString &text, const QKeySequence &shortcut,
                     std::function<void()> fn);
     void refresh();
@@ -143,6 +151,8 @@ class MainWindow : public QMainWindow {
     void newDocument();
     void chooseOpen();
     void importLayer();
+    void rasterizeLayer();
+    void newPaintLayer();
     bool saveDocument(Document *d, bool saveAs = false);
     void exportDocument();
     void exportAdvancedRaster();
