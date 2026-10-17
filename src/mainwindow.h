@@ -151,6 +151,8 @@ class MainWindow : public QMainWindow {
     void newDocument();
     void chooseOpen();
     void importLayer();
+    void convertSmartObject();
+    void replaceSmartObjectContents();
     void rasterizeLayer();
     void newPaintLayer();
     bool saveDocument(Document *d, bool saveAs = false);

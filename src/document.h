@@ -10,6 +10,7 @@
 #include <QObject>
 #include <QPainter>
 #include <QTransform>
+#include <QUuid>
 #include <QVector>
 #include <functional>
 #include <atomic>
@@ -17,7 +18,9 @@ class QIODevice;
 
 struct Layer {
     QString name = "Katman";
-    QImage pixels;
+    QImage pixels; // Smart objects retain the full decoded embedded replacement source here.
+    QUuid smartObjectId; // Null identifies an ordinary raster/text layer.
+    QSize smartObjectSize; // Stable logical frame; established once at conversion.
     QImage mask; // ARGB, grayscale: white reveals, black conceals.
     QPoint offset;
     QTransform
@@ -38,8 +41,11 @@ struct Layer {
     mutable int cacheB = 999, cacheC = 999, cacheS = 999, cacheBlur = 999;
     mutable ToneSettings cacheTones;
     mutable QTransform cacheGeometry;
+    mutable QSize cacheSourceSize;
     mutable FilterSettings cacheFilters;
     mutable MaskSettings cacheMaskSettings;
+    bool isSmartObject() const { return !smartObjectId.isNull(); }
+    QSize sourceSize() const { return isSmartObject() ? smartObjectSize : pixels.size(); }
     QImage rendered() const;
     QRect transformedBounds() const;
     QPoint renderedOffset() const;
@@ -68,7 +74,7 @@ class Document : public QObject {
     static constexpr qint64 MaxSelectionBytes = 64 * 1024 * 1024;
     static constexpr int MaxSavedSelections = 16;
     static constexpr int MaxSelectionNameLength = 128;
-    static constexpr int NativeProjectVersion = 6; // Highest codec version; normal saves prefer v5.
+    static constexpr int NativeProjectVersion = 7; // Ordinary saves remain v5/v6; smart objects use v7.
     enum class SaveStatus { Success, Error, ExternalModification, FormatUpgradeRequired };
     struct SaveOptions {
         bool allowExternalOverwrite = false;
@@ -117,6 +123,10 @@ class Document : public QObject {
     bool alignLayer(LayerAlignment alignment, AlignmentTarget target, QString *error = nullptr);
     bool setLayerTransform(const QTransform &transform, QString *error = nullptr);
     bool rasterizeLayer(QString *error = nullptr);
+    // Embedded sources retain a stable logical frame and existing editable effects/mask.
+    // Each operation owns one undo step and rejects a pending edit without changing it.
+    bool convertToSmartObject(QString *error = nullptr);
+    bool replaceSmartObjectContents(const QImage &image, QString *error = nullptr);
     bool canvasSize(QSize size, QPoint anchor, QString *error = nullptr);
     bool mergeVisible(QString *error = nullptr);
     bool flatten(QString *error = nullptr);
@@ -174,7 +184,7 @@ class Document : public QObject {
     SaveStatus lastSaveStatus() const { return saveStatus; }
     // Zero denotes a new/imported document; a successful native save records projectSaveVersion().
     int sourceVersion() const { return sourceProjectVersion; }
-    int projectSaveVersion() const { return state.savedSelections.isEmpty() ? 5 : 6; }
+    int projectSaveVersion() const;
     bool requiresFormatUpgrade(const QString &file) const;
     bool load(const QString &file, QString *error);
     bool exportImage(const QString &file, int quality, QString *error);

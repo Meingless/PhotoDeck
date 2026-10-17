@@ -89,7 +89,8 @@ bool sameLayer(const Layer &a, const Layer &b) {
            a.blend == b.blend && a.brightness == b.brightness && a.contrast == b.contrast &&
            a.saturation == b.saturation && a.blur == b.blur && a.text == b.text && a.font == b.font &&
            a.color == b.color && a.tones == b.tones && a.geometry == b.geometry &&
-           a.clipped == b.clipped && a.filters == b.filters && a.maskSettings == b.maskSettings;
+           a.clipped == b.clipped && a.filters == b.filters && a.maskSettings == b.maskSettings &&
+           a.smartObjectId == b.smartObjectId && a.smartObjectSize == b.smartObjectSize;
 }
 QVector<const Selection *> selections(const State &state) {
     QVector<const Selection *> result{&state.selection, &state.previousSelection};
@@ -171,6 +172,15 @@ bool sameContent(const State &a, const State &b) {
             return false;
     return true;
 }
+bool validSmartMetadata(const Layer &layer) {
+    return layer.isSmartObject()
+               ? Document::validSize(layer.smartObjectSize) && layer.text.isEmpty()
+               : layer.smartObjectSize == QSize();
+}
+bool hasSmartObjects(const State &state) {
+    return std::any_of(state.layers.cbegin(), state.layers.cend(),
+                       [](const Layer &layer) { return layer.isSmartObject(); });
+}
 bool validState(const State &s, QString *error) {
     auto fail = [&] {
         if (error)
@@ -181,10 +191,11 @@ bool validState(const State &s, QString *error) {
         s.active >= s.layers.size() || bytes(s) > Document::MaxLayerBytes || s.layers.first().clipped)
         return fail();
     qint64 renderBytes = 0;
+    QSet<QUuid> smartIds;
     for (const auto &l : s.layers) {
-        if (!Document::validSize(l.pixels.size()) ||
+        if (!validSmartMetadata(l) || !Document::validSize(l.pixels.size()) ||
             l.pixels.format() != QImage::Format_ARGB32_Premultiplied ||
-            (!l.mask.isNull() && l.mask.size() != l.pixels.size()) || !Document::validOffset(l.offset) ||
+            (!l.mask.isNull() && l.mask.size() != l.sourceSize()) || !Document::validOffset(l.offset) ||
             (!l.mask.isNull() && l.mask.format() != QImage::Format_ARGB32_Premultiplied) ||
             !std::isfinite(l.opacity) || l.opacity < 0 || l.opacity > 1 || l.blend < 0 ||
             l.blend >= Blending::Count || qAbs(qint64(l.brightness)) > 100 ||
@@ -193,6 +204,11 @@ bool validState(const State &s, QString *error) {
             l.font.toString().size() > 16384 || !l.tones.valid() || !l.filters.valid() ||
             !l.maskSettings.valid() || !l.validGeometry())
             return fail();
+        if (l.isSmartObject()) {
+            if (smartIds.contains(l.smartObjectId))
+                return fail();
+            smartIds.insert(l.smartObjectId);
+        }
         const QSize size = l.transformedBounds().size();
         renderBytes += qint64(size.width()) * size.height() * 4;
         if (renderBytes > Document::MaxLayerBytes)
@@ -206,6 +222,13 @@ bool offsetError(QString *error) {
     return false;
 }
 bool normalizeGeometry(State &state, QString *error) {
+    // Whole-document pixel rewrites would destroy embedded sources, even at identity geometry.
+    if (hasSmartObjects(state)) {
+        if (error)
+            *error = "Akıllı nesneleri korumak için katman dönüşümünü kullanın veya önce akıllı "
+                     "nesne katmanlarını açıkça rasterleştirin.";
+        return false;
+    }
     qint64 required = 0;
     for (const auto &l : state.layers) {
         if (!l.validGeometry())
@@ -418,6 +441,8 @@ bool writeProject(const State &state, QIODevice &device, int targetVersion, bool
         out << l.geometry << l.clipped;
         l.filters.write(out);
         l.maskSettings.write(out);
+        if (targetVersion >= 7)
+            out << l.smartObjectId << l.smartObjectSize;
         if (!writeImage(out, l.pixels, cancel) || !writeImage(out, l.mask, cancel)) {
             if (error)
                 *error = "Katman görüntüsü yazılamadı.";
@@ -515,8 +540,8 @@ bool readImageRecord(QDataStream &stream, QImage &image, qint64 &remaining) {
 
 QRect Layer::transformedBounds() const {
     if (geometry.isIdentity())
-        return pixels.rect();
-    QRectF bounds = geometry.mapRect(QRectF(QPointF(), QSizeF(pixels.size())));
+        return QRect(QPoint(), sourceSize());
+    QRectF bounds = geometry.mapRect(QRectF(QPointF(), QSizeF(sourceSize())));
     if (!std::isfinite(bounds.left()) || !std::isfinite(bounds.top()) ||
         !std::isfinite(bounds.right()) || !std::isfinite(bounds.bottom()) ||
         qAbs(bounds.left()) > Document::MaxCoordinate || qAbs(bounds.top()) > Document::MaxCoordinate ||
@@ -526,6 +551,8 @@ QRect Layer::transformedBounds() const {
     return bounds.toAlignedRect();
 }
 bool Layer::validGeometry() const {
+    if (!Document::validSize(sourceSize()))
+        return false;
     const double values[] = {geometry.m11(), geometry.m12(), geometry.m13(),
                              geometry.m21(), geometry.m22(), geometry.m23(),
                              geometry.m31(), geometry.m32(), geometry.m33()};
@@ -536,8 +563,9 @@ bool Layer::validGeometry() const {
         return false;
     // A projective horizon must not cross the source rectangle: it would produce an unbounded image.
     double minimum = std::numeric_limits<double>::infinity(), maximum = -minimum;
-    for (QPointF p : {QPointF(0, 0), QPointF(pixels.width(), 0), QPointF(0, pixels.height()),
-                      QPointF(pixels.width(), pixels.height())}) {
+    const QSize size = sourceSize();
+    for (QPointF p : {QPointF(0, 0), QPointF(size.width(), 0), QPointF(0, size.height()),
+                      QPointF(size.width(), size.height())}) {
         double w = geometry.m13() * p.x() + geometry.m23() * p.y() + geometry.m33();
         minimum = qMin(minimum, w);
         maximum = qMax(maximum, w);
@@ -555,6 +583,8 @@ Layer Layer::rasterized() const {
     layer.pixels = rendered();
     layer.offset = renderedOffset();
     layer.geometry = {};
+    layer.smartObjectId = {};
+    layer.smartObjectSize = {};
     layer.mask = {};
     layer.text.clear();
     layer.brightness = layer.contrast = layer.saturation = layer.blur = 0;
@@ -565,19 +595,75 @@ Layer Layer::rasterized() const {
     return layer;
 }
 QImage Layer::rendered() const {
-    if (!validGeometry() || pixels.format() != QImage::Format_ARGB32_Premultiplied ||
-        (!mask.isNull() && mask.format() != QImage::Format_ARGB32_Premultiplied))
+    if (!validSmartMetadata(*this) || !Document::validSize(pixels.size()) || !validGeometry() ||
+        pixels.format() != QImage::Format_ARGB32_Premultiplied ||
+        (!mask.isNull() && (mask.format() != QImage::Format_ARGB32_Premultiplied ||
+                            mask.size() != sourceSize())))
         return {};
     const bool activeMask = !mask.isNull() && maskSettings.enabled && maskSettings.density > 0;
-    if (!activeMask && filters.isIdentity() && brightness == 0 && contrast == 0 && saturation == 0 &&
-        blur == 0 && tones.isIdentity() && geometry.isIdentity())
+    const bool identityEffects = filters.isIdentity() && brightness == 0 && contrast == 0 &&
+                                 saturation == 0 && blur == 0 && tones.isIdentity();
+    if (!activeMask && identityEffects && geometry.isIdentity() && pixels.size() == sourceSize())
         return pixels;
     if (!cache.isNull() && cacheKey == pixels.cacheKey() && maskKey == mask.cacheKey() &&
         cacheB == brightness && cacheC == contrast && cacheS == saturation && cacheBlur == blur &&
         cacheTones == tones && cacheGeometry == geometry && cacheFilters == filters &&
-        cacheMaskSettings == maskSettings)
+        cacheMaskSettings == maskSettings && cacheSourceSize == sourceSize())
         return cache;
-    cache = boxBlur(pixels, blur).convertToFormat(QImage::Format_ARGB32);
+    auto rememberCache = [&]() {
+        cacheKey = pixels.cacheKey();
+        maskKey = mask.cacheKey();
+        cacheB = brightness;
+        cacheC = contrast;
+        cacheS = saturation;
+        cacheBlur = blur;
+        cacheTones = tones;
+        cacheGeometry = geometry;
+        cacheFilters = filters;
+        cacheMaskSettings = maskSettings;
+        cacheSourceSize = sourceSize();
+        return cache;
+    };
+    // With no source-space processing, compose the native-to-frame scale with the
+    // editable geometry and sample the embedded source once. Enlarging a small logical
+    // frame can then recover the detail retained in a higher-resolution replacement.
+    // Keep the original path when native size equals the frame so conversion alone is
+    // pixel-identical to the pre-existing raster-layer renderer.
+    if (isSmartObject() && pixels.size() != sourceSize() && !activeMask && identityEffects &&
+        !geometry.isIdentity()) {
+        const QRect bounds = transformedBounds();
+        QImage result(bounds.size(), QImage::Format_ARGB32_Premultiplied);
+        if (result.isNull())
+            return {};
+        result.fill(Qt::transparent);
+        QPainter painter(&result);
+        painter.setRenderHint(QPainter::SmoothPixmapTransform);
+        const QTransform nativeToFrame = QTransform::fromScale(
+            qreal(sourceSize().width()) / pixels.width(),
+            qreal(sourceSize().height()) / pixels.height());
+        painter.setTransform(nativeToFrame * geometry *
+                             QTransform::fromTranslate(-bounds.left(), -bounds.top()));
+        painter.drawImage(QPoint(), pixels);
+        painter.end();
+        cache = result;
+        return rememberCache();
+    }
+    // Editable effects and active masks are defined in stable logical-frame pixels.
+    // These processed paths intentionally rasterize at frame resolution before geometry.
+    // Replacement dimensions never move their coordinate space or mutate mask pixels.
+    const QImage source = pixels.size() == sourceSize()
+                              ? pixels
+                              : pixels.scaled(sourceSize(), Qt::IgnoreAspectRatio,
+                                              Qt::SmoothTransformation);
+    if (source.isNull())
+        return {};
+    if (!activeMask && identityEffects && geometry.isIdentity()) {
+        cache = source;
+        return rememberCache();
+    }
+    cache = boxBlur(source, blur).convertToFormat(QImage::Format_ARGB32);
+    if (cache.isNull())
+        return {};
     double factor = std::pow(2.0, contrast / 50.0), sat = 1.0 + saturation / 100.0;
     ToneMapper mapper(tones);
     for (int y = 0; y < cache.height(); ++y) {
@@ -624,17 +710,7 @@ QImage Layer::rendered() const {
         p.end();
         cache = result;
     }
-    cacheKey = pixels.cacheKey();
-    maskKey = mask.cacheKey();
-    cacheB = brightness;
-    cacheC = contrast;
-    cacheS = saturation;
-    cacheBlur = blur;
-    cacheTones = tones;
-    cacheGeometry = geometry;
-    cacheFilters = filters;
-    cacheMaskSettings = maskSettings;
-    return cache;
+    return rememberCache();
 }
 Document::Document(QObject *parent) : QObject(parent), selection(state.selection) {}
 bool Document::validSize(QSize s) {
@@ -723,7 +799,7 @@ QImage Document::readImage(const QString &file, QString *error) {
 }
 bool Document::insertLayer(Layer layer, const QString &label, QString *error) {
     if (state.layers.isEmpty() || !validSize(layer.pixels.size()) ||
-        (!layer.mask.isNull() && layer.mask.size() != layer.pixels.size())) {
+        (!layer.mask.isNull() && layer.mask.size() != layer.sourceSize())) {
         if (error)
             *error = "Belge veya katman görüntüsü geçersiz.";
         return false;
@@ -732,6 +808,8 @@ bool Document::insertLayer(Layer layer, const QString &label, QString *error) {
     if (!layer.mask.isNull())
         layer.mask = layer.mask.convertToFormat(QImage::Format_ARGB32_Premultiplied);
     layer.cache = {};
+    if (layer.isSmartObject())
+        layer.smartObjectId = QUuid::createUuid();
     State pending = state;
     pending.layers.insert(pending.active + 1, layer);
     ++pending.active;
@@ -745,7 +823,7 @@ bool Document::insertLayer(Layer layer, const QString &label, QString *error) {
 }
 bool Document::insertLayerAboveClippingGroup(Layer layer, const QString &label, QString *error) {
     if (inEdit || state.layers.isEmpty() || state.active < 0 || state.active >= state.layers.size() ||
-        !validSize(layer.pixels.size()) || (!layer.mask.isNull() && layer.mask.size() != layer.pixels.size())) {
+        !validSize(layer.pixels.size()) || (!layer.mask.isNull() && layer.mask.size() != layer.sourceSize())) {
         if (error)
             *error = "Katman eklemeden önce geçerli belgedeki düzenlemeyi tamamlayın.";
         return false;
@@ -754,6 +832,8 @@ bool Document::insertLayerAboveClippingGroup(Layer layer, const QString &label, 
     if (!layer.mask.isNull())
         layer.mask = layer.mask.convertToFormat(QImage::Format_ARGB32_Premultiplied);
     layer.cache = {};
+    if (layer.isSmartObject())
+        layer.smartObjectId = QUuid::createUuid();
     layer.clipped = false;
     State pending = state;
     int at = state.active + 1;
@@ -867,11 +947,11 @@ bool Document::addMask(QString *error) {
         emit updated();
         return true;
     }
-    if (!allows(l.pixels.sizeInBytes(), error, 0))
+    if (!allows(qint64(l.sourceSize().width()) * l.sourceSize().height() * 4, error, 0))
         return false;
     beginEdit();
     l.maskSettings = {};
-    l.mask = QImage(l.pixels.size(), QImage::Format_ARGB32_Premultiplied);
+    l.mask = QImage(l.sourceSize(), QImage::Format_ARGB32_Premultiplied);
     l.mask.fill(Qt::white);
     if (!selection.isEmpty()) {
         l.mask.fill(Qt::black);
@@ -1221,6 +1301,75 @@ bool Document::rasterizeLayer(QString *error) {
     commit("Katman görünümü rasterleştirildi");
     return true;
 }
+bool Document::convertToSmartObject(QString *error) {
+    if (error)
+        error->clear();
+    if (inEdit || state.active < 0 || state.active >= state.layers.size()) {
+        if (error)
+            *error = "Akıllı nesneye dönüştürmeden önce geçerli katmandaki düzenlemeyi tamamlayın.";
+        return false;
+    }
+    const Layer &layer = state.layers[state.active];
+    if (layer.locked || !layer.visible || !layer.text.isEmpty() || layer.isSmartObject()) {
+        if (error)
+            *error = "Dönüştürmek için görünür, kilidi açık bir piksel katmanı seçin. Metni önce "
+                     "açıkça rasterleştirin.";
+        return false;
+    }
+    State pending = state;
+    Layer &candidate = pending.layers[pending.active];
+    candidate.smartObjectId = QUuid::createUuid();
+    candidate.smartObjectSize = candidate.pixels.size();
+    candidate.cache = {};
+    if (!validState(pending, error))
+        return false;
+    beginEdit();
+    state = pending;
+    commit("Akıllı nesneye dönüştürüldü");
+    return true;
+}
+bool Document::replaceSmartObjectContents(const QImage &image, QString *error) {
+    if (error)
+        error->clear();
+    if (inEdit || state.active < 0 || state.active >= state.layers.size()) {
+        if (error)
+            *error = "İçeriği değiştirmeden önce geçerli katmandaki düzenlemeyi tamamlayın.";
+        return false;
+    }
+    const Layer &layer = state.layers[state.active];
+    if (layer.locked || !layer.isSmartObject()) {
+        if (error)
+            *error = "İçeriğini değiştirmek için kilidi açık bir akıllı nesne seçin.";
+        return false;
+    }
+    if (!validSize(image.size())) {
+        if (error)
+            *error = "Yeni içerik geçersiz veya 16 MP / 16384 piksel sınırını aşıyor.";
+        return false;
+    }
+    if (!allows(qint64(image.width()) * image.height() * 4 - layer.pixels.sizeInBytes(), error, 0))
+        return false;
+    QImage source = Output::workingRgb(image);
+    if (source.isNull()) {
+        if (error)
+            *error = "Yeni içerik görüntüsü oluşturulamadı.";
+        return false;
+    }
+    if (source == layer.pixels)
+        return false;
+    State pending = state;
+    Layer &candidate = pending.layers[pending.active];
+    candidate.pixels = source;
+    candidate.cache = {};
+    // Identity, logical frame, placement, editable effects, mask, and compositing
+    // attributes are deliberately unchanged. No source paths are stored.
+    if (!validState(pending, error))
+        return false;
+    beginEdit();
+    state = pending;
+    commit("Akıllı nesne içeriği değiştirildi");
+    return true;
+}
 bool Document::canvasSize(QSize size, QPoint anchor, QString *error) {
     if (!validSize(size) || anchor.x() < 0 || anchor.x() > 2 || anchor.y() < 0 || anchor.y() > 2) {
         if (error)
@@ -1257,6 +1406,11 @@ bool Document::mergeVisible(QString *error) {
                     if (error)
                         *error = "Gizli kırpılan katman içeren grubu birleştirmeden önce kırpma "
                                  "ilişkisini kaldırın veya katmanı görünür yapın.";
+                    return false;
+                }
+                if (state.layers[j].isSmartObject()) {
+                    if (error)
+                        *error = "Birleştirmeden önce ilgili akıllı nesne katmanlarını açıkça rasterleştirin.";
                     return false;
                 }
                 merge[j] = true;
@@ -1307,6 +1461,11 @@ bool Document::mergeVisible(QString *error) {
     return true;
 }
 bool Document::flatten(QString *error) {
+    if (hasSmartObjects(state)) {
+        if (error)
+            *error = "Düzleştirmeden önce akıllı nesne katmanlarını açıkça rasterleştirin.";
+        return false;
+    }
     if (!validSize(state.size)) {
         if (error)
             *error = "Belge boyutu geçersiz.";
@@ -1344,6 +1503,12 @@ bool Document::prepareSelectionLayer(bool cut, State &pending, QString *error) c
     }
     const int index = state.active;
     const Layer &original = state.layers[index];
+    if (cut && original.isSmartObject()) {
+        if (error)
+            *error = "Akıllı nesneden kesmeden önce katmanı açıkça rasterleştirin; seçim kopyası "
+                     "oluşturmak da mümkündür.";
+        return false;
+    }
     if (cut && (original.locked || original.clipped ||
                 (index + 1 < state.layers.size() && state.layers[index + 1].clipped))) {
         if (error)
@@ -1440,8 +1605,15 @@ bool Document::selectionCopyState(State &pending, QString *error) const {
     return validState(pending, error);
 }
 bool Document::layerViaSelection(bool cut, QString *error) {
-    if (selection.isEmpty() && !cut)
+    if (selection.isEmpty() && !cut) {
+        if (state.active >= 0 && state.active < state.layers.size() &&
+            state.layers[state.active].isSmartObject()) {
+            Layer copy = state.layers[state.active].rasterized();
+            copy.name = state.layers[state.active].name + " seçim kopyası";
+            return insertLayer(copy, "Seçim yeni katmana kopyalandı", error);
+        }
         return duplicate(error);
+    }
     State pending;
     if (!prepareSelectionLayer(cut, pending, error))
         return false;
@@ -1461,6 +1633,11 @@ bool Document::mergeDown(QString *error) {
         return false;
     }
     const Layer &base = state.layers[top - 1], &upper = state.layers[top];
+    if (base.isSmartObject() || upper.isSmartObject()) {
+        if (error)
+            *error = "Alta birleştirmeden önce ilgili akıllı nesne katmanlarını açıkça rasterleştirin.";
+        return false;
+    }
     QRect bounds(base.renderedOffset(), base.transformedBounds().size());
     if (!upper.clipped)
         bounds = bounds.united(QRect(upper.renderedOffset(), upper.transformedBounds().size()));
@@ -1570,7 +1747,17 @@ bool Document::addText(QString text, QFont font, QColor color, QPoint at, QStrin
     return insertLayer(l, "Metin eklendi", error);
 }
 bool Document::editText(QString text, QFont font, QColor color, QString *error) {
+    if (state.active < 0 || state.active >= state.layers.size()) {
+        if (error)
+            *error = "Belge boş.";
+        return false;
+    }
     auto &l = state.layers[state.active];
+    if (l.isSmartObject()) {
+        if (error)
+            *error = "Akıllı nesneyi metin olarak düzenlemeden önce açıkça rasterleştirin.";
+        return false;
+    }
     if (l.locked) {
         if (error)
             *error = "Katman kilitli.";
@@ -1899,6 +2086,9 @@ bool Document::isSourceFile(const FileVersion &version) const {
             samePath(version.resolvedPath, sourceFile.resolvedPath) ||
             (!version.identity.isEmpty() && version.identity == sourceFile.identity));
 }
+int Document::projectSaveVersion() const {
+    return hasSmartObjects(state) ? 7 : state.savedSelections.isEmpty() ? 5 : 6;
+}
 bool Document::requiresFormatUpgrade(const QString &file) const {
     if (sourceProjectVersion <= 0 || sourceProjectVersion >= projectSaveVersion())
         return false;
@@ -1922,7 +2112,9 @@ bool Document::writeRecoverySnapshot(const State &snapshot, QIODevice &device, Q
     if (cancelled(cancel) || !validState(snapshot, error))
         return false;
     const bool context = !snapshot.selection.isEmpty() || !snapshot.previousSelection.isEmpty();
-    const int version = context || !snapshot.savedSelections.isEmpty() ? 6 : 5;
+    const int version = hasSmartObjects(snapshot) ? 7
+                        : context || !snapshot.savedSelections.isEmpty() ? 6
+                                                                       : 5;
     return writeProject(snapshot, device, version, context, error, cancel);
 }
 bool Document::save(const QString &file, QString *error, bool markClean) {
@@ -1932,7 +2124,7 @@ bool Document::save(const QString &file, QString *error, bool markClean, const S
     saveStatus = SaveStatus::Error;
     const bool recoveryContext = !markClean &&
                                  (!selection.isEmpty() || !state.previousSelection.isEmpty());
-    const int targetVersion = recoveryContext ? 6 : projectSaveVersion();
+    const int targetVersion = qMax(recoveryContext ? 6 : 5, projectSaveVersion());
     if (error)
         error->clear();
     if (!validState(state, error))
@@ -2090,9 +2282,14 @@ bool Document::load(const QString &file, QString *error) {
         if (version >= 5 &&
             (!FilterSettings::read(in, l.filters) || !MaskSettings::read(in, l.maskSettings)))
             return fail();
+        if (version >= 7) {
+            in >> l.smartObjectId >> l.smartObjectSize;
+            if (in.status() != QDataStream::Ok || !validSmartMetadata(l))
+                return fail();
+        }
         if (!readImageRecord(in, l.pixels, remaining) || l.pixels.isNull() ||
             !readImageRecord(in, l.mask, remaining) ||
-            (!l.mask.isNull() && l.mask.size() != l.pixels.size()))
+            (!l.mask.isNull() && l.mask.size() != l.sourceSize()))
             return fail();
         l.pixels = Output::workingRgb(l.pixels);
         pending.layers.append(l);

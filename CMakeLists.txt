@@ -183,3 +183,13 @@ if(BUILD_TESTING)
     set_tests_properties(photodeck-usability PROPERTIES
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 120)
 endif()
+
+if(BUILD_TESTING)
+    qt_add_executable(photodeck-smart-objects-tests tests/test_smart_objects.cpp resources.qrc)
+    target_link_libraries(photodeck-smart-objects-tests PRIVATE photodeck-core Qt6::Test)
+    add_test(NAME photodeck-smart-objects COMMAND photodeck-smart-objects-tests
+        -o "${CMAKE_CURRENT_BINARY_DIR}/photodeck-smart-objects-tests-native.xml,junitxml"
+        -o "${CMAKE_CURRENT_BINARY_DIR}/photodeck-smart-objects-tests-native.txt,txt")
+    set_tests_properties(photodeck-smart-objects PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 120)
+endif()

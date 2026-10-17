@@ -38,8 +38,8 @@ jobs:
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     env:
-      PHOTO_VERSION: 0.10.0-ea.2
-      PHOTO_TEST_SUITES: 22
+      PHOTO_VERSION: 0.10.0-smart-dev
+      PHOTO_TEST_SUITES: 23
       QT_QPA_PLATFORM: offscreen
     steps:
       - uses: actions/checkout@v4
