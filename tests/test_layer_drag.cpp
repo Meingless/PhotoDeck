@@ -1,5 +1,6 @@
 #include "mainwindow.h"
 #include <QAction>
+#include <QDebug>
 #include <QDir>
 #include <QDragEnterEvent>
 #include <QDragMoveEvent>
@@ -8,12 +9,14 @@
 #include <QMimeData>
 #include <QMouseEvent>
 #include <QPointer>
+#include <QScrollArea>
 #include <QScrollBar>
 #include <QStandardPaths>
 #include <QStyledItemDelegate>
 #include <QStyleOptionViewItem>
 #include <QStyle>
 #include <QTabWidget>
+#include <QTimer>
 #include <QtTest>
 #include <memory>
 
@@ -397,6 +400,63 @@ class LayerDragTests : public QObject {
         QCOMPARE(document->revision(), revision);
         QCOMPARE(layerNames(*document), names);
     }
+    void repeatedEdgeMovesDoNotStarveAutoscroll_data() {
+        QTest::addColumn<int>("scrollMode");
+        QTest::newRow("per-item") << int(QAbstractItemView::ScrollPerItem);
+        QTest::newRow("per-pixel") << int(QAbstractItemView::ScrollPerPixel);
+    }
+    void repeatedEdgeMovesDoNotStarveAutoscroll() {
+        QFETCH(int, scrollMode);
+        MainWindow w(false, false);
+        auto *d = dragFixture(w);
+        w.applyUiPreset("touch", false);
+        for (int i = 4; i < 20; ++i)
+            d->addLayer(QString("Layer %1").arg(i));
+        d->markSaved();
+        w.resize(900, 620);
+        settleLayerRows(w);
+        auto *list = w.findChild<QListWidget *>("layers");
+        list->setVerticalScrollMode(QAbstractItemView::ScrollMode(scrollMode));
+        auto *scroll = list->verticalScrollBar();
+        QVERIFY(scroll->maximum() > 0);
+        scroll->setValue(0);
+        const auto revision = d->revision();
+        const auto names = layerNames(*d);
+        const int history = d->historyLabels().size();
+        const QPoint start = rowDragPoint(list, 0);
+        QTest::mousePress(list->viewport(), Qt::LeftButton, {}, start);
+        const auto move = [list](QPoint point) {
+            QMouseEvent event(QEvent::MouseMove, point, list->viewport()->mapToGlobal(point),
+                              Qt::NoButton, Qt::LeftButton, Qt::NoModifier);
+            QApplication::sendEvent(list->viewport(), &event);
+        };
+        move(start + QPoint(QApplication::startDragDistance() + 4, 0));
+        QVERIFY(list->findChild<QWidget *>("layerDropIndicator")->isVisible());
+        QTimer repeatedMoves;
+        repeatedMoves.setTimerType(Qt::PreciseTimer);
+        repeatedMoves.setInterval(5);
+        int moves = 0;
+        QPoint edge;
+        connect(&repeatedMoves, &QTimer::timeout, list, [&] {
+            const QRect visible = list->viewport()->visibleRegion().boundingRect();
+            edge = {visible.center().x(), visible.bottom() - 3};
+            move(edge);
+            ++moves;
+        });
+        // Ordinary pointer updates arrive faster than the 70 ms scroll tick.
+        // Keep sending them until progress; a reset-on-move timer never fires.
+        repeatedMoves.start();
+        const bool progressed = QTest::qWaitFor([&] { return scroll->value() > 0 && moves >= 5; }, 1500);
+        repeatedMoves.stop();
+        QTest::keyClick(list, Qt::Key_Escape);
+        QTest::mouseRelease(list->viewport(), Qt::LeftButton, {}, edge);
+        QVERIFY(moves >= 5);
+        QVERIFY2(progressed, "Continuous edge pointer moves must not postpone the autoscroll tick");
+        QCOMPARE(d->revision(), revision);
+        QCOMPARE(layerNames(*d), names);
+        QCOMPARE(d->historyLabels().size(), history);
+        QVERIFY(!d->dirty);
+    }
     void narrowTouchAutoscrollReachesBothStackExtremes() {
         MainWindow w(false, false);
         auto *d = dragFixture(w);
@@ -443,8 +503,21 @@ class LayerDragTests : public QObject {
                 move(edge);
                 QTest::qWait(80);
             }
-            QVERIFY2(reached, direction > 0 ? "Last row and below-last slot must be visible at inner maximum"
-                                          : "First row and above-first slot must be visible at inner minimum");
+            QString diagnostics;
+            QDebug debug(&diagnostics);
+            debug << (direction > 0 ? "Last row and below-last slot must be visible at inner maximum"
+                                   : "First row and above-first slot must be visible at inner minimum")
+                  << "inner" << scroll->value() << scroll->minimum() << scroll->maximum()
+                  << "step" << scroll->singleStep()
+                  << "viewport" << list->viewport()->rect()
+                  << "visible" << list->viewport()->visibleRegion()
+                  << "boundary" << list->visualItemRect(list->item(direction > 0 ? list->count() - 1 : 0))
+                  << "drop" << drop << "marker" << list->findChild<QWidget *>("layerDropIndicator")->isVisible();
+            for (QWidget *parent = list->parentWidget(); parent; parent = parent->parentWidget())
+                if (auto *outer = qobject_cast<QScrollArea *>(parent))
+                    debug << "outer" << outer->objectName() << outer->verticalScrollBar()->value()
+                          << outer->verticalScrollBar()->minimum() << outer->verticalScrollBar()->maximum();
+            QVERIFY2(reached, qPrintable(diagnostics));
             move(drop);
             auto *line = list->findChild<QWidget *>("layerDropIndicator");
             QVERIFY(line->isVisible());

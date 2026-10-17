@@ -869,9 +869,12 @@ class LayerListWidget : public QListWidget {
         indicator->setGeometry(area.left() + 5, y - 1, area.width() - 10, 3);
         indicator->show();
         indicator->raise();
-        if (point.y() < area.top() + 24 || point.y() > area.bottom() - 24)
-            scrollTimer.start();
-        else
+        if (point.y() < area.top() + 24 || point.y() > area.bottom() - 24) {
+            // Pointer updates can arrive faster than the scroll interval. Keep
+            // the pending tick instead of postponing it on every edge move.
+            if (!scrollTimer.isActive())
+                scrollTimer.start();
+        } else
             scrollTimer.stop();
     }
     void clearInsertion() {
