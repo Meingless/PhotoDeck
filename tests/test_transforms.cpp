@@ -1,5 +1,6 @@
 #include "mainwindow.h"
 #include "transformdialog.h"
+#include <QAccessible>
 #include <QAction>
 #include <QComboBox>
 #include <QDialogButtonBox>
@@ -1845,6 +1846,63 @@ class TransformTests : public QObject {
         QCOMPARE(canvas.childAt(copy->mapTo(&canvas, copy->rect().center())), copy);
         QTest::mouseClick(copy, Qt::LeftButton);
         QVERIFY(scope->text().contains("Seçim kopyası"));
+        canvas.cancelTransform();
+    }
+    void onCanvasAccessibleDetailsToggleTracksVisibilityAndDefaults() {
+        Document document;
+        transformFixture(document);
+        Canvas canvas(&document);
+        prepare(canvas);
+        const int history = document.historyLabels().size();
+        QVERIFY(canvas.beginTransform());
+        QTest::keyClick(&canvas, Qt::Key_Right);
+        const QTransform preview = canvas.transformGeometry();
+        auto *details = canvas.findChild<QPushButton *>("transformDetails");
+        auto *metrics = canvas.findChild<QLabel *>("transformMetrics");
+        auto *help = canvas.findChild<QLabel *>("transformHelp");
+        QVERIFY(details && metrics && help);
+        // Automatic checked-state updates must not become explicit choices.
+        for (const QSize size : {QSize(512, 464), QSize(760, 580), QSize(512, 464)}) {
+            canvas.resize(size);
+            canvas.fit();
+            QCOMPARE(details->isChecked(), size.width() >= 640);
+            QCOMPARE(metrics->isVisible(), details->isChecked());
+        }
+        auto *accessible = QAccessible::queryAccessibleInterface(details);
+        QVERIFY(accessible);
+        auto *actions = accessible->actionInterface();
+        QVERIFY(actions);
+        QVERIFY(actions->actionNames().contains(QAccessibleActionInterface::toggleAction()));
+        QSignalSpy clicked(details, &QPushButton::clicked);
+        // Qt exposes a toggle action distinct from press/click for checkable
+        // buttons. Screen readers may use it without emitting clicked().
+        for (bool expanded : {true, false, true}) {
+            actions->doAction(QAccessibleActionInterface::toggleAction());
+            QCOMPARE(details->isChecked(), expanded);
+            QCOMPARE(bool(accessible->state().checked), expanded);
+            QCOMPARE(clicked.count(), 0);
+            QCOMPARE(metrics->isVisible(), expanded);
+            QCOMPARE(help->isVisible(), expanded);
+            QCOMPARE(accessible->text(QAccessible::Name),
+                     expanded ? QString("Dönüşüm ayrıntılarını gizle")
+                              : QString("Dönüşüm ayrıntılarını göster"));
+            for (const QSize size : {QSize(760, 580), QSize(512, 464)}) {
+                canvas.resize(size);
+                canvas.fit();
+                QTest::qWait(5);
+                QCOMPARE(details->isChecked(), expanded);
+                QCOMPARE(metrics->isVisible(), expanded);
+                QCOMPARE(help->isVisible(), expanded);
+                QVERIFY(canvas.isTransforming());
+                QCOMPARE(canvas.transformGeometry(), preview);
+                QCOMPARE(document.state.layers[0].geometry, QTransform());
+                QCOMPARE(document.historyLabels().size(), history);
+            }
+        }
+        canvas.cancelTransform();
+        QVERIFY(canvas.beginTransform());
+        QVERIFY(!details->isChecked());
+        QVERIFY(!metrics->isVisible());
         canvas.cancelTransform();
     }
     void onCanvasCompactButtonsWrapWithoutClipping() {

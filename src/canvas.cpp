@@ -18,6 +18,7 @@
 #include <QTabletEvent>
 #include <QScrollArea>
 #include <QRegion>
+#include <QSignalBlocker>
 #include <QToolButton>
 #include <QVBoxLayout>
 #include <QWheelEvent>
@@ -158,7 +159,7 @@ Canvas::Canvas(Document *d, QWidget *parent) : QWidget(parent), document(d), key
     contextFrameLayout->addWidget(contextScroll);
     transformContext->hide();
     connect(transformCopySelection, &QPushButton::clicked, this, &Canvas::copySelectionAndTransform);
-    connect(transformDetails, &QPushButton::clicked, this, [this](bool expanded) {
+    connect(transformDetails, &QPushButton::toggled, this, [this](bool expanded) {
         transformDetailsPreference = expanded ? 1 : 0;
         updateTransformContext();
         positionTransformControls();
@@ -1464,7 +1465,12 @@ void Canvas::updateTransformContext(int availableWidth) {
     const QString fullName = activeLayerTargetName();
     const bool expanded = transformDetailsPreference >= 0 ? transformDetailsPreference != 0
                           : !compactTransformHud() || document->selection.hasPixels();
-    transformDetails->setChecked(expanded);
+    {
+        // Follow viewport defaults without turning them into an explicit user
+        // choice. Accessible toggle actions emit toggled(), but not clicked().
+        const QSignalBlocker blocker(transformDetails);
+        transformDetails->setChecked(expanded);
+    }
     transformDetails->setText(expanded ? "Bilgi ▴" : "Bilgi ▾");
     transformDetails->setAccessibleName(expanded ? "Dönüşüm ayrıntılarını gizle"
                                                 : "Dönüşüm ayrıntılarını göster");
