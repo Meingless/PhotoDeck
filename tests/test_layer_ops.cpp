@@ -932,6 +932,50 @@ class LayerOpsTests : public QObject {
         QVERIFY(!d.mergeVisible(&e));
         QCOMPARE(d.composite(), before);
     }
+    void noSelectionCopyPreservesPixelAndEditableText_data() {
+        QTest::addColumn<bool>("textLayer");
+        QTest::newRow("pixel") << false;
+        QTest::newRow("text") << true;
+    }
+    void noSelectionCopyPreservesPixelAndEditableText() {
+        QFETCH(bool, textLayer);
+        Document d;
+        QVERIFY(d.create({80, 60}));
+        QString error;
+        if (textLayer) {
+            QFont font;
+            font.setPixelSize(14);
+            QVERIFY2(d.addText("Editable", font, Qt::cyan, {3, 5}, &error), qPrintable(error));
+        } else {
+            fill(d, 0, Qt::red);
+        }
+        QVERIFY(d.selection.isEmpty());
+        d.markSaved();
+        const int originalIndex = d.state.active;
+        const int count = d.state.layers.size();
+        const Layer original = d.state.layers[originalIndex];
+        const int history = d.historyLabels().size();
+        QVERIFY2(d.layerViaSelection(false, &error), qPrintable(error));
+        QCOMPARE(d.state.layers.size(), count + 1);
+        QCOMPARE(d.state.active, originalIndex + 1);
+        const Layer copy = d.state.layers[d.state.active];
+        QVERIFY(!copy.isSmartObject());
+        QCOMPARE(copy.name, original.name + " kopya");
+        QCOMPARE(copy.pixels, original.pixels);
+        QCOMPARE(copy.offset, original.offset);
+        QCOMPARE(copy.geometry, original.geometry);
+        QCOMPARE(copy.text, original.text);
+        QCOMPARE(copy.font, original.font);
+        QCOMPARE(copy.color, original.color);
+        QCOMPARE(d.state.layers[originalIndex].pixels, original.pixels);
+        QCOMPARE(d.historyLabels().size(), history + 1);
+        d.undo();
+        QCOMPARE(d.state.layers.size(), count);
+        QVERIFY(!d.dirty);
+        d.redo();
+        QCOMPARE(d.state.layers[d.state.active].text, original.text);
+        QCOMPARE(d.state.layers[d.state.active].pixels, original.pixels);
+    }
     void selectionCopyKeepsSourceAndFeatherAlpha() {
         Document d;
         d.create({30, 20});

@@ -32,6 +32,11 @@ piksellerini paylaşan bağımsız bir nesne oluşturur; bir kopyanın içeriği
 değiştirmek diğerini değiştirmez. Geçmişin eski kaynakları tutması mevcut bellek
 bütçesiyle sınırlıdır. Değiştirilmiş eski kaynaklar sonsuza kadar arşivlenmez.
 
+Seçim yokken **Ctrl+J**, **Katmanın tamamını çoğalt** gibi bütün katmanı
+çoğaltır; akıllı nesnenin gömülü kaynağı, sabit çerçevesi, dönüşümü, maskesi ve
+efektleri korunur, kopya bağımsız nesne kimliği alır. Etkin bir seçim varsa
+**Ctrl+J** seçili görünür piksellerden sıradan bir piksel katmanı üretir.
+
 Maske çerçeve koordinatlarındadır. Yeni içeriğin piksel boyutu değişse de maske
 yeniden örneklenmez. Dönüşümsüz nesnenin maskesi boyanabilir; dönüştürülmüş
 maskeyi tuval üzerinde boyama, önceki sürümde olduğu gibi desteklenmez.
