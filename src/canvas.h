@@ -158,8 +158,10 @@ class Canvas : public QWidget {
     QPointF transformPress;
     QFrame *transformControls, *transformContext;
     QWidget *transformContextContent;
-    QLabel *transformScope, *transformMetrics;
-    QPushButton *transformCopySelection;
+    QLabel *transformScope, *transformMetrics, *transformHelp;
+    QPushButton *transformCopySelection, *transformDetails;
+    // -1 follows viewport size; an explicit choice lasts for this preview only.
+    int transformDetailsPreference = -1;
     QLabel *transformCaption, *transformInfo;
     QToolButton *transformApply, *transformCancel, *transformNumeric;
     TransformHandles transformBox() const;
@@ -167,6 +169,7 @@ class Canvas : public QWidget {
     bool transformSourceMatches() const;
     void advanceTransform(QPointF position, Qt::KeyboardModifiers modifiers);
     void endTransformSession();
+    bool compactTransformHud() const;
     void positionTransformControls();
     void updateTransformContext(int availableWidth = 0);
     void positionTransformContext();
