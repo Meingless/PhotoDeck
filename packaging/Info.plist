@@ -8,6 +8,7 @@
 <key>CFBundleVersion</key><string>0.10.0</string>
 <key>CFBundleShortVersionString</key><string>0.10.0</string>
 <key>CFBundlePackageType</key><string>APPL</string>
+<key>CFBundleIconFile</key><string>photodeck.icns</string>
 <key>NSHighResolutionCapable</key><true/>
 <key>NSHumanReadableCopyright</key><string>PhotoDeck contributors</string>
 </dict></plist>

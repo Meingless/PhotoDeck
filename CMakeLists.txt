@@ -33,11 +33,20 @@ target_include_directories(photodeck-core PUBLIC src)
 target_link_libraries(photodeck-core PUBLIC Qt6::Widgets Qt6::PrintSupport Threads::Threads)
 qt_add_executable(photodeck WIN32 MACOSX_BUNDLE src/main.cpp resources.qrc)
 target_link_libraries(photodeck PRIVATE photodeck-core)
+if(WIN32)
+    enable_language(RC)
+    configure_file(packaging/photodeck.rc.in ${CMAKE_CURRENT_BINARY_DIR}/photodeck.rc @ONLY)
+    target_sources(photodeck PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/photodeck.rc)
+elseif(APPLE)
+    target_sources(photodeck PRIVATE packaging/photodeck.icns)
+    set_source_files_properties(packaging/photodeck.icns PROPERTIES MACOSX_PACKAGE_LOCATION Resources)
+endif()
 set_target_properties(photodeck PROPERTIES
     MACOSX_BUNDLE_BUNDLE_NAME PhotoDeck
     MACOSX_BUNDLE_GUI_IDENTIFIER org.photodeck.editor
     MACOSX_BUNDLE_BUNDLE_VERSION ${PROJECT_VERSION}
     MACOSX_BUNDLE_SHORT_VERSION_STRING ${PROJECT_VERSION}
+    MACOSX_BUNDLE_ICON_FILE photodeck.icns
     MACOSX_BUNDLE_INFO_PLIST ${CMAKE_CURRENT_SOURCE_DIR}/packaging/Info.plist)
 include(CTest)
 if(BUILD_TESTING)

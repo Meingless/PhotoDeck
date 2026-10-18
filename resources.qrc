@@ -1,1 +1,15 @@
-<RCC><qresource prefix="/"><file alias="photodeck.png">packaging/photodeck.png</file><file alias="close.png">packaging/close.png</file><file alias="check-dark.png">packaging/check-dark.png</file><file alias="check-light.png">packaging/check-light.png</file></qresource></RCC>
+<RCC>
+  <qresource prefix="/">
+    <file alias="photodeck.png">packaging/photodeck.png</file>
+    <file alias="icons/photodeck-16.png">packaging/icons/photodeck-16.png</file>
+    <file alias="icons/photodeck-24.png">packaging/icons/photodeck-24.png</file>
+    <file alias="icons/photodeck-32.png">packaging/icons/photodeck-32.png</file>
+    <file alias="icons/photodeck-48.png">packaging/icons/photodeck-48.png</file>
+    <file alias="icons/photodeck-64.png">packaging/icons/photodeck-64.png</file>
+    <file alias="icons/photodeck-128.png">packaging/icons/photodeck-128.png</file>
+    <file alias="icons/photodeck-256.png">packaging/icons/photodeck-256.png</file>
+    <file alias="close.png">packaging/close.png</file>
+    <file alias="check-dark.png">packaging/check-dark.png</file>
+    <file alias="check-light.png">packaging/check-light.png</file>
+  </qresource>
+</RCC>

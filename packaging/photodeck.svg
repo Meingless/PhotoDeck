@@ -1,1 +1,27 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128"><rect x="4" y="4" width="120" height="120" rx="28" fill="#242e37"/><path d="M30 92V34h27c25 0 27 36 1 36H44v22" fill="none" stroke="#68d3b9" stroke-width="10" stroke-linejoin="round"/><path d="M82 80l15-17 15 17v19H70V89z" fill="#98b4c6"/><circle cx="102" cy="40" r="8" fill="#ebd4a6"/></svg>
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024" role="img" aria-labelledby="title desc">
+  <title id="title">PhotoDeck</title>
+  <desc id="desc">Overlapping turquoise and mint photo frames on a charcoal rounded-square tile.</desc>
+  <defs>
+    <linearGradient id="tile" x1="256" y1="24" x2="768" y2="1000" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#30353d"/>
+      <stop offset="1" stop-color="#191e23"/>
+    </linearGradient>
+    <linearGradient id="rear" x1="192" y1="304" x2="382" y2="508" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#00a3b6"/>
+      <stop offset="0.55" stop-color="#1ad8cc"/>
+      <stop offset="1" stop-color="#08a6af"/>
+    </linearGradient>
+    <linearGradient id="front" x1="249" y1="247" x2="463" y2="406" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#22d9d6"/>
+      <stop offset="0.46" stop-color="#66ecd7"/>
+      <stop offset="1" stop-color="#a6f8d9"/>
+    </linearGradient>
+  </defs>
+  <path fill="url(#tile)" d="M270 24h484c170 0 246 76 246 242v492c0 166-76 242-246 242H270C100 1000 24 924 24 758V266C24 100 100 24 270 24Z"/>
+  <!-- Independently drawn vector geometry from the selected first concept. -->
+  <g transform="translate(24 24) scale(2.25404157 2.34615385) translate(-112 -165)">
+    <path fill="url(#rear)" d="M186 309c0-10 6-17 16-14l26 7-1 37-3-1c-2-1-3 1-3 4v79c0 5 2 7 7 9l166 44 4 32c1 10-4 17-14 15l-184-47c-10-3-14-9-14-19Z"/>
+    <path fill="url(#front)" fill-rule="evenodd" d="M247 248c0-10 8-16 19-13l180 52c10 3 14 9 15 20l10 159c1 11-5 17-15 14l-202-65c-11-3-16-10-15-21Zm39 27c-3-1-5 1-5 5l-2 83c0 4 2 7 7 9l144 47c5 2 8-1 7-6l-7-89c0-4-2-6-6-7Z"/>
+  </g>
+</svg>

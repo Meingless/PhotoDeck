@@ -1,4 +1,5 @@
 #include "appearance.h"
+#include "applicationicon.h"
 #include "canvas.h"
 #include "document.h"
 #include "mainwindow.h"
@@ -29,6 +30,19 @@ class PhotoDeckTests : public QObject {
         QApplication::setAttribute(Qt::AA_DontUseNativeDialogs);
         QImageReader::setAllocationLimit(128);
         QStandardPaths::setTestModeEnabled(true);
+    }
+    void applicationIconHasNativeSmallSizes() {
+        const QIcon icon = applicationIcon();
+        QVERIFY(!icon.isNull());
+        for (int size : {16, 24, 32, 48, 64, 128, 256, 512}) {
+            const QSize dimensions(size, size);
+            QVERIFY(icon.availableSizes().contains(dimensions));
+            const QImage image = icon.pixmap(dimensions).toImage();
+            QCOMPARE(image.size(), dimensions);
+            QVERIFY(image.hasAlphaChannel());
+            QCOMPARE(image.pixelColor(0, 0).alpha(), 0);
+            QCOMPARE(image.pixelColor(size / 2, size / 2).alpha(), 255);
+        }
     }
     void dimensionsAndLayerLimits() {
         Document d;

@@ -1,3 +1,4 @@
+#include "applicationicon.h"
 #include "mainwindow.h"
 #include "version.h"
 #include <QApplication>
@@ -12,7 +13,7 @@ int main(int argc, char **argv) {
     app.setApplicationVersion(PhotoDeck::Version);
     QImageReader::setAllocationLimit(128);
     app.setStyle("Fusion");
-    app.setWindowIcon(QIcon(":/photodeck.png"));
+    app.setWindowIcon(applicationIcon());
     QFont font("Sans Serif", 10);
     app.setFont(font);
     QCommandLineParser parser;
