@@ -1480,9 +1480,19 @@ void Canvas::updateTransformContext(int availableWidth) {
     transformMetrics->setVisible(expanded);
     transformHelp->setVisible(expanded);
     transformScope->ensurePolished();
-    const int nameWidth = qMax(20, (availableWidth > 0 ? availableWidth : qMin(540, width() - 16)) -
-                                      76 - transformDetails->sizeHint().width());
-    const QString name = QFontMetrics(transformScope->font()).elidedText(fullName, Qt::ElideMiddle, nameWidth);
+    const auto margins = transformContextContent->layout()->contentsMargins();
+    const auto frame = transformContext->contentsMargins();
+    auto *header = transformContextContent->layout()->itemAt(0)->layout();
+    const QFontMetrics scopeMetrics(transformScope->font());
+    const int scopeWidth = (availableWidth > 0 ? availableWidth : qMin(540, width() - 16)) -
+                           frame.left() - frame.right() - margins.left() - margins.right() -
+                           header->spacing() - transformDetails->sizeHint().width() -
+                           (expanded ? 18 : 0);
+    // The target prefix grows with native/fallback font metrics too. A fixed
+    // allowance can push an already-elided target onto an unnecessary line,
+    // making a compact header too tall for the fitted image's gutter.
+    const int nameWidth = qMax(0, scopeWidth - scopeMetrics.horizontalAdvance("Hedef: "));
+    const QString name = scopeMetrics.elidedText(fullName, Qt::ElideMiddle, nameWidth);
     QString scope = QString("Hedef: %1\nKapsam: %2")
                         .arg(name, transformSelectionCopy
                                 ? "Seçim kopyası · Yeni piksel katmanı"

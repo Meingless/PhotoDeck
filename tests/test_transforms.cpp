@@ -91,6 +91,34 @@ QSize compactTransformControlsSize(const QWidget &controls) {
     const int height = rowHeight + margins.top() + margins.bottom() + frame.top() + frame.bottom();
     return {controls.width(), qMax(48, height)};
 }
+int compactTransformContextHeight(const QWidget &context) {
+    const auto *content = context.findChild<QWidget *>("transformContextContent");
+    const auto margins = content->layout()->contentsMargins();
+    const auto frame = context.contentsMargins();
+    const auto *scope = context.findChild<QLabel *>("transformScope");
+    const auto *details = context.findChild<QPushButton *>("transformDetails");
+    // Use the painted label's final width, independently of the placement
+    // search, and allow only the two visible header children plus padding.
+    return qMax(44, qMax(scope->heightForWidth(scope->width()), details->sizeHint().height()) +
+                        margins.top() + margins.bottom() + frame.top() + frame.bottom());
+}
+QString compactTransformDiagnostics(const Canvas &canvas) {
+    const auto *context = canvas.findChild<QWidget *>("transformContext");
+    const auto *controls = canvas.findChild<QWidget *>("transformControls");
+    const auto *scope = canvas.findChild<QLabel *>("transformScope");
+    const auto *details = canvas.findChild<QPushButton *>("transformDetails");
+    const QRectF image(canvas.toWidget(QPointF()), QSizeF(canvas.document->state.size) * canvas.zoom);
+    const auto rect = [](QRectF area) {
+        return QString("%1,%2 %3x%4").arg(area.x()).arg(area.y()).arg(area.width()).arg(area.height());
+    };
+    return QString("canvas=%1x%2 context=%3 controls=%4 image=%5 scope=%6 scopeHfw=%7 "
+                   "detailsHint=%8x%9 font=%10 prefixWidth=%11")
+        .arg(canvas.width()).arg(canvas.height()).arg(rect(context->geometry()))
+        .arg(rect(controls->geometry())).arg(rect(image)).arg(rect(scope->geometry()))
+        .arg(scope->heightForWidth(scope->width()))
+        .arg(details->sizeHint().width()).arg(details->sizeHint().height())
+        .arg(scope->font().toString()).arg(scope->fontMetrics().horizontalAdvance("Hedef: "));
+}
 bool controlsCanAvoidTargets(const Canvas &canvas, const QVector<QRectF> &targets,
                             QSize controlsSize) {
     // Independent rectangle-edge search: if an empty placement exists, an edge
@@ -1647,8 +1675,25 @@ class TransformTests : public QObject {
         demo->markSaved();
         w.close();
     }
+    void onCanvasCompactWindowLeavesImageClearWithAccessibleActions_data() {
+        QTest::addColumn<QString>("styleName");
+        QTest::addColumn<int>("fontStretch");
+        QTest::addColumn<int>("scopeFontSize");
+        QTest::newRow("default") << QString() << 100 << 0;
+        QTest::newRow("windows-style") << QString("Windows") << 100 << 0;
+        QTest::newRow("windows-style-wide-font") << QString("Windows") << 170 << 0;
+        QTest::newRow("windows-style-tall-font") << QString("Windows") << 100 << 14;
+    }
     void onCanvasCompactWindowLeavesImageClearWithAccessibleActions() {
+        QFETCH(QString, styleName);
+        QFETCH(int, fontStretch);
+        QFETCH(int, scopeFontSize);
+        QScopedPointer<QStyle> nativeStyle(styleName.isEmpty() ? nullptr
+                                                              : QStyleFactory::create(styleName));
+        QVERIFY(styleName.isEmpty() || nativeStyle);
         MainWindow window(false, false);
+        if (nativeStyle)
+            window.setStyle(nativeStyle.data());
         window.applyUiSettings(UiSettings::forPreset("graphite"), true, false);
         auto *document = new Document;
         QVERIFY(document->create({2400, 1600}, true));
@@ -1660,15 +1705,22 @@ class TransformTests : public QObject {
         QTest::qWait(30);
         QCOMPARE(window.size(), QSize(996, 676));
         Canvas *canvas = window.currentCanvas();
-        canvas->fit();
-        QVERIFY(canvas->beginTransform());
-        QTest::qWait(10);
-        window.grab(); // Rendering must not expose a deferred, narrower header layout.
         auto *context = canvas->findChild<QWidget *>("transformContext");
         auto *controls = canvas->findChild<QWidget *>("transformControls");
         auto *details = canvas->findChild<QPushButton *>("transformDetails");
         auto *scope = canvas->findChild<QLabel *>("transformScope");
         QVERIFY(context && controls && details && scope);
+        if (scopeFontSize)
+            scope->setStyleSheet(QString("font-size:%1px;").arg(scopeFontSize));
+        scope->ensurePolished();
+        QFont scopeFont = scope->font();
+        scopeFont.setStretch(fontStretch);
+        scope->setFont(scopeFont);
+        canvas->fit();
+        QVERIFY(canvas->beginTransform());
+        QTest::qWait(10);
+        window.grab(); // Rendering must not expose a deferred, narrower header layout.
+        const QByteArray diagnostics = compactTransformDiagnostics(*canvas).toUtf8();
         QVERIFY(!details->isChecked());
         QVERIFY(details->isVisible() && details->isEnabled());
         QVERIFY(!details->accessibleName().isEmpty());
@@ -1676,29 +1728,33 @@ class TransformTests : public QObject {
         QVERIFY(scope->isVisible());
         QVERIFY(scope->visibleRegion().contains(scope->rect()));
         QVERIFY(scope->height() >= scope->heightForWidth(scope->width()));
+        // Elision includes the actual painted target prefix. Otherwise wide
+        // fonts add a needless third line before the complete scope message.
+        const QString targetLine = scope->text().section('\n', 0, 0);
+        QVERIFY2(scope->fontMetrics().horizontalAdvance(targetLine) <= scope->width(),
+                 diagnostics.constData());
         QVERIFY(details->visibleRegion().contains(details->rect()));
         QVERIFY(scope->text().contains("Katmanın tamamı"));
         QVERIFY(scope->accessibleName().contains(document->state.layers[0].name));
+        QCOMPARE(scope->toolTip(), "Hedef: " + document->state.layers[0].name);
         QVERIFY(!canvas->findChild<QLabel *>("transformMetrics")->isVisible());
         QVERIFY(!canvas->findChild<QLabel *>("transformHelp")->isVisible());
         QVERIFY(!canvas->findChild<QLabel *>("transformInfo")->isVisible());
         QVERIFY(canvas->rect().contains(context->geometry()));
         QVERIFY(canvas->rect().contains(controls->geometry()));
         QVERIFY(!context->geometry().intersects(controls->geometry()));
-        QVERIFY(context->width() <= 360);
-        QVERIFY(context->height() <= 60);
+        QVERIFY2(context->width() <= 360, diagnostics.constData());
+        // Native/fallback fonts can need more than 60px without obscuring the
+        // image. Enforce the complete, tightly fitted header instead of a
+        // platform-specific height, retaining every no-overlap check below.
+        QVERIFY2(context->height() == compactTransformContextHeight(*context), diagnostics.constData());
         QCOMPARE(controls->size(), compactTransformControlsSize(*controls));
         const QRectF image(canvas->toWidget(QPointF()), QSizeF(document->state.size) * canvas->zoom);
         // The old 540px context plus duplicate measurement row covered most of
         // the fitted image at this actual app-window size. Both now fit in its
         // gutters, rather than merely moving to different parts of the image.
-        QVERIFY(!QRectF(context->geometry()).intersects(image));
-        QVERIFY2(!QRectF(controls->geometry()).intersects(image),
-                 qPrintable(QString("canvas=%1x%2 controls=%3,%4 %5x%6 image=%7,%8 %9x%10")
-                                .arg(canvas->width()).arg(canvas->height())
-                                .arg(controls->x()).arg(controls->y())
-                                .arg(controls->width()).arg(controls->height())
-                                .arg(image.x()).arg(image.y()).arg(image.width()).arg(image.height())));
+        QVERIFY2(!QRectF(context->geometry()).intersects(image), diagnostics.constData());
+        QVERIFY2(!QRectF(controls->geometry()).intersects(image), diagnostics.constData());
         QVector<QRect> buttonBounds;
         for (const char *id : {"transformNumeric", "transformCancel", "transformApply"}) {
             auto *button = canvas->findChild<QToolButton *>(id);
@@ -1723,7 +1779,10 @@ class TransformTests : public QObject {
         const QString directory = qEnvironmentVariable("PHOTODECK_TRANSFORM_SCREENSHOTS");
         if (!directory.isEmpty()) {
             QVERIFY(QDir().mkpath(directory));
-            QVERIFY(window.grab().save(directory + "/transform-compact-996x676.png"));
+            const QString suffix = styleName.isEmpty() ? QString()
+                                                       : "-" + QString::fromLatin1(QTest::currentDataTag());
+            QVERIFY(window.grab().save(directory + "/transform-compact-996x676" + suffix + ".png"));
+            qInfo().noquote() << diagnostics;
         }
         canvas->cancelTransform();
         QVERIFY(document->setSelection(Selection(100, 100, 200, 150)));
