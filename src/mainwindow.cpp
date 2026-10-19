@@ -2607,10 +2607,12 @@ void MainWindow::demo() {
     addDocument(d);
 }
 bool MainWindow::openFile(const QString &file) {
+    const QString canonicalPath = QFileInfo(file).canonicalFilePath();
     for (int i = 0; i < tabs->count(); ++i) {
         auto *d = qobject_cast<Canvas *>(tabs->widget(i))->document;
-        if (!d->path.isEmpty() &&
-            QFileInfo(d->path).canonicalFilePath() == QFileInfo(file).canonicalFilePath()) {
+        // Missing paths have no canonical identity and must reach the normal open error.
+        if (!canonicalPath.isEmpty() && !d->path.isEmpty() &&
+            QFileInfo(d->path).canonicalFilePath() == canonicalPath) {
             tabs->setCurrentIndex(i);
             return true;
         }
