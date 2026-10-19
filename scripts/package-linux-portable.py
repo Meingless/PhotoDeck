@@ -50,6 +50,8 @@ if [[ -n "${WAYLAND_DISPLAY:-}" && -z "${QT_QPA_PLATFORM:-}" ]] && ! compgen -G 
 exec "$photodeck_root/bin/photodeck" "$@"
 ''');(package/'launch.sh').chmod(0o755)
 for name in ['README.md','EARLY-ACCESS.md','LICENSE']:shutil.copy2(root/name,package/name)
+for name in ['scripts/install-user.sh','packaging/photodeck.svg']:
+ (package/name).parent.mkdir(parents=True,exist_ok=True);shutil.copy2(root/name,package/name)
 shutil.copy2(root/'packaging/THIRD-PARTY.md',package/'THIRD-PARTY.md');shutil.copytree(root/'packaging/licenses',package/'licenses',dirs_exist_ok=True)
 shutil.copytree(root/'examples',package/'examples',dirs_exist_ok=True)
 shutil.copytree(root/'docs',package/'docs',dirs_exist_ok=True)

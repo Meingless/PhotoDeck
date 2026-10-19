@@ -10,6 +10,7 @@ int main(int argc, char **argv) {
     QApplication app(argc, argv);
     app.setApplicationName("PhotoDeck");
     app.setOrganizationName("PhotoDeck");
+    app.setDesktopFileName("photodeck");
     app.setApplicationVersion(PhotoDeck::Version);
     QImageReader::setAllocationLimit(128);
     app.setStyle("Fusion");
