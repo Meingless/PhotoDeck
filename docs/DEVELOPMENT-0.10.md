@@ -1,6 +1,16 @@
 # PhotoDeck 0.10.0 geliştirme notları
 
-## Güncel aday — 0.10.0-ea.3
+## Güncel aday — 0.10.0-ea.4
+
+EA4, yayımlanmış EA3 kaynağı `580b1896f883acbf6c5591092d5045f60d017826` üzerine [PR #6](https://github.com/Meingless/PhotoDeck/pull/6) düzeltmelerini ve yeni katmanlı çerçeve simgesini ekler. Seçim yokken Ctrl+J bağımsız akıllı nesne kaynağı, çerçeve/dönüşüm/maske/efekt ve tek adım geri al/yineleyi korur; seçili piksel davranışı değişmez. Dar dönüşüm paneli kaynak yazı ölçülerine göre yerleşir; ayrıntı düğmesinin açık/kapalı ve erişilebilir durumu eşleşir. Kayıp dosya yolu boş canonical-path üzerinden başka sekme sanılmaz. Kilitli dışa aktarım oranı, eş boyut 1/16384 sınırına ulaşınca düzenlenen boyuta da geri yansır. Linux portable arşivi belgelenen kullanıcı menüsü kurucusunu ve simgesini içerir.
+
+19 Ekim 2026 metadata öncesi PR başı `a4db6eed31ca38794b5b2a108ac1c72fafed2627` için [beş doğrulama işi](https://github.com/Meingless/PhotoDeck/actions/runs/39210256340) ve [dört paket işi](https://github.com/Meingless/PhotoDeck/actions/runs/39210256255) başarılıydı. Bunlar son EA4 metadata kaynağının kanıtı değildir. Her hedefte 24 grupta 1034 gerçek vaka vardı: Windows 1027 başarılı + 7 açık platform atlaması, diğer hedefler ve Linux sanitizer 1034 başarılı. init/cleanup bu sayıya dahil değildir. Yerel izinli 22 grup 1014 başarılı + aynı 7 platform atlaması ve 72 Python testi geçti; yerelde ayrıştırıcı/kurtarma-codec grupları bu tur tekrar çalıştırılmadı, uzak CI tam 24 grubu çalıştırdı.
+
+Windows Qt offscreen eklentisinin fonts klasörü olmadan kutu glyph motoruna düşmesi, gerçek platform yazı ölçüsü farkından ayrıldı. CI artık var olan Windows Fonts klasörünü `QT_QPA_FONTDIR` ile kullanır; dönüşüm testinin başlangıcı iki gerçek farklı glyph gerektirir. Hiçbir test kapısı/izinli atlama gevşetilmedi. Önceki Linux masaüstü smoke yalnız o tarihteki ağaç için geçerlidir; EA4 Windows/macOS cihaz etkileşimi yapılmış sayılmaz.
+
+Tek-sürüm yayımlayıcı yalnız PR #6, sabit EA3 atası, son PR ile aynı ağaçtaki güncel main ve her iki kaynağın dört platform/Linux ASan+UBSan doğrulaması için açılır. Yeni yayın paketleri 24 native CTest/QtTest grubu, Linux/Windows'ta ayrıca 24 paketlenmiş-runtime grubu, uygulama/AppImage açılışı, not eşitliği ve SHA-256 doğrulaması gerektirir. Son yayın kanıtı RELEASE-PROOF.json ve sürüm kaydında üretilir. [EA4 yayın kapıları ve sınırlar](releases/0.10.0-ea.4.md).
+
+## Tarihsel EA3 geliştirme kaydı
 
 EA3, yayımlanmış EA2 kaynağı `afeeeeb54f1195df4805b17e229f07ba5aa74f33` üzerine [gömülü akıllı nesneler](SMART-OBJECTS.md) ve [birleşik raster dışa aktarımı](EXPORT.md) ekler. Akıllı nesne kimliği, tam çözünürlüklü gömülü içerik, sabit çerçeve ve geri alınabilir değiştirme v7 proje/kurtarma biçiminde saklanır. EA2 v7'yi açamaz; akıllı nesne yoksa önceki v5/v6 normal kayıt seçimi korunur. Bağlantılı/iç içe belge, ayrı içerik sekmesi ve Photoshop akıllı filtre yığını bu aşamada yoktur. Maske/efekt işleme sabit çerçeve çözünürlüğündedir.
 

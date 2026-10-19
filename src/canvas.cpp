@@ -18,6 +18,7 @@
 #include <QTabletEvent>
 #include <QScrollArea>
 #include <QRegion>
+#include <QSignalBlocker>
 #include <QToolButton>
 #include <QVBoxLayout>
 #include <QWheelEvent>
@@ -119,13 +120,21 @@ Canvas::Canvas(Document *d, QWidget *parent) : QWidget(parent), document(d), key
     auto *contextLayout = new QVBoxLayout(transformContextContent);
     contextLayout->setContentsMargins(10, 7, 10, 7);
     contextLayout->setSpacing(4);
+    auto *contextHeader = new QHBoxLayout;
+    contextHeader->setSpacing(6);
     transformScope = new QLabel;
     transformScope->setObjectName("transformScope");
     transformScope->setTextFormat(Qt::PlainText);
     transformScope->setWordWrap(true);
     transformScope->setMinimumWidth(0);
     transformScope->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
-    contextLayout->addWidget(transformScope);
+    contextHeader->addWidget(transformScope, 1);
+    transformDetails = new QPushButton;
+    transformDetails->setObjectName("transformDetails");
+    transformDetails->setCheckable(true);
+    transformDetails->setFocusPolicy(Qt::StrongFocus);
+    contextHeader->addWidget(transformDetails, 0, Qt::AlignTop);
+    contextLayout->addLayout(contextHeader);
     transformMetrics = new QLabel;
     transformMetrics->setObjectName("transformMetrics");
     transformMetrics->setTextFormat(Qt::PlainText);
@@ -140,16 +149,21 @@ Canvas::Canvas(Document *d, QWidget *parent) : QWidget(parent), document(d), key
     transformCopySelection->setFocusPolicy(Qt::StrongFocus);
     contextLayout->addWidget(transformCopySelection);
     contextLayout->addWidget(transformMetrics);
-    auto *help = new QLabel("Köşe: oranı koru · Shift: serbest · Alt: merkez\n↻ Yuvarlak ok: döndür · Shift: 15°");
-    help->setObjectName("transformHelp");
-    help->setWordWrap(true);
-    help->setMinimumWidth(0);
-    help->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
-    contextLayout->addWidget(help);
+    transformHelp = new QLabel("Köşe: oranı koru · Shift: serbest · Alt: merkez\n↻ Yuvarlak ok: döndür · Shift: 15°");
+    transformHelp->setObjectName("transformHelp");
+    transformHelp->setWordWrap(true);
+    transformHelp->setMinimumWidth(0);
+    transformHelp->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
+    contextLayout->addWidget(transformHelp);
     contextScroll->setWidget(transformContextContent);
     contextFrameLayout->addWidget(contextScroll);
     transformContext->hide();
     connect(transformCopySelection, &QPushButton::clicked, this, &Canvas::copySelectionAndTransform);
+    connect(transformDetails, &QPushButton::toggled, this, [this](bool expanded) {
+        transformDetailsPreference = expanded ? 1 : 0;
+        updateTransformContext();
+        positionTransformControls();
+    });
     connect(transformApply, &QToolButton::clicked, this, &Canvas::applyTransform);
     connect(transformCancel, &QToolButton::clicked, this, &Canvas::cancelTransform);
     connect(transformNumeric, &QToolButton::clicked, this, &Canvas::showNumericTransform);
@@ -1440,13 +1454,45 @@ bool Canvas::copySelectionAndTransform() {
     emit toolHint("Seçim yeni piksel katmanına kopyalanacak. Özgün katman ve seçim korunur; Enter uygular, Esc kopyayı da iptal eder.");
     return true;
 }
+bool Canvas::compactTransformHud() const {
+    // This is the actual canvas viewport, after docks and toolbars, rather than
+    // the outer window size. Wide, short Touch layouts keep their existing fit.
+    return width() < 640 && height() < 520;
+}
 void Canvas::updateTransformContext(int availableWidth) {
     if (!transformActive)
         return;
     const QString fullName = activeLayerTargetName();
+    const bool expanded = transformDetailsPreference >= 0 ? transformDetailsPreference != 0
+                          : !compactTransformHud() || document->selection.hasPixels();
+    {
+        // Follow viewport defaults without turning them into an explicit user
+        // choice. Accessible toggle actions emit toggled(), but not clicked().
+        const QSignalBlocker blocker(transformDetails);
+        transformDetails->setChecked(expanded);
+    }
+    transformDetails->setText(expanded ? "Bilgi ▴" : "Bilgi ▾");
+    transformDetails->setAccessibleName(expanded ? "Dönüşüm ayrıntılarını gizle"
+                                                : "Dönüşüm ayrıntılarını göster");
+    transformDetails->setToolTip(expanded ? "Ölçüleri ve tutamaç yardımını daralt"
+                                         : "Kaynak ve görünüm ölçülerini, açıyı ve tutamaç yardımını göster");
+    transformDetails->ensurePolished();
+    transformMetrics->setVisible(expanded);
+    transformHelp->setVisible(expanded);
     transformScope->ensurePolished();
-    const int nameWidth = qMax(50, (availableWidth > 0 ? availableWidth : qMin(540, width() - 16)) - 70);
-    const QString name = QFontMetrics(transformScope->font()).elidedText(fullName, Qt::ElideMiddle, nameWidth);
+    const auto margins = transformContextContent->layout()->contentsMargins();
+    const auto frame = transformContext->contentsMargins();
+    auto *header = transformContextContent->layout()->itemAt(0)->layout();
+    const QFontMetrics scopeMetrics(transformScope->font());
+    const int scopeWidth = (availableWidth > 0 ? availableWidth : qMin(540, width() - 16)) -
+                           frame.left() - frame.right() - margins.left() - margins.right() -
+                           header->spacing() - transformDetails->sizeHint().width() -
+                           (expanded ? 18 : 0);
+    // The target prefix grows with native/fallback font metrics too. A fixed
+    // allowance can push an already-elided target onto an unnecessary line,
+    // making a compact header too tall for the fitted image's gutter.
+    const int nameWidth = qMax(0, scopeWidth - scopeMetrics.horizontalAdvance("Hedef: "));
+    const QString name = scopeMetrics.elidedText(fullName, Qt::ElideMiddle, nameWidth);
     QString scope = QString("Hedef: %1\nKapsam: %2")
                         .arg(name, transformSelectionCopy
                                 ? "Seçim kopyası · Yeni piksel katmanı"
@@ -1522,6 +1568,7 @@ bool Canvas::beginTransform() {
     transformLayerCount = document->state.layers.size();
     transformSelection = document->selection;
     transformSelectionCopy = false;
+    transformDetailsPreference = -1;
     transformActive = true;
     transformDragging = false;
     transformHandle = TransformHandles::None;
@@ -1689,9 +1736,10 @@ void Canvas::positionTransformControls() {
     if (!transformActive)
         return;
     const int available = qMax(180, width() - 32);
-    const int controlsWidth = qMin(540, available);
+    int controlsWidth = qMin(540, available);
+    const bool compact = compactTransformHud();
     const qreal top = showRulers ? 36 : 12;
-    const bool showInfo = controlsWidth >= 300 && height() >= top + 76 + 12;
+    const bool showInfo = !compact && controlsWidth >= 300 && height() >= top + 76 + 12;
     transformInfo->setVisible(showInfo);
     auto *controlsLayout = transformControls->layout();
     auto *buttons = qobject_cast<QGridLayout *>(controlsLayout->itemAt(0)->layout());
@@ -1737,7 +1785,7 @@ void Canvas::positionTransformControls() {
         buttons->invalidate();
         controlsLayout->invalidate();
     };
-    setButtonLabels(controlsWidth < 390);
+    setButtonLabels(compact || controlsWidth < 390);
     const auto rowWidth = [&] {
         const auto margins = controlsLayout->contentsMargins();
         const auto frame = transformControls->contentsMargins();
@@ -1765,6 +1813,8 @@ void Canvas::positionTransformControls() {
         if (rowWidth() > controlsWidth)
             setButtonRows(2);
     }
+    if (compact)
+        controlsWidth = qMin(controlsWidth, qMax(180, rowWidth()));
     controlsLayout->invalidate();
     const QRectF viewport = showRulers ? QRectF(rect().adjusted(24, 24, 0, 0)) : QRectF(rect());
     const TransformHandles box = transformBox();
@@ -1778,10 +1828,12 @@ void Canvas::positionTransformControls() {
     struct Placement {
         QPoint position;
         int covered = std::numeric_limits<int>::max();
+        qreal obscured = std::numeric_limits<qreal>::max();
         qreal distance = std::numeric_limits<qreal>::max();
     };
     const auto place = [&](int controlsHeight, int clearance) {
         const QRectF bounds = box.polygon().boundingRect();
+        const QRectF imageBounds(toWidget(bounds.topLeft()), toWidget(bounds.bottomRight()));
         const qreal above = toWidget(bounds.topLeft()).y() - controlsHeight - 16;
         const qreal below = toWidget(bounds.bottomRight()).y() + 16;
         qreal y = height() - controlsHeight - 16;
@@ -1792,10 +1844,16 @@ void Canvas::positionTransformControls() {
         // A native-style two-row fallback may consume the bottom gutter in a
         // short viewport. Keep the whole panel in the canvas before adding gaps.
         const int minY = qMin(qRound(top), qMax(0, height() - controlsHeight));
-        const int maxY = qMax(minY, height() - controlsHeight - 12);
+        // Fit leaves a 50px gutter when height limits the image. A compact
+        // 48px strip can use it only if the usual 12px bottom margin is relaxed;
+        // handle targets still take priority over every candidate placement.
+        const int maxY = qMax(minY, height() - controlsHeight - (compact ? 0 : 12));
         const int maxX = width() - controlsWidth, centerX = maxX / 2;
+        // Leave one contiguous gutter for the complete scope panel. Centering
+        // this strip can split otherwise sufficient compact space in half.
+        const int preferredX = compact ? maxX : centerX;
         const int preferredY = qBound(minY, qRound(y), maxY);
-        QVector<int> columns{centerX, qMin(16, maxX), qMax(0, maxX - 16), 0, maxX};
+        QVector<int> columns{preferredX, centerX, qMin(16, maxX), qMax(0, maxX - 16), 0, maxX};
         QVector<int> rows{preferredY, minY, maxY};
         // Include every target edge, so a free placement between targets or at
         // a viewport edge is found even when centered placement cannot fit.
@@ -1813,19 +1871,24 @@ void Canvas::positionTransformControls() {
                 int covered = 0;
                 for (const QRectF &target : targets)
                     covered += area.intersects(target);
-                const qreal distance = qAbs(row - preferredY) + qAbs(x - centerX);
-                if (covered < best.covered || (covered == best.covered && distance < best.distance))
-                    best = {{x, row}, covered, distance};
-                if (!best.covered && best.distance == 0)
+                const QRectF overlap = QRectF(x, row, controlsWidth, controlsHeight).intersected(imageBounds);
+                const qreal obscured = compact ? overlap.width() * overlap.height() : 0;
+                const qreal distance = qAbs(row - preferredY) + qAbs(x - preferredX);
+                if (covered < best.covered ||
+                    (covered == best.covered && (obscured < best.obscured ||
+                                                (obscured == best.obscured && distance < best.distance))))
+                    best = {{x, row}, covered, obscured, distance};
+                if (!best.covered && !best.obscured && best.distance == 0)
                     return best;
             }
         return best;
     };
     const auto bestPlacement = [&](int controlsHeight) {
         Placement result = place(controlsHeight, 3);
-        if (result.covered) {
+        if (result.covered || (compact && result.obscured)) {
             const Placement snug = place(controlsHeight, 0);
-            if (snug.covered < result.covered)
+            if (snug.covered < result.covered ||
+                (snug.covered == result.covered && snug.obscured < result.obscured))
                 result = snug;
         }
         return result;
@@ -1870,9 +1933,37 @@ void Canvas::positionTransformContext() {
     struct Placement {
         QRect rect;
         int covered = std::numeric_limits<int>::max();
+        qreal obscured = std::numeric_limits<qreal>::max();
         int content = -1;
     } best;
-    const int preferredWidth = qMin(540, qMax(160, width() - 16));
+    const bool collapsed = !transformDetails->isChecked();
+    auto *scroll = transformContext->findChild<QScrollArea *>("transformContextScroll");
+    scroll->setVerticalScrollBarPolicy(collapsed ? Qt::ScrollBarAlwaysOff : Qt::ScrollBarAsNeeded);
+    const auto contentHeight = [&](int contextWidth, bool criticalOnly) {
+        const auto margins = layout->contentsMargins();
+        const auto frame = transformContext->contentsMargins();
+        auto *header = layout->itemAt(0)->layout();
+        // Nested layout metrics can still describe the preceding, wider scope
+        // until the event loop runs. Measure the actual label at its final
+        // width; a collapsed header has no scrollbar consuming that width.
+        const int contentWidth = contextWidth - frame.left() - frame.right() -
+                                 (collapsed ? 0 : 18);
+        const int scopeWidth = qMax(1, contentWidth - margins.left() - margins.right() -
+                                          header->spacing() - transformDetails->sizeHint().width());
+        int criticalHeight = qMax(transformScope->heightForWidth(scopeWidth),
+                                  transformDetails->sizeHint().height()) +
+                             margins.top() + margins.bottom();
+        if (!transformCopySelection->isHidden())
+            criticalHeight += layout->spacing() + transformCopySelection->sizeHint().height();
+        header->invalidate();
+        layout->invalidate();
+        return qMax(44, (criticalOnly ? criticalHeight
+                                     : qMax(criticalHeight, layout->totalHeightForWidth(contentWidth))) +
+                            frame.top() + frame.bottom());
+    };
+    const QRectF bounds = box.polygon().boundingRect();
+    const QRectF imageBounds(toWidget(bounds.topLeft()), toWidget(bounds.bottomRight()));
+    const int preferredWidth = qMin(collapsed ? 360 : 540, qMax(160, width() - 16));
     QVector<int> widths{preferredWidth};
     for (int candidate : {420, 320, 240, 180, 160})
         if (candidate < preferredWidth && !widths.contains(candidate))
@@ -1883,13 +1974,17 @@ void Canvas::positionTransformContext() {
         updateTransformContext(contextWidth);
         transformCopySelection->setText(contextWidth < 290 ? "Seçimi kopyala\nve dönüştür"
                                                            : "Seçimi kopyala ve dönüştür");
-        layout->invalidate();
-        const int desiredHeight = qMax(44, layout->totalHeightForWidth(contextWidth - 18) + 2);
+        const int desiredHeight = contentHeight(contextWidth, collapsed);
         const int maximumHeight = qMin(desiredHeight, qMax(44, height() - 8));
-        const int minHeight = qMin(44, maximumHeight);
+        // Only measurements/help may scroll out of view. Scope warnings, the
+        // disclosure, and selection-copy action must remain reachable even
+        // when a smaller viewport would cover less of the image.
+        const int minHeight = qMin(maximumHeight, contentHeight(contextWidth, true));
         for (int contextHeight = maximumHeight; contextHeight >= minHeight;
              contextHeight = contextHeight == minHeight ? minHeight - 1 : qMax(minHeight, contextHeight - 8)) {
-            const int top = showRulers ? 28 : 4;
+            // A complete two-line scope can fit directly below the ruler in a
+            // compact image gutter; do not spend four of those pixels on a gap.
+            const int top = showRulers ? (collapsed ? 24 : 28) : (collapsed ? 0 : 4);
             const int right = qMax(0, width() - contextWidth);
             const int bottom = qMax(0, height() - contextHeight);
             const int minY = qMin(top, bottom);
@@ -1908,17 +2003,22 @@ void Canvas::positionTransformContext() {
                     for (int i = 0; i < obstacles.size(); ++i)
                         if (QRectF(area).intersects(obstacles[i]))
                             covered += i == 0 ? 100 : 1;
+                    const QRectF overlap = QRectF(area).intersected(imageBounds);
+                    const qreal obscured = collapsed ? overlap.width() * overlap.height() : 0;
                     const int content = contextWidth * contextHeight;
-                    if (covered < best.covered || (covered == best.covered && content > best.content))
-                        best = {area, covered, content};
+                    if (covered < best.covered ||
+                        (covered == best.covered && (obscured < best.obscured ||
+                                                    (obscured == best.obscured && content > best.content))))
+                        best = {area, covered, obscured, content};
                 }
         }
     }
     updateTransformContext(best.rect.width());
     transformCopySelection->setText(best.rect.width() < 290 ? "Seçimi kopyala\nve dönüştür"
                                                            : "Seçimi kopyala ve dönüştür");
-    layout->invalidate();
-    transformContextContent->setMinimumHeight(qMax(44, layout->totalHeightForWidth(best.rect.width() - 18)));
+    const auto frame = transformContext->contentsMargins();
+    transformContextContent->setMinimumHeight(contentHeight(best.rect.width(), collapsed) -
+                                              frame.top() - frame.bottom());
     transformContext->setGeometry(best.rect);
     // A pathological minimum viewport may have no room even for the compact
     // scope. Keep handles and actions clickable through the unavoidable overlap.
@@ -1929,8 +2029,8 @@ void Canvas::positionTransformContext() {
         transformContext->setMask(visible);
     } else
         transformContext->clearMask();
-    layout->activate();
     transformContext->layout()->activate();
+    layout->activate();
 }
 void Canvas::paintTransform(QPainter &p) {
     if (!transformActive)

@@ -11,6 +11,9 @@ msvc:QMAKE_CXXFLAGS += /utf-8
 unix:!macx:target.path = /usr/local/bin
 unix:!macx:INSTALLS += target
 macx:QMAKE_INFO_PLIST = packaging/Info.plist
+macx:ICON = packaging/photodeck.icns
+win32:RC_ICONS = packaging/photodeck.ico
+HEADERS += src/applicationicon.h
 RESOURCES += resources.qrc
 
 SOURCES += src/appearance.cpp

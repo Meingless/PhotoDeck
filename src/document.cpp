@@ -1605,15 +1605,8 @@ bool Document::selectionCopyState(State &pending, QString *error) const {
     return validState(pending, error);
 }
 bool Document::layerViaSelection(bool cut, QString *error) {
-    if (selection.isEmpty() && !cut) {
-        if (state.active >= 0 && state.active < state.layers.size() &&
-            state.layers[state.active].isSmartObject()) {
-            Layer copy = state.layers[state.active].rasterized();
-            copy.name = state.layers[state.active].name + " seçim kopyası";
-            return insertLayer(copy, "Seçim yeni katmana kopyalandı", error);
-        }
+    if (selection.isEmpty() && !cut)
         return duplicate(error);
-    }
     State pending;
     if (!prepareSelectionLayer(cut, pending, error))
         return false;

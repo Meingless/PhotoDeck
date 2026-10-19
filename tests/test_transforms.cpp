@@ -1,5 +1,6 @@
 #include "mainwindow.h"
 #include "transformdialog.h"
+#include <QAccessible>
 #include <QAction>
 #include <QComboBox>
 #include <QDialogButtonBox>
@@ -8,6 +9,7 @@
 #include <QDir>
 #include <QFileDialog>
 #include <QFocusEvent>
+#include <QFontDatabase>
 #include <QTabBar>
 #include <QLabel>
 #include <QLayout>
@@ -17,6 +19,7 @@
 #include <QTabletEvent>
 #include <QSlider>
 #include <QPushButton>
+#include <QRawFont>
 #include <QSpinBox>
 #include <QStandardPaths>
 #include <QStyleFactory>
@@ -90,6 +93,34 @@ QSize compactTransformControlsSize(const QWidget &controls) {
     const int height = rowHeight + margins.top() + margins.bottom() + frame.top() + frame.bottom();
     return {controls.width(), qMax(48, height)};
 }
+int compactTransformContextHeight(const QWidget &context) {
+    const auto *content = context.findChild<QWidget *>("transformContextContent");
+    const auto margins = content->layout()->contentsMargins();
+    const auto frame = context.contentsMargins();
+    const auto *scope = context.findChild<QLabel *>("transformScope");
+    const auto *details = context.findChild<QPushButton *>("transformDetails");
+    // Use the painted label's final width, independently of the placement
+    // search, and allow only the two visible header children plus padding.
+    return qMax(44, qMax(scope->heightForWidth(scope->width()), details->sizeHint().height()) +
+                        margins.top() + margins.bottom() + frame.top() + frame.bottom());
+}
+QString compactTransformDiagnostics(const Canvas &canvas) {
+    const auto *context = canvas.findChild<QWidget *>("transformContext");
+    const auto *controls = canvas.findChild<QWidget *>("transformControls");
+    const auto *scope = canvas.findChild<QLabel *>("transformScope");
+    const auto *details = canvas.findChild<QPushButton *>("transformDetails");
+    const QRectF image(canvas.toWidget(QPointF()), QSizeF(canvas.document->state.size) * canvas.zoom);
+    const auto rect = [](QRectF area) {
+        return QString("%1,%2 %3x%4").arg(area.x()).arg(area.y()).arg(area.width()).arg(area.height());
+    };
+    return QString("canvas=%1x%2 context=%3 controls=%4 image=%5 scope=%6 scopeHfw=%7 "
+                   "detailsHint=%8x%9 font=%10 prefixWidth=%11")
+        .arg(canvas.width()).arg(canvas.height()).arg(rect(context->geometry()))
+        .arg(rect(controls->geometry())).arg(rect(image)).arg(rect(scope->geometry()))
+        .arg(scope->heightForWidth(scope->width()))
+        .arg(details->sizeHint().width()).arg(details->sizeHint().height())
+        .arg(scope->font().toString()).arg(scope->fontMetrics().horizontalAdvance("Hedef: "));
+}
 bool controlsCanAvoidTargets(const Canvas &canvas, const QVector<QRectF> &targets,
                             QSize controlsSize) {
     // Independent rectangle-edge search: if an empty placement exists, an edge
@@ -128,7 +159,23 @@ void drag(Canvas &canvas, QPoint from, QPoint to, Qt::KeyboardModifiers modifier
 class TransformTests : public QObject {
     Q_OBJECT
   private slots:
-    void initTestCase() { QStandardPaths::setTestModeEnabled(true); }
+    void initTestCase() {
+        QStandardPaths::setTestModeEnabled(true);
+        QVERIFY2(!QFontDatabase::families().isEmpty(),
+                 "Transform UI tests require installed font faces. For the Windows offscreen "
+                 "platform, set QT_QPA_FONTDIR to the Windows Fonts directory.");
+        const QFont uiFont = QApplication::font();
+        const QRawFont rawFont = QRawFont::fromFont(uiFont);
+        QVERIFY2(rawFont.isValid(), "The test UI font could not be loaded.");
+        const auto glyphs = rawFont.glyphIndexesForString("Wi");
+        // Qt's fontless box engine reports a valid raw font and generic
+        // families, but maps every character to the same placeholder glyph.
+        QVERIFY2(glyphs.size() == 2 && glyphs[0] != 0 && glyphs[1] != 0 && glyphs[0] != glyphs[1],
+                 qPrintable(QString("The test UI font has no distinct Latin glyphs: %1. "
+                                    "Configure real installed fonts for offscreen tests "
+                                    "(QT_QPA_FONTDIR on Windows).")
+                                .arg(uiFont.toString())));
+    }
     void sourcePreservedAndIndependentRenderMatches() {
         Document d;
         QVERIFY(d.create({60, 40}));
@@ -1645,6 +1692,295 @@ class TransformTests : public QObject {
         QVERIFY(w.grab().save(directory + "/transform-text-applied-900.png"));
         demo->markSaved();
         w.close();
+    }
+    void onCanvasCompactWindowLeavesImageClearWithAccessibleActions_data() {
+        QTest::addColumn<QString>("styleName");
+        QTest::addColumn<int>("fontStretch");
+        QTest::addColumn<int>("scopeFontSize");
+        QTest::newRow("default") << QString() << 100 << 0;
+        QTest::newRow("windows-style") << QString("Windows") << 100 << 0;
+        QTest::newRow("windows-style-wide-font") << QString("Windows") << 170 << 0;
+        QTest::newRow("windows-style-tall-font") << QString("Windows") << 100 << 14;
+    }
+    void onCanvasCompactWindowLeavesImageClearWithAccessibleActions() {
+        QFETCH(QString, styleName);
+        QFETCH(int, fontStretch);
+        QFETCH(int, scopeFontSize);
+        QScopedPointer<QStyle> nativeStyle(styleName.isEmpty() ? nullptr
+                                                              : QStyleFactory::create(styleName));
+        QVERIFY(styleName.isEmpty() || nativeStyle);
+        MainWindow window(false, false);
+        if (nativeStyle)
+            window.setStyle(nativeStyle.data());
+        window.applyUiSettings(UiSettings::forPreset("graphite"), true, false);
+        auto *document = new Document;
+        QVERIFY(document->create({2400, 1600}, true));
+        document->state.layers[0].name = "QA-moderate-2400x1600 kopya kopya kopya kopya kopya";
+        document->markSaved();
+        window.addDocument(document);
+        window.resize(996, 676);
+        window.show();
+        QTest::qWait(30);
+        QCOMPARE(window.size(), QSize(996, 676));
+        Canvas *canvas = window.currentCanvas();
+        auto *context = canvas->findChild<QWidget *>("transformContext");
+        auto *controls = canvas->findChild<QWidget *>("transformControls");
+        auto *details = canvas->findChild<QPushButton *>("transformDetails");
+        auto *scope = canvas->findChild<QLabel *>("transformScope");
+        QVERIFY(context && controls && details && scope);
+        if (scopeFontSize)
+            scope->setStyleSheet(QString("font-size:%1px;").arg(scopeFontSize));
+        scope->ensurePolished();
+        QFont scopeFont = scope->font();
+        scopeFont.setStretch(fontStretch);
+        scope->setFont(scopeFont);
+        canvas->fit();
+        QVERIFY(canvas->beginTransform());
+        QTest::qWait(10);
+        window.grab(); // Rendering must not expose a deferred, narrower header layout.
+        const QByteArray diagnostics = compactTransformDiagnostics(*canvas).toUtf8();
+        QVERIFY(!details->isChecked());
+        QVERIFY(details->isVisible() && details->isEnabled());
+        QVERIFY(!details->accessibleName().isEmpty());
+        QVERIFY(!details->toolTip().isEmpty());
+        QVERIFY(scope->isVisible());
+        QVERIFY(scope->visibleRegion().contains(scope->rect()));
+        QVERIFY(scope->height() >= scope->heightForWidth(scope->width()));
+        // Elision includes the actual painted target prefix. Otherwise wide
+        // fonts add a needless third line before the complete scope message.
+        const QString targetLine = scope->text().section('\n', 0, 0);
+        QVERIFY2(scope->fontMetrics().horizontalAdvance(targetLine) <= scope->width(),
+                 diagnostics.constData());
+        QVERIFY(details->visibleRegion().contains(details->rect()));
+        QVERIFY(scope->text().contains("Katmanın tamamı"));
+        QVERIFY(scope->accessibleName().contains(document->state.layers[0].name));
+        QCOMPARE(scope->toolTip(), "Hedef: " + document->state.layers[0].name);
+        QVERIFY(!canvas->findChild<QLabel *>("transformMetrics")->isVisible());
+        QVERIFY(!canvas->findChild<QLabel *>("transformHelp")->isVisible());
+        QVERIFY(!canvas->findChild<QLabel *>("transformInfo")->isVisible());
+        QVERIFY(canvas->rect().contains(context->geometry()));
+        QVERIFY(canvas->rect().contains(controls->geometry()));
+        QVERIFY(!context->geometry().intersects(controls->geometry()));
+        QVERIFY2(context->width() <= 360, diagnostics.constData());
+        // Native/fallback fonts can need more than 60px without obscuring the
+        // image. Enforce the complete, tightly fitted header instead of a
+        // platform-specific height, retaining every no-overlap check below.
+        QVERIFY2(context->height() == compactTransformContextHeight(*context), diagnostics.constData());
+        QCOMPARE(controls->size(), compactTransformControlsSize(*controls));
+        const QRectF image(canvas->toWidget(QPointF()), QSizeF(document->state.size) * canvas->zoom);
+        // The old 540px context plus duplicate measurement row covered most of
+        // the fitted image at this actual app-window size. Both now fit in its
+        // gutters, rather than merely moving to different parts of the image.
+        QVERIFY2(!QRectF(context->geometry()).intersects(image), diagnostics.constData());
+        QVERIFY2(!QRectF(controls->geometry()).intersects(image), diagnostics.constData());
+        QVector<QRect> buttonBounds;
+        for (const char *id : {"transformNumeric", "transformCancel", "transformApply"}) {
+            auto *button = canvas->findChild<QToolButton *>(id);
+            QVERIFY(button && button->isVisible() && button->isEnabled());
+            QVERIFY(!button->accessibleName().isEmpty());
+            QVERIFY(button->width() >= button->sizeHint().width());
+            QVERIFY(button->height() >= button->sizeHint().height());
+            const QRect bounds(button->mapTo(canvas, QPoint()), button->size());
+            QVERIFY(controls->geometry().contains(bounds));
+            for (const QRect &previous : buttonBounds)
+                QVERIFY(!bounds.intersects(previous));
+            buttonBounds.append(bounds);
+            QCOMPARE(canvas->childAt(bounds.center()), button);
+        }
+        const QRect detailsBounds(details->mapTo(canvas, QPoint()), details->size());
+        QVERIFY(context->geometry().contains(detailsBounds));
+        QCOMPARE(canvas->childAt(detailsBounds.center()), details);
+        for (const QRectF &target : visibleTransformTargets(*canvas)) {
+            QVERIFY(!QRectF(context->geometry()).intersects(target));
+            QVERIFY(!QRectF(controls->geometry()).intersects(target));
+        }
+        const QString directory = qEnvironmentVariable("PHOTODECK_TRANSFORM_SCREENSHOTS");
+        if (!directory.isEmpty()) {
+            QVERIFY(QDir().mkpath(directory));
+            const QString suffix = styleName.isEmpty() ? QString()
+                                                       : "-" + QString::fromLatin1(QTest::currentDataTag());
+            QVERIFY(window.grab().save(directory + "/transform-compact-996x676" + suffix + ".png"));
+            qInfo().noquote() << diagnostics;
+        }
+        canvas->cancelTransform();
+        QVERIFY(document->setSelection(Selection(100, 100, 200, 150)));
+        QVERIFY(canvas->beginTransform());
+        QVERIFY(details->isChecked());
+        QTest::mouseClick(details, Qt::LeftButton);
+        QTest::qWait(10);
+        auto *copy = canvas->findChild<QPushButton *>("transformCopySelection");
+        QVERIFY(copy && copy->isVisible());
+        QVERIFY(copy->visibleRegion().contains(copy->rect()));
+        QVERIFY(scope->visibleRegion().contains(scope->rect()));
+        QVERIFY(scope->height() >= scope->heightForWidth(scope->width()));
+        QVERIFY(details->visibleRegion().contains(details->rect()));
+        QCOMPARE(canvas->childAt(copy->mapTo(canvas, copy->rect().center())), copy);
+        QTest::mouseClick(copy, Qt::LeftButton);
+        QVERIFY(canvas->isTransforming());
+        QVERIFY(scope->text().contains("Seçim kopyası"));
+        QCOMPARE(document->state.layers.size(), 1);
+        canvas->cancelTransform();
+        window.close();
+    }
+    void onCanvasCompactDetailsToggleResizeNumericAndHistory() {
+        Document document;
+        transformFixture(document);
+        Canvas canvas(&document);
+        prepare(canvas);
+        const Layer original = document.state.layers[0];
+        const int history = document.historyLabels().size();
+        QVERIFY(canvas.beginTransform());
+        QTest::qWait(10);
+        auto *details = canvas.findChild<QPushButton *>("transformDetails");
+        auto *metrics = canvas.findChild<QLabel *>("transformMetrics");
+        QVERIFY(details && metrics);
+        QVERIFY(details->isChecked());
+        QTest::keyClick(&canvas, Qt::Key_Right);
+        const QTransform preview = canvas.transformGeometry();
+        const auto verifyPreview = [&] {
+            QVERIFY(canvas.isTransforming());
+            QCOMPARE(canvas.transformGeometry(), preview);
+            QCOMPARE(document.state.layers[0].geometry, original.geometry);
+            QCOMPARE(document.state.layers[0].pixels, original.pixels);
+            QCOMPARE(document.state.layers[0].mask, original.mask);
+            QCOMPARE(document.historyLabels().size(), history);
+        };
+        for (const QSize size : {QSize(512, 464), QSize(760, 580), QSize(512, 464)}) {
+            canvas.resize(size);
+            canvas.fit();
+            QCOMPARE(details->isChecked(), size.width() >= 640);
+            QCOMPARE(metrics->isVisible(), details->isChecked());
+            verifyPreview();
+        }
+        // Keyboard-operable disclosure, an explicit choice across resizes, and
+        // repeated unchanged-size placement must never consume the preview.
+        for (bool expanded : {true, false, true, false}) {
+            details->setFocus();
+            QTest::keyClick(details, Qt::Key_Space);
+            QCOMPARE(details->isChecked(), expanded);
+            for (const QSize size : {QSize(760, 580), QSize(512, 464), QSize(512, 464)}) {
+                canvas.resize(size);
+                canvas.fit();
+                QTest::qWait(5);
+                QCOMPARE(details->isChecked(), expanded);
+                QCOMPARE(metrics->isVisible(), expanded);
+                auto *controls = canvas.findChild<QWidget *>("transformControls");
+                auto *context = canvas.findChild<QWidget *>("transformContext");
+                QVERIFY(canvas.rect().contains(controls->geometry()));
+                QVERIFY(canvas.rect().contains(context->geometry()));
+                QVERIFY(!context->geometry().intersects(controls->geometry()));
+                verifyPreview();
+            }
+        }
+        bool numericVisited = false;
+        QTimer timer;
+        timer.setInterval(5);
+        connect(&timer, &QTimer::timeout, [&] {
+            auto *dialog = qobject_cast<TransformDialog *>(QApplication::activeModalWidget());
+            if (!dialog)
+                return;
+            numericVisited = true;
+            dialog->findChild<QDoubleSpinBox *>("scaleX")->setValue(60);
+            dialog->reject();
+        });
+        timer.start();
+        QTest::mouseClick(canvas.findChild<QToolButton *>("transformNumeric"), Qt::LeftButton);
+        timer.stop();
+        QVERIFY(numericVisited);
+        verifyPreview();
+        QTest::mouseClick(canvas.findChild<QToolButton *>("transformCancel"), Qt::LeftButton);
+        QVERIFY(!canvas.isTransforming());
+        QCOMPARE(document.state.layers[0].geometry, original.geometry);
+        QCOMPARE(document.historyLabels().size(), history);
+        QVERIFY(canvas.beginTransform());
+        QVERIFY(!details->isChecked()); // A new compact session uses the default again.
+        QTest::keyClick(&canvas, Qt::Key_Right);
+        QTest::mouseClick(canvas.findChild<QToolButton *>("transformApply"), Qt::LeftButton);
+        QVERIFY(!canvas.isTransforming());
+        QCOMPARE(document.historyLabels().size(), history + 1);
+        QCOMPARE(document.state.layers[0].geometry, preview);
+        document.undo();
+        QCOMPARE(document.state.layers[0].geometry, original.geometry);
+        document.redo();
+        QCOMPARE(document.state.layers[0].geometry, preview);
+        QVERIFY(document.setSelection(Selection(120, 100, 30, 20)));
+        QVERIFY(canvas.beginTransform());
+        // The selection warning/copy action stays discoverable even in compact
+        // mode; collapsing measurements never hides or changes that scope.
+        QVERIFY(details->isChecked());
+        auto *copy = canvas.findChild<QPushButton *>("transformCopySelection");
+        QVERIFY(copy->isVisible());
+        QTest::mouseClick(details, Qt::LeftButton);
+        QTest::qWait(10);
+        QVERIFY(!metrics->isVisible());
+        QVERIFY(copy->isVisible());
+        QVERIFY(copy->visibleRegion().contains(copy->rect()));
+        auto *scope = canvas.findChild<QLabel *>("transformScope");
+        QVERIFY(scope->text().contains("Seçim sabit kalır"));
+        QVERIFY(scope->visibleRegion().contains(scope->rect()));
+        QVERIFY(scope->height() >= scope->heightForWidth(scope->width()));
+        QVERIFY(details->visibleRegion().contains(details->rect()));
+        QCOMPARE(canvas.childAt(copy->mapTo(&canvas, copy->rect().center())), copy);
+        QTest::mouseClick(copy, Qt::LeftButton);
+        QVERIFY(scope->text().contains("Seçim kopyası"));
+        canvas.cancelTransform();
+    }
+    void onCanvasAccessibleDetailsToggleTracksVisibilityAndDefaults() {
+        Document document;
+        transformFixture(document);
+        Canvas canvas(&document);
+        prepare(canvas);
+        const int history = document.historyLabels().size();
+        QVERIFY(canvas.beginTransform());
+        QTest::keyClick(&canvas, Qt::Key_Right);
+        const QTransform preview = canvas.transformGeometry();
+        auto *details = canvas.findChild<QPushButton *>("transformDetails");
+        auto *metrics = canvas.findChild<QLabel *>("transformMetrics");
+        auto *help = canvas.findChild<QLabel *>("transformHelp");
+        QVERIFY(details && metrics && help);
+        // Automatic checked-state updates must not become explicit choices.
+        for (const QSize size : {QSize(512, 464), QSize(760, 580), QSize(512, 464)}) {
+            canvas.resize(size);
+            canvas.fit();
+            QCOMPARE(details->isChecked(), size.width() >= 640);
+            QCOMPARE(metrics->isVisible(), details->isChecked());
+        }
+        auto *accessible = QAccessible::queryAccessibleInterface(details);
+        QVERIFY(accessible);
+        auto *actions = accessible->actionInterface();
+        QVERIFY(actions);
+        QVERIFY(actions->actionNames().contains(QAccessibleActionInterface::toggleAction()));
+        QSignalSpy clicked(details, &QPushButton::clicked);
+        // Qt exposes a toggle action distinct from press/click for checkable
+        // buttons. Screen readers may use it without emitting clicked().
+        for (bool expanded : {true, false, true}) {
+            actions->doAction(QAccessibleActionInterface::toggleAction());
+            QCOMPARE(details->isChecked(), expanded);
+            QCOMPARE(bool(accessible->state().checked), expanded);
+            QCOMPARE(clicked.count(), 0);
+            QCOMPARE(metrics->isVisible(), expanded);
+            QCOMPARE(help->isVisible(), expanded);
+            QCOMPARE(accessible->text(QAccessible::Name),
+                     expanded ? QString("Dönüşüm ayrıntılarını gizle")
+                              : QString("Dönüşüm ayrıntılarını göster"));
+            for (const QSize size : {QSize(760, 580), QSize(512, 464)}) {
+                canvas.resize(size);
+                canvas.fit();
+                QTest::qWait(5);
+                QCOMPARE(details->isChecked(), expanded);
+                QCOMPARE(metrics->isVisible(), expanded);
+                QCOMPARE(help->isVisible(), expanded);
+                QVERIFY(canvas.isTransforming());
+                QCOMPARE(canvas.transformGeometry(), preview);
+                QCOMPARE(document.state.layers[0].geometry, QTransform());
+                QCOMPARE(document.historyLabels().size(), history);
+            }
+        }
+        canvas.cancelTransform();
+        QVERIFY(canvas.beginTransform());
+        QVERIFY(!details->isChecked());
+        QVERIFY(!metrics->isVisible());
+        canvas.cancelTransform();
     }
     void onCanvasCompactButtonsWrapWithoutClipping() {
         for (bool rulers : {false, true}) {

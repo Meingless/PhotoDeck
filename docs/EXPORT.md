@@ -1,11 +1,12 @@
 # Uygulama içi görüntü dışa aktarımı
 
-`0.10.0-ea.3` erken erişim adayında üstteki **Dışa aktar** düğmesi veya
+`0.10.0-ea.4` erken erişim adayında üstteki **Dışa aktar** düğmesi veya
 **Ctrl+Shift+E**, PhotoDeck'in kendi çıktı ekranını açar. Konum, dosya adı, biçim,
 biçime uygun seçenekler ve son **Dışa aktar** düğmesi aynı ekrandadır.
 
 - **Konum / dosya** alanında tam dosya yolunu düzenleyin. **Gözat…**, sistemin
   klasör seçicisini açar ve seçilen klasörde mevcut dosya adını korur.
+- Oran kilidi açıkken eş boyut 1 veya 16384 sınırına gelirse düzenlenen boyut da geri ayarlanır; kilitli oran sessizce bozulmaz. Piksel yuvarlaması tamsayı boyutlarla sınırlıdır.
 - **Biçim**, gerçek dosya kodlamasını belirler. PNG, JPEG, WebP, BMP ve TIFF
   arasından bu sistemde kurulu Qt kodlayıcılarının destekledikleri gösterilir.
   Yeni bir kodlayıcı eklenmez.

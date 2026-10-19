@@ -27,6 +27,8 @@ Pencereyi iptal etmek önceki tuval önizlemesine döner; kabul etmek tuval öni
 
 Kaynak ölçüsü ile görünüm ölçüsü ayrı gösterilir. Görünüm ölçüsü, döndürülmüş veya perspektifli katmanı içine alan eksene hizalı sınırdır. Kenar yüzdeleri üst ve sol kenarın uzunluğunu kaynak genişliği/yüksekliğiyle karşılaştırır; açı üst kenarın yönüdür. Bu değerler perspektifte tek bir genel ölçek/açı varmış gibi yorumlanmamalıdır.
 
+Dar tuvalde bilgi paneli hedef ve kapsamı göstererek otomatik daralır; Sayısal, İptal ve Uygula kısa bir eylem çubuğunda kalır. **Bilgi** düğmesi ölçüleri ve tutamaç yardımını açıp kapatır. Açık/kapalı seçiminiz yalnız o dönüşüm önizlemesinde, pencere yeniden boyutlandırılsa da korunur. Yeni önizleme tuval boyutuna göre başlar. Piksel seçimi varsa kapsam uyarısı ve seçim kopyalama yolu başlangıçta açık kalır; bilgiyi daraltmak bu uyarıyı veya kopyalama düğmesini gizlemez. Bu görünüm değişiklikleri dönüşümü uygulamaz ve geri alma adımı oluşturmaz.
+
 ## Diğer işlemlerle birlikte
 
 Odak değişmesi ve sıradan arayüz yenilemeleri dönüşümü kapatmaz. Sekmeler arasında geçişte her belgenin önizlemesi kendi tuvalinde kalır. Sığdır/gerçek boyut/zoom komutları ve yeniden Ctrl+T de önizlemeyi korur. Araç değiştirme, katman değiştirme, özellik düzenleme, kayıt, dışa aktarma ve kapatma işlemleri önce dönüşümü uygular. Kayıt/dışa aktarma/kapatma penceresini iptal etmek uygulanan dönüşümü silmez; geri alabilirsiniz. Görüntü katmanı ekleme ise dosya seçimi ve görüntü doğrulaması bitene kadar önizlemeyi değiştirmez; dosya seçiciyi iptal etmek dönüşümü uygulamaz. Önizleme açıkken Geri al / Yinele, bekleyen önizlemeyi iptal eder; belge geçmişine dokunmaz.

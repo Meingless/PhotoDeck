@@ -1,0 +1,2 @@
+// The lowest resource ID is the Windows executable and Explorer application icon.
+1 ICON "@CMAKE_CURRENT_SOURCE_DIR@/packaging/photodeck.ico"

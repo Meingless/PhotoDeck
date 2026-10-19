@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Fail-closed publisher for reviewed PhotoDeck release PR #5 and v0.10.0-ea.3 only.
+"""Fail-closed publisher for reviewed PhotoDeck release PR #6 and v0.10.0-ea.4 only.
 
 Uses only the job's ephemeral token and GitHub's official HTTPS API. There is no
 force, delete, asset replacement, arbitrary-version, or credential-storage path.
@@ -22,14 +22,14 @@ from urllib.request import HTTPRedirectHandler, Request, build_opener
 import xml.etree.ElementTree as ET
 
 REPOSITORY = 'Meingless/PhotoDeck'
-TAG = 'v0.10.0-ea.3'
+TAG = 'v0.10.0-ea.4'
 VERSION = TAG[1:]
 # Fixed release authorization. Update PR_NUMBER only to the assigned release PR;
 # no workflow input can change the approved repository, ancestry, branch or tag.
-BASE_SHA = 'afeeeeb54f1195df4805b17e229f07ba5aa74f33'  # Published v0.10.0-ea.2 source
-PR_NUMBER = 5
-PR_HEAD_REF = 'feature/embedded-smart-objects-20261017'
-NOTES_PATH = Path('docs/releases/0.10.0-ea.3.md')
+BASE_SHA = '580b1896f883acbf6c5591092d5045f60d017826'  # Published v0.10.0-ea.3 source
+PR_NUMBER = 6
+PR_HEAD_REF = 'integration/next-release-qa-fixes'
+NOTES_PATH = Path('docs/releases/0.10.0-ea.4.md')
 PLATFORMS = {
     'linux-x86_64': (f'PhotoDeck-{VERSION}-linux-x86_64.tar.gz',
                      f'PhotoDeck-{VERSION}-x86_64.AppImage'),
@@ -220,7 +220,7 @@ def validate_context(env, event, expected_sha):
     require(env.get('GITHUB_REPOSITORY') == REPOSITORY, 'Wrong repository')
     require(env.get('GITHUB_REF') == 'refs/heads/main', 'Only main may publish')
     require(env.get('GITHUB_SHA') == expected_sha, 'Workflow source is not the requested main SHA')
-    require(env.get('REQUESTED_TAG', TAG) == TAG, 'Only the authorized v0.10.0-ea.3 release is allowed')
+    require(env.get('REQUESTED_TAG', TAG) == TAG, 'Only the authorized v0.10.0-ea.4 release is allowed')
     name = env.get('GITHUB_EVENT_NAME')
     require(name in {'workflow_run', 'workflow_dispatch'}, 'Unsupported publication trigger')
     if name == 'workflow_run':
@@ -265,35 +265,40 @@ def verify_guard(api, expected_sha, env=None, event=None, git_fn=git, root=Path(
             git_fn('rev-parse', head_sha + '^{tree}'),
             'Merged source tree differs from the final reviewed PR tree')
     verify_source_version(root)
-    pr_query = urlencode({'event': 'pull_request', 'head_sha': head_sha, 'status': 'success'})
+    # Inspect every matching run before selecting the latest. Filtering for
+    # success could hide a newer failed, cancelled, or still-running validation.
+    pr_query = urlencode({'event': 'pull_request', 'head_sha': head_sha})
     pr_runs = api.pages('/actions/workflows/validate.yml/runs?' + pr_query, key='workflow_runs')
     valid_pr_runs = [run for run in pr_runs if
                      run.get('name') == 'Build and test' and
                      run.get('path') == '.github/workflows/validate.yml' and
                      run.get('head_sha') == head_sha and run.get('event') == 'pull_request' and
-                     run.get('status') == 'completed' and run.get('conclusion') == 'success' and
                      run.get('head_repository', {}).get('full_name') == REPOSITORY and
                      (not run.get('pull_requests') or
                       any(item.get('number') == PR_NUMBER and
                           item.get('head', {}).get('sha', head_sha) == head_sha
                           for item in run['pull_requests']))]
-    require(bool(valid_pr_runs), f'No successful final PR #{PR_NUMBER} head validation run')
+    require(bool(valid_pr_runs), f'No final PR #{PR_NUMBER} head validation run')
     pr_run = max(valid_pr_runs, key=lambda item: item['id'])
+    require(pr_run.get('status') == 'completed' and pr_run.get('conclusion') == 'success',
+            f'Latest final PR #{PR_NUMBER} head validation must succeed')
     verify_ci_jobs(api, pr_run['id'])
     print(f'Final PR #{PR_NUMBER} head CI verified: run {pr_run["id"]}')
-    query = urlencode({'branch': 'main', 'event': 'push', 'head_sha': expected_sha, 'status': 'success'})
+    query = urlencode({'branch': 'main', 'event': 'push', 'head_sha': expected_sha})
     runs = api.pages('/actions/workflows/validate.yml/runs?' + query, key='workflow_runs')
     required_id = env.get('EXPECTED_CI_RUN_ID') or trigger_id
     valid = [run for run in runs if
              run.get('name') == 'Build and test' and
              run.get('path') == '.github/workflows/validate.yml' and
              run.get('head_sha') == expected_sha and run.get('event') == 'push' and
-             run.get('head_branch') == 'main' and run.get('status') == 'completed' and
-             run.get('conclusion') == 'success' and
-             run.get('head_repository', {}).get('full_name') == REPOSITORY and
-             (not required_id or str(run.get('id')) == required_id)]
-    require(bool(valid), 'No successful Build and test push/main run for this exact SHA')
+             run.get('head_branch') == 'main' and
+             run.get('head_repository', {}).get('full_name') == REPOSITORY]
+    require(bool(valid), 'No Build and test push/main run for this exact SHA')
     run = max(valid, key=lambda item: item['id'])
+    require(run.get('status') == 'completed' and run.get('conclusion') == 'success',
+            'Latest Build and test push/main run for this exact SHA must succeed')
+    require(not required_id or str(run.get('id')) == required_id,
+            'Requested main CI run is not the latest validation for this exact SHA')
     verify_ci_jobs(api, run['id'])
     return str(run['id'])
 

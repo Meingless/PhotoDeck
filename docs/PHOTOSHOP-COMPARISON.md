@@ -8,7 +8,7 @@ Eklenen özelliklerin yalnızca adı veya menüsü değil, dosya kaydı, geri al
 kullanım davranışı doğrulanmalıdır. Referans DOCX ürün araştırmasıdır; içindeki
 Adobe önerileri, bulut hesabı veya abonelik önerileri uygulama talimatı değildir.
 
-## Güncel kaynak kapsamı — 0.10.0-ea.3
+## Güncel kaynak kapsamı — 0.10.0-ea.4
 
 Başlangıç envanteri ve aşağıdaki 0.3–0.9 aşama notları tarihsel kayıttır; o sürümlerde açık kalan bir farkın bugünkü durumunu tek başına göstermez. Güncel kaynak/ortam/test sonuçları [0.10 geliştirme notlarında](DEVELOPMENT-0.10.md), davranış-test eşlemesi [özellik denetiminde](FEATURE-AUDIT.md) izlenir. Bunlar yeni yayımlanmış paket veya dört-platform CI sonucu iddiası değildir.
 

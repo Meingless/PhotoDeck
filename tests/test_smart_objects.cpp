@@ -191,6 +191,132 @@ class SmartObjectTests : public QObject {
         QCOMPARE(document.state.layers[1].smartObjectId, before.smartObjectId);
         QCOMPARE(document.state.layers[1].pixels, before.pixels);
     }
+    void noSelectionCopyPreservesSmartLayerAndSingleUndo_data() {
+        QTest::addColumn<bool>("clipped");
+        QTest::addColumn<bool>("replacedSource");
+        QTest::newRow("independent") << false << false;
+        QTest::newRow("clipped") << true << false;
+        QTest::newRow("replaced-independent") << false << true;
+        QTest::newRow("replaced-clipped") << true << true;
+    }
+    void noSelectionCopyPreservesSmartLayerAndSingleUndo() {
+        QFETCH(bool, clipped);
+        QFETCH(bool, replacedSource);
+        Document document;
+        fixture(document);
+        document.beginEdit();
+        Layer &layer = document.state.layers[0];
+        layer.blend = 1;
+        layer.contrast = 9;
+        layer.saturation = -12;
+        layer.blur = 1;
+        layer.tones.gamma = 1.2;
+        layer.filters.sharpenAmount = 10;
+        layer.maskSettings.density = 80;
+        if (clipped) {
+            Layer base;
+            base.pixels = image(document.state.size, Qt::white);
+            layer.clipped = true;
+            document.state.layers.prepend(base);
+            document.state.active = 1;
+        }
+        document.commit("Copy fixture");
+        QString error;
+        QVERIFY2(document.convertToSmartObject(&error), qPrintable(error));
+        if (replacedSource)
+            QVERIFY2(document.replaceSmartObjectContents(image({16, 9}, Qt::green), &error),
+                     qPrintable(error));
+        document.markSaved();
+        QVERIFY(document.selection.isEmpty());
+        const int originalIndex = document.state.active;
+        const Layer original = document.state.layers[originalIndex];
+        const int count = document.state.layers.size();
+        const int history = document.historyLabels().size();
+        const QImage appearance = document.composite();
+        document.editingMask = true;
+        QVERIFY2(document.layerViaSelection(false, &error), qPrintable(error));
+        QCOMPARE(document.state.layers.size(), count + 1);
+        QCOMPARE(document.state.active, originalIndex + 1);
+        const Layer copy = document.state.layers[document.state.active];
+        QVERIFY(copy.isSmartObject());
+        QVERIFY(!copy.smartObjectId.isNull());
+        QVERIFY(copy.smartObjectId != original.smartObjectId);
+        QCOMPARE(copy.name, original.name + " kopya");
+        QCOMPARE(copy.pixels, original.pixels);
+        QCOMPARE(copy.smartObjectSize, original.smartObjectSize);
+        QCOMPARE(copy.sourceSize(), original.sourceSize());
+        QCOMPARE(copy.geometry, original.geometry);
+        QCOMPARE(copy.offset, original.offset);
+        QCOMPARE(copy.mask, original.mask);
+        QCOMPARE(copy.maskSettings, original.maskSettings);
+        QCOMPARE(copy.opacity, original.opacity);
+        QCOMPARE(copy.blend, original.blend);
+        QCOMPARE(copy.brightness, original.brightness);
+        QCOMPARE(copy.contrast, original.contrast);
+        QCOMPARE(copy.saturation, original.saturation);
+        QCOMPARE(copy.blur, original.blur);
+        QCOMPARE(copy.tones, original.tones);
+        QCOMPARE(copy.filters, original.filters);
+        QCOMPARE(copy.clipped, original.clipped);
+        QCOMPARE(copy.visible, original.visible);
+        QCOMPARE(copy.locked, original.locked);
+        QCOMPARE(copy.rendered(), original.rendered());
+        QCOMPARE(document.state.layers[originalIndex].smartObjectId, original.smartObjectId);
+        QCOMPARE(document.historyLabels().size(), history + 1);
+        QVERIFY(!document.editingMask);
+        QVERIFY(document.dirty);
+        const QImage duplicatedAppearance = document.composite();
+        document.undo();
+        QCOMPARE(document.state.layers.size(), count);
+        QCOMPARE(document.state.active, originalIndex);
+        QCOMPARE(document.composite(), appearance);
+        QVERIFY(!document.dirty);
+        document.redo();
+        QCOMPARE(document.state.layers.size(), count + 1);
+        QCOMPARE(document.state.layers[document.state.active].smartObjectId, copy.smartObjectId);
+        QCOMPARE(document.state.layers[document.state.active].pixels, original.pixels);
+        QCOMPARE(document.composite(), duplicatedAppearance);
+    }
+    void noSelectionCopyReplacementKeepsOriginalSourceIndependent() {
+        Document document;
+        QVERIFY(document.create({1000, 800}));
+        document.beginEdit();
+        Layer &layer = document.state.layers[0];
+        layer.pixels = image({800, 600}, Qt::red);
+        layer.offset = {200, 150};
+        layer.geometry = QTransform::fromScale(.5, .5);
+        document.commit("800x600 source");
+        QString error;
+        QVERIFY2(document.convertToSmartObject(&error), qPrintable(error));
+        const Layer original = document.state.layers[0];
+        const QImage originalAppearance = original.rendered();
+        QVERIFY2(document.layerViaSelection(false, &error), qPrintable(error));
+        const QUuid copyId = document.state.layers[1].smartObjectId;
+        QVERIFY(copyId != original.smartObjectId);
+        // Redo must restore the same independently replaceable duplicate.
+        document.undo();
+        document.redo();
+        const QImage replacement = image({1600, 900}, QColor("#32c875"));
+        QVERIFY2(document.replaceSmartObjectContents(replacement, &error), qPrintable(error));
+        const Layer &copy = document.state.layers[1];
+        QCOMPARE(copy.smartObjectId, copyId);
+        QCOMPARE(copy.pixels, replacement);
+        QCOMPARE(copy.smartObjectSize, QSize(800, 600));
+        QCOMPARE(copy.geometry, original.geometry);
+        QCOMPARE(copy.offset, original.offset);
+        QCOMPARE(copy.rendered().size(), QSize(400, 300));
+        QCOMPARE(document.state.layers[0].smartObjectId, original.smartObjectId);
+        QCOMPARE(document.state.layers[0].pixels.size(), QSize(800, 600));
+        QCOMPARE(document.state.layers[0].pixels, original.pixels);
+        QCOMPARE(document.state.layers[0].rendered(), originalAppearance);
+        document.undo();
+        QCOMPARE(document.state.layers.size(), 2);
+        QCOMPARE(document.state.layers[1].pixels, original.pixels);
+        QCOMPARE(document.state.layers[1].smartObjectId, copyId);
+        document.redo();
+        QCOMPARE(document.state.layers[1].pixels, replacement);
+        QCOMPARE(document.state.layers[0].pixels, original.pixels);
+    }
     void plainReplacementKeepsNativeDetailWhenGeometryRestoresScale() {
         Document document;
         QVERIFY(document.create({20, 20}));
@@ -231,6 +357,20 @@ class SmartObjectTests : public QObject {
         QVERIFY(!document.layerViaSelection(true, &error));
         QVERIFY(!error.isEmpty());
         QCOMPARE(document.historyLabels().size(), history);
+        QCOMPARE(document.state.layers[0].smartObjectId, original.smartObjectId);
+        QVERIFY2(document.layerViaSelection(false, &error), qPrintable(error));
+        QCOMPARE(document.state.layers.size(), 2);
+        const Layer &copy = document.state.layers[document.state.active];
+        QVERIFY(!copy.isSmartObject());
+        QVERIFY(copy.smartObjectId.isNull());
+        QVERIFY(copy.geometry.isIdentity());
+        QVERIFY(copy.mask.isNull());
+        QCOMPARE(copy.pixels, pending.layers[pending.active].pixels);
+        QCOMPARE(copy.offset, pending.layers[pending.active].offset);
+        QCOMPARE(document.state.layers[0].pixels, original.pixels);
+        QCOMPARE(document.historyLabels().size(), history + 1);
+        document.undo();
+        QCOMPARE(document.state.layers.size(), 1);
         QCOMPARE(document.state.layers[0].smartObjectId, original.smartObjectId);
     }
     void protectedOperationsAndRejectionsAreInert() {
@@ -440,6 +580,30 @@ class SmartObjectTests : public QObject {
         Document reopened;
         QVERIFY2(reopened.load(path, &error), qPrintable(error));
         QCOMPARE(reopened.state.layers[eligible].smartObjectId, id);
+    }
+    void duplicateActionWithoutSelectionKeepsSmartContentsEditable() {
+        MainWindow window(false, false);
+        auto *document = new Document;
+        fixture(*document);
+        QString error;
+        QVERIFY2(document->convertToSmartObject(&error), qPrintable(error));
+        window.addDocument(document);
+        window.show();
+        auto *duplicate = window.findChild<QAction *>("duplicate");
+        auto *replace = window.findChild<QAction *>("replaceSmartObjectContents");
+        QVERIFY(duplicate && replace);
+        QCOMPARE(duplicate->shortcut(), QKeySequence("Ctrl+J"));
+        QVERIFY(duplicate->isEnabled());
+        const QUuid originalId = document->state.layers[0].smartObjectId;
+        duplicate->trigger();
+        QCOMPARE(document->state.layers.size(), 2);
+        QVERIFY(document->state.layers[1].isSmartObject());
+        QVERIFY(document->state.layers[1].smartObjectId != originalId);
+        auto *layers = window.findChild<QListWidget *>("layers");
+        QVERIFY(layers);
+        QTRY_COMPARE(layers->count(), 2);
+        QVERIFY(layers->item(0)->text().contains("Akıllı nesne"));
+        QVERIFY(replace->isEnabled());
     }
     void menuConversionAndReplacementCancelKeepDocument() {
         MainWindow window(false, false);

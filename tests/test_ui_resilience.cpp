@@ -1186,6 +1186,93 @@ class UiResilienceTests : public QObject {
             QCOMPARE(d->path, accept ? file : QString());
         }
     }
+    void missingProjectDoesNotMatchDeletedOpenSource() {
+        QTemporaryDir temp;
+        QVERIFY(temp.isValid());
+        const QString original = temp.filePath("deleted-project.pdeck");
+        const QString missing = temp.filePath("different-missing-project.pdeck");
+        Document source;
+        QString error;
+        QVERIFY(source.create({16, 12}));
+        QVERIFY2(source.save(original, &error), qPrintable(error));
+        MainWindow w(false, false);
+        QVERIFY(w.openFile(original));
+        auto *deletedSource = w.currentDocument();
+        paint(deletedSource, Qt::red);
+        auto *current = new Document;
+        QVERIFY(current->create({12, 10}));
+        w.addDocument(current);
+        paint(current, Qt::blue);
+        auto *tabs = w.findChild<QTabWidget *>();
+        QVERIFY(tabs);
+        const int tabCount = tabs->count(), currentIndex = tabs->currentIndex();
+        const auto sourceRevision = deletedSource->revision();
+        const auto currentRevision = current->revision();
+        const auto sourceHistory = deletedSource->historyLabels();
+        const auto currentHistory = current->historyLabels();
+        const auto sourceImage = deletedSource->composite();
+        const auto currentImage = current->composite();
+        QVERIFY(QFile::remove(original));
+        QVERIFY(QFileInfo(original).canonicalFilePath().isEmpty());
+        QVERIFY(QFileInfo(missing).canonicalFilePath().isEmpty());
+        bool errorShown = false;
+        QTimer dismissError;
+        connect(&dismissError, &QTimer::timeout, &w, [&] {
+            if (auto *box = qobject_cast<QMessageBox *>(QApplication::activeModalWidget())) {
+                errorShown = !box->text().isEmpty();
+                box->accept();
+            }
+        });
+        dismissError.start(10);
+        const bool opened = w.openFile(missing);
+        dismissError.stop();
+        QVERIFY(!opened);
+        QVERIFY(errorShown);
+        QCOMPARE(tabs->count(), tabCount);
+        QCOMPARE(tabs->currentIndex(), currentIndex);
+        QCOMPARE(w.currentDocument(), current);
+        QCOMPARE(deletedSource->path, original);
+        QVERIFY(current->path.isEmpty());
+        QCOMPARE(deletedSource->revision(), sourceRevision);
+        QCOMPARE(current->revision(), currentRevision);
+        QCOMPARE(deletedSource->historyLabels(), sourceHistory);
+        QCOMPARE(current->historyLabels(), currentHistory);
+        QCOMPARE(deletedSource->composite(), sourceImage);
+        QCOMPARE(current->composite(), currentImage);
+        QVERIFY(deletedSource->dirty && current->dirty);
+    }
+    void existingCanonicalAliasSelectsOpenProject() {
+        QTemporaryDir temp;
+        QVERIFY(temp.isValid());
+        QVERIFY(QDir(temp.path()).mkdir("nested"));
+        const QString original = temp.filePath("project.pdeck");
+        const QString alias = temp.filePath("nested/../project.pdeck");
+        Document source;
+        QString error;
+        QVERIFY(source.create({16, 12}));
+        QVERIFY2(source.save(original, &error), qPrintable(error));
+        MainWindow w(false, false);
+        QVERIFY(w.openFile(original));
+        auto *opened = w.currentDocument();
+        paint(opened, Qt::red);
+        auto *other = new Document;
+        QVERIFY(other->create({12, 10}));
+        w.addDocument(other);
+        auto *tabs = w.findChild<QTabWidget *>();
+        QVERIFY(tabs);
+        const int tabCount = tabs->count();
+        const auto revision = opened->revision();
+        const auto history = opened->historyLabels();
+        const auto image = opened->composite();
+        QVERIFY(w.openFile(alias));
+        QCOMPARE(w.currentDocument(), opened);
+        QCOMPARE(tabs->count(), tabCount);
+        QCOMPARE(opened->path, original);
+        QCOMPARE(opened->revision(), revision);
+        QCOMPARE(opened->historyLabels(), history);
+        QCOMPARE(opened->composite(), image);
+        QVERIFY(opened->dirty);
+    }
     void externalConflictCancelThenExplicitOverwrite() {
         QTemporaryDir temp;
         const QString file = temp.filePath("project.pdeck");
