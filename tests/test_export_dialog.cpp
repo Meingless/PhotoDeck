@@ -144,6 +144,60 @@ class ExportDialogTests : public QObject {
         QVERIFY(!quality->isEnabled());
         QVERIFY(submit->isEnabled());
     }
+    void ratioLockRespectsDimensionBounds_data() {
+        QTest::addColumn<QSize>("source");
+        QTest::addColumn<bool>("editWidth");
+        QTest::addColumn<int>("value");
+        QTest::addColumn<QSize>("expected");
+        QTest::newRow("ordinary-width") << QSize(40, 20) << true << 80 << QSize(80, 40);
+        QTest::newRow("ordinary-height") << QSize(40, 20) << false << 30 << QSize(60, 30);
+        QTest::newRow("integer-rounding") << QSize(3, 2) << true << 2 << QSize(2, 1);
+        QTest::newRow("height-maximum") << QSize(2, 3) << true << 12000
+                                        << QSize(10923, 16384);
+        QTest::newRow("width-maximum") << QSize(3, 2) << false << 12000
+                                       << QSize(16384, 10923);
+        QTest::newRow("skinny-height-maximum") << QSize(1, 16384) << true << 2
+                                               << QSize(1, 16384);
+        QTest::newRow("skinny-width-maximum") << QSize(16384, 1) << false << 2
+                                              << QSize(16384, 1);
+        QTest::newRow("skinny-width-minimum") << QSize(1, 16384) << false << 1
+                                              << QSize(1, 16384);
+        QTest::newRow("skinny-height-minimum") << QSize(16384, 1) << true << 1
+                                               << QSize(16384, 1);
+    }
+    void ratioLockRespectsDimensionBounds() {
+        QFETCH(QSize, source);
+        QFETCH(bool, editWidth);
+        QFETCH(int, value);
+        QFETCH(QSize, expected);
+        QTemporaryDir directory;
+        QVERIFY(directory.isValid());
+        ExportDialog dialog(source, directory.filePath("image.png"));
+        auto *width = dialog.findChild<QSpinBox *>("outputWidth");
+        auto *height = dialog.findChild<QSpinBox *>("outputHeight");
+        auto *ratio = dialog.findChild<QCheckBox *>("outputRatio");
+        QVERIFY(width && height && ratio);
+        QVERIFY(ratio->isChecked());
+        auto *edited = editWidth ? width : height;
+        edited->setValue(value);
+        QCOMPARE(dialog.options().size, expected);
+        QVERIFY(width->value() >= width->minimum() && width->value() <= width->maximum());
+        QVERIFY(height->value() >= height->minimum() && height->value() <= height->maximum());
+        // Repeating an out-of-range request must converge to the same size.
+        edited->setValue(value);
+        QCOMPARE(dialog.options().size, expected);
+        if (source.width() == 1 || source.height() == 1) {
+            QVERIFY(dialog.options().valid());
+            dialog.accept();
+            QCOMPARE(dialog.result(), int(QDialog::Accepted));
+        }
+        // Unlocking must still let either dimension be edited independently.
+        ratio->setChecked(false);
+        const int unchanged = editWidth ? height->value() : width->value();
+        edited->setValue(value);
+        QCOMPARE(edited->value(), value);
+        QCOMPARE(editWidth ? height->value() : width->value(), unchanged);
+    }
     void authoritativeFormatNormalizesSuffixes() {
         QTemporaryDir directory;
         QVERIFY(directory.isValid());

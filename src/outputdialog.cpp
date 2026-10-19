@@ -103,16 +103,28 @@ class RasterOutputOptionsWidget : public QWidget {
         note->setWordWrap(true);
         layout->addWidget(note);
         connect(width, &QSpinBox::valueChanged, this, [this](int value) {
-            if (ratio->isChecked() && original.width() > 0) {
-                QSignalBlocker block(height);
-                height->setValue(
-                    qMax(1, qRound(value * double(original.height()) / original.width())));
+            if (ratio->isChecked() && original.width() > 0 && original.height() > 0) {
+                QSignalBlocker blockHeight(height);
+                const int requested = qRound(value * double(original.height()) / original.width());
+                height->setValue(requested);
+                // A bound on the paired dimension must constrain the edited one too.
+                if (height->value() != requested) {
+                    QSignalBlocker blockWidth(width);
+                    width->setValue(
+                        qRound(height->value() * double(original.width()) / original.height()));
+                }
             }
         });
         connect(height, &QSpinBox::valueChanged, this, [this](int value) {
-            if (ratio->isChecked() && original.height() > 0) {
-                QSignalBlocker block(width);
-                width->setValue(qMax(1, qRound(value * double(original.width()) / original.height())));
+            if (ratio->isChecked() && original.width() > 0 && original.height() > 0) {
+                QSignalBlocker blockWidth(width);
+                const int requested = qRound(value * double(original.width()) / original.height());
+                width->setValue(requested);
+                if (width->value() != requested) {
+                    QSignalBlocker blockHeight(height);
+                    height->setValue(
+                        qRound(width->value() * double(original.height()) / original.width()));
+                }
             }
         });
     }
