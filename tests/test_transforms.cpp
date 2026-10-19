@@ -9,6 +9,7 @@
 #include <QDir>
 #include <QFileDialog>
 #include <QFocusEvent>
+#include <QFontDatabase>
 #include <QTabBar>
 #include <QLabel>
 #include <QLayout>
@@ -18,6 +19,7 @@
 #include <QTabletEvent>
 #include <QSlider>
 #include <QPushButton>
+#include <QRawFont>
 #include <QSpinBox>
 #include <QStandardPaths>
 #include <QStyleFactory>
@@ -157,7 +159,23 @@ void drag(Canvas &canvas, QPoint from, QPoint to, Qt::KeyboardModifiers modifier
 class TransformTests : public QObject {
     Q_OBJECT
   private slots:
-    void initTestCase() { QStandardPaths::setTestModeEnabled(true); }
+    void initTestCase() {
+        QStandardPaths::setTestModeEnabled(true);
+        QVERIFY2(!QFontDatabase::families().isEmpty(),
+                 "Transform UI tests require installed font faces. For the Windows offscreen "
+                 "platform, set QT_QPA_FONTDIR to the Windows Fonts directory.");
+        const QFont uiFont = QApplication::font();
+        const QRawFont rawFont = QRawFont::fromFont(uiFont);
+        QVERIFY2(rawFont.isValid(), "The test UI font could not be loaded.");
+        const auto glyphs = rawFont.glyphIndexesForString("Wi");
+        // Qt's fontless box engine reports a valid raw font and generic
+        // families, but maps every character to the same placeholder glyph.
+        QVERIFY2(glyphs.size() == 2 && glyphs[0] != 0 && glyphs[1] != 0 && glyphs[0] != glyphs[1],
+                 qPrintable(QString("The test UI font has no distinct Latin glyphs: %1. "
+                                    "Configure real installed fonts for offscreen tests "
+                                    "(QT_QPA_FONTDIR on Windows).")
+                                .arg(uiFont.toString())));
+    }
     void sourcePreservedAndIndependentRenderMatches() {
         Document d;
         QVERIFY(d.create({60, 40}));

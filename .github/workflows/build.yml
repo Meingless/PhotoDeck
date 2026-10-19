@@ -79,6 +79,16 @@ jobs:
           arch: ${{ matrix.arch }}
           modules: 'qtimageformats'
           cache: true
+      - name: Configure Windows offscreen fonts
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $fontDirectory = Join-Path $env:WINDIR 'Fonts'
+          if (!(Test-Path -LiteralPath $fontDirectory -PathType Container)) { throw "Windows font directory is missing: $fontDirectory" }
+          $fontFiles = @(Get-ChildItem -LiteralPath $fontDirectory -File | Where-Object { $_.Extension -in '.ttf', '.otf', '.ttc' })
+          if ($fontFiles.Count -eq 0) { throw "No installed font faces found in $fontDirectory" }
+          "QT_QPA_FONTDIR=$fontDirectory" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          Write-Host "Qt offscreen font directory: $fontDirectory ($($fontFiles.Count) font files)"
       - uses: ilammy/msvc-dev-cmd@v1
         if: runner.os == 'Windows'
         with:
