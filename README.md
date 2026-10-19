@@ -1,14 +1,14 @@
-# PhotoDeck 0.10.0-ea.3
+# PhotoDeck 0.10.0-ea.4
 
 AI içermeyen, tamamen yerel, C++/Qt 6 ile geliştirilen fotoğraf ve katman düzenleyici. Linux, Windows ve macOS için ortak kaynak kullanır. Tarayıcı motoru, Python çalışma zamanı, bulut hesabı, abonelik veya ağ servisi gerekmez.
 
-## 0.10.0-ea.3 erken erişim adayı
+## 0.10.0-ea.4 erken erişim adayı
 
-Bu aday, EA2 üzerine gömülü akıllı nesneler ekler. Kaynak pikseller, sabit yerleştirme çerçevesi ve geri alınabilir içerik değiştirme korunur. Akıllı nesneler v7 proje biçimi gerektirir; EA2 bu dosyaları açamaz. Kapsam, kullanım ve sınırlar: [Akıllı nesneler](docs/SMART-OBJECTS.md).
+Bu aday, yayımlanmış EA3 üzerine yeni katmanlı çerçeve uygulama simgesi ve doğrulanmış kullanım düzeltmeleri ekler. Seçim yokken Ctrl+J akıllı nesnenin kaynak, çerçeve, dönüşüm ve efektlerini koruyan bağımsız bir kopyasını oluşturur; seçili piksel kopyası raster katman olarak kalır. Dar dönüşüm bilgisi ve erişilebilir ayrıntı düğmesi, kayıp dosyayı açma, uç boyutlarda kilitli dışa aktarım oranı ve Linux uygulama menüsü kurulum paketi düzeltildi.
 
-Üstteki Dışa aktar düğmesi artık konum, biçim, kalite, boyut ve DPI/ICC ayarlarını tek PhotoDeck ekranında toplar. [Dışa aktarım](docs/EXPORT.md).
+EA3 ile gelen [gömülü akıllı nesneler](docs/SMART-OBJECTS.md) ve [birleşik görüntü dışa aktarımı](docs/EXPORT.md) korunur. Proje biçimi değişmez: akıllı nesne v7 gerektirir; EA2 ve daha eski okuyucular v7'yi açamaz.
 
-EA3 paketleri yalnızca son PR #5 ve aynı kaynak ağacındaki güncel main birleştirmesinin dört platform doğrulaması, Linux sanitizer işi ve yeni paket denetimleri başarılı olduktan sonra yayımlanır. [EA3 sürüm notları](docs/releases/0.10.0-ea.3.md) yayın kapılarını ve açık sınırları anlatır; önceki geliştirme CI sonuçları son EA3 yayınının kanıtı değildir.
+EA4 paketleri yalnızca son PR #6 ve aynı kaynak ağacındaki güncel main birleştirmesinin dört platform doğrulaması, Linux sanitizer işi ve yeni paket denetimleri başarılı olduktan sonra yayımlanır. [EA4 sürüm notları](docs/releases/0.10.0-ea.4.md) yayın kapılarını ve açık sınırları anlatır; önceki geliştirme CI sonuçları son EA4 yayınının kanıtı değildir. Windows/macOS cihaz üzerinde etkileşimli test bekler; otomatik CI bu testin yerine geçmez.
 
 ## Yayımlanmış EA2 temeli — tarihsel
 
@@ -35,7 +35,7 @@ Varsayılan görünüm **Odak**: solda araçlar, ortada panellerin kapatmadığ�
 - Tuval odaklıyken Taşı aracında ok tuşları katmanı 1, Shift+ok 10 belge pikseli taşır. Basılı tutulan tek hareket bir geri alma adımıdır; kaynak piksel, metin ve maske korunur. Sayısal X/Y ve tuval/seçim sınırına hizalama için [konumlandırma kılavuzu](docs/LAYER-POSITIONING.md).
 - Katman opaklığı ve 27 harmanlama modu: normal, çarp, ekran, kaplama, yakma/soldurma, ışık, fark, hue/saturation/color/luminosity dahil.
 - Alt katmana kırpma maskesi (Ctrl+Alt+G): ardışık kırpılan katmanlar temel katmanın alfa/maskesini kullanır; temel görünürlük ve opaklık tüm zincire uygulanır. Katman listesinde ↳ işareti gösterilir.
-- Ctrl+J seçim yoksa tüm katmanı, seçim varsa etkin katmanın seçimini yeni katmana kopyalar. Ctrl+Alt+J aynı seçim komutunu açar; Ctrl+Shift+J seçimi keser. Maskeler/renk ayarları/dönüşüm kopya piksellere uygulanır; kesmede kaynak katman da rasterleştirilir. Akıllı nesne seçiminin kopyası sıradan piksel katmanı olur; akıllı kaynaktan kesme engellenir. Kesme kilitli veya kırpma zinciri içindeki katmanlarda da reddedilir; ilişkiyi kaldırıp işlemi tekrar yapabilirsiniz.
+- Ctrl+J seçim yoksa tüm katmanı, seçim varsa etkin katmanın seçimini yeni katmana kopyalar. Seçim yokken akıllı nesnenin bağımsız kaynak kimliği, çerçevesi, dönüşümü, maskesi ve efektleri korunur; kopyanın içeriğini değiştirmek özgünü değiştirmez. Ctrl+Alt+J aynı seçim komutunu açar; Ctrl+Shift+J seçimi keser. Maskeler/renk ayarları/dönüşüm kopya piksellere uygulanır; kesmede kaynak katman da rasterleştirilir. Akıllı nesne seçiminin kopyası sıradan piksel katmanı olur; akıllı kaynaktan kesme engellenir. Kesme kilitli veya kırpma zinciri içindeki katmanlarda da reddedilir; ilişkiyi kaldırıp işlemi tekrar yapabilirsiniz.
 - Ctrl+E alta birleştirir; işlem önce/sonra görünümü karşılaştırır. Görünümü değiştirecek bağımlı harmanlama/kırpma zincirleri reddedilir; görünür katmanları birleştirme alternatifi vardır.
 - Ctrl+Shift+E dışa aktarım penceresini açar; Ctrl+Alt+Shift+E görünür katmanları birleştirir.
 - Beyazın gösterip siyahın gizlediği katman maskeleri. Seçimden maske oluşturma, maskeyi ters çevirme veya kaldırma.
@@ -114,12 +114,12 @@ Dağıtılmış Linux paketini tek dosyalık AppImage olarak hazırlamak için `
 
 ```sh
 python3 scripts/package-appimage.py \
-  --package dist/PhotoDeck-0.10.0-ea.3-linux-x86_64 \
+  --package dist/PhotoDeck-0.10.0-ea.4-linux-x86_64 \
   --appimagetool /path/to/appimagetool \
-  --output dist/PhotoDeck-0.10.0-ea.3-x86_64.AppImage
+  --output dist/PhotoDeck-0.10.0-ea.4-x86_64.AppImage
 ```
 
-AppImage'a çalıştırma izni verip açın: `chmod +x PhotoDeck-0.10.0-ea.3-x86_64.AppImage`. FUSE bulunmayan sistemlerde `APPIMAGE_EXTRACT_AND_RUN=1 ./PhotoDeck-0.10.0-ea.3-x86_64.AppImage` kullanılabilir. Windows taşınabilir paketindeki `PhotoDeck.exe`, yanındaki DLL ve eklenti klasörleriyle birlikte taşınmalıdır. macOS paketindeki `.app` tüm içeriğiyle korunmalıdır.
+AppImage'a çalıştırma izni verip açın: `chmod +x PhotoDeck-0.10.0-ea.4-x86_64.AppImage`. FUSE bulunmayan sistemlerde `APPIMAGE_EXTRACT_AND_RUN=1 ./PhotoDeck-0.10.0-ea.4-x86_64.AppImage` kullanılabilir. Windows taşınabilir paketindeki `PhotoDeck.exe`, yanındaki DLL ve eklenti klasörleriyle birlikte taşınmalıdır. macOS paketindeki `.app` tüm içeriğiyle korunmalıdır.
 
 ## Mevcut kapsam
 

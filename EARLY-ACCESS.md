@@ -1,10 +1,13 @@
 # PhotoDeck erken erişim ve geliştirme notları
 
-Bu kaynak dalı **0.10.0-ea.3** erken erişim adayını hazırlar. Aşağıdaki 0.9.1 ve önceki sürüm kayıtları tarihsel kapsamı anlatır; 0.10 için platform/paket doğrulaması sayılmaz. Yeni davranışlar ve doğrulama sınırları [geliştirme notlarında](docs/DEVELOPMENT-0.10.md) izlenir.
+Bu kaynak dalı **0.10.0-ea.4** erken erişim adayını hazırlar. Aşağıdaki 0.9.1 ve önceki sürüm kayıtları tarihsel kapsamı anlatır; 0.10 için platform/paket doğrulaması sayılmaz. Yeni davranışlar ve doğrulama sınırları [geliştirme notlarında](docs/DEVELOPMENT-0.10.md) izlenir.
 
 AI içermeyen yerel fotoğraf ve katman düzenleyici. Erken erişim sürümüdür; önemli orijinalleri koruyun ve ayrı proje kopyalarıyla çalışın.
 
-## 0.10.0-ea.3 — güncel kapsam
+## 0.10.0-ea.4 — güncel kapsam
+
+- EA3 üzerine yeni katmanlı çerçeve simgesi; seçim yokken bağımsız akıllı nesne Ctrl+J kopyası, dar dönüşüm bilgisi/erişilebilir ayrıntılar, kayıp yolun yanlış sekmeyle eşleşmesini engelleme, kilitli çıktı oranının 1/16384 sınırlarında korunması ve Linux portable menü kurulumu düzeltmeleri eklenir. [EA4 sürüm notları](docs/releases/0.10.0-ea.4.md).
+- Windows offscreen CI, yüklü sistem yazı tiplerini kullanır; gerçek glyph bulunmayan ortam başlangıçta açıkça reddedilir. Bu, cihaz üstünde etkileşimli Windows/macOS testi değildir.
 
 - Piksel katmanı gömülü akıllı nesneye çevrilir; tam kaynak pikselleri ve sabit çerçeve korunur. İçeriği değiştir… dönüşüm, konum, maske ve mevcut efekt ayarlarını korur. Kaynak doğrudan boyanmaz; açık onaylı rasterleştirme veya yeni boş boya katmanı kullanılır. İşlemler geri alınabilir. [Akıllı nesne kılavuzu](docs/SMART-OBJECTS.md).
 - Dışa aktar düğmesi ve Ctrl+Shift+E; konum, biçim, kalite, boyut, DPI ve ICC seçeneklerini tek PhotoDeck ekranında toplar. Kurulu Qt kodlayıcıları kullanılır; üzerine yazma ayrı onay ister. Çıktı, katmanlı projeyi veya açık dönüşüm önizlemesini değiştirmez. [Dışa aktarım kılavuzu](docs/EXPORT.md).
@@ -26,9 +29,9 @@ Akıllı nesne içeren normal proje ve kurtarma kopyaları v7 gerektirir; EA2 ve
 
 Bu kapsam PSD/RAW, CMYK/yüksek bit, grup veya ayar katmanları eklemez. Kayıtlı seçimler genel amaçlı alfa Channels paneli değildir; dönüşüm varsayılan olarak bütün etkin katmanı kapsar; seçimi kopyala ve dönüştür özgünü koruyan ayrı raster kopya oluşturur. Yerinde seçili piksel dönüşümü ve warp sağlamaz. Bu sürüm tam Photoshop eşdeğeri değildir. Kaynak testleri [özellik denetiminden](docs/FEATURE-AUDIT.md), gerçekten çalıştırılan commit/ortam ve sınırlar [0.10 geliştirme notlarından](docs/DEVELOPMENT-0.10.md) izlenir. Aşağıdaki tarihsel paket sonuçları 0.10'u doğrulamaz.
 
-## 0.10.0-ea.3 paketleri ve doğrulama
+## 0.10.0-ea.4 paketleri ve doğrulama
 
-[EA3 sürüm notları](docs/releases/0.10.0-ea.3.md) bu adayın yayın şartlarını anlatır. Yayımlayıcı, yalnız incelenen PR #5'in tam son kaynağı ile aynı ağaçtaki güncel main birleştirmesi için dört platformda 24/24 native CTest grubu ve ayrı Linux ASan/UBSan işi başarılı olduğunda ilerler. Yeni paketler, tam kaynak kimliği, gerçek CI/paket bağlantıları, SHA256SUMS.txt ve RELEASE-PROOF.json ile yayımlanır. Önceki geliştirme CI'ı son EA3 metadata kaynağının kanıtı değildir. Linux/Windows'ta 24 grubun tamamı paketlenmiş Qt ile ayrıca çalışır; macOS'ta native CTest, dağıtılmış uygulama açılışı ve ad hoc imza kontrolü yapılır. Atlanan platforma özgü vakalar kanıt dosyasında ad ve gerekçeyle listelenir; bunlar başarılı vaka sayılmaz.
+[EA4 sürüm notları](docs/releases/0.10.0-ea.4.md) bu adayın yayın şartlarını anlatır. Yayımlayıcı, yalnız incelenen PR #6'in tam son kaynağı ile aynı ağaçtaki güncel main birleştirmesi için dört platformda 24/24 native CTest grubu ve ayrı Linux ASan/UBSan işi başarılı olduğunda ilerler. Yeni paketler, tam kaynak kimliği, gerçek CI/paket bağlantıları, SHA256SUMS.txt ve RELEASE-PROOF.json ile yayımlanır. Önceki geliştirme CI'ı son EA4 metadata kaynağının kanıtı değildir. Linux/Windows'ta 24 grubun tamamı paketlenmiş Qt ile ayrıca çalışır; macOS'ta native CTest, dağıtılmış uygulama açılışı ve ad hoc imza kontrolü yapılır. Atlanan platforma özgü vakalar kanıt dosyasında ad ve gerekçeyle listelenir; bunlar başarılı vaka sayılmaz.
 
 - Linux x86_64 portable arşivi: tamamen açıp launch.sh çalıştırın. AppImage için çalıştırma izni gerekir; FUSE yoksa APPIMAGE_EXTRACT_AND_RUN=1 kullanılabilir. CI paketi Ubuntu 22.04 tabanında yeniden derlenir; önceki glibc 2.39 isteyen bulut geliştirme paketi yayımlanmaz.
 - Windows x64: ZIP'i tamamen açıp PhotoDeck.exe çalıştırın. Qt ve VC++ çalışma zamanı DLL'leri yanındadır. Yayıncı sertifikasıyla imzalı değildir.

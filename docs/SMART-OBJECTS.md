@@ -1,7 +1,8 @@
 # Gömülü akıllı nesneler: ilk erken erişim aşaması
 
-Bu belge `0.10.0-ea.3` erken erişim adayının kaynak kapsamını anlatır. Temel, yayımlanmış
-`0.10.0-ea.2` kaynağıdır. Bu özellik EA2 paketlerinde yoktur.
+Bu belge `0.10.0-ea.4` erken erişim adayının kaynak kapsamını anlatır. Gömülü akıllı nesneler
+EA3 ile eklendi; EA4 seçim yokken Ctrl+J kopyasını da bağımsız akıllı kaynak olarak korur.
+Bu özellik EA2 paketlerinde yoktur.
 
 ## Kullanım
 
@@ -90,6 +91,6 @@ tamponları ve Qt ek maliyeti vardır. Belirli bir cihazda 100 MB sözü verilme
 Bu aşama bağlantılı dosyalar, iç içe belgeler, ayrı içerik-düzenleme sekmesi,
 vektör/RAW/PSD gömme veya yeniden sıralanabilir Photoshop akıllı filtre yığını
 eklemez. Mevcut katman renk/ton/filtre değerleri korunur ve düzenlenebilir.
-Son EA3 kaynağının dört platform CI/paket kanıtı yayım sırasında ayrıca üretilir;
+Son EA4 kaynağının dört platform CI/paket kanıtı yayım sırasında ayrıca üretilir;
 önceki geliştirme sonucu yeni metadata kaynağının doğrulaması değildir.
-[Yayın kapıları ve sürüm notları](releases/0.10.0-ea.3.md).
+[Yayın kapıları ve sürüm notları](releases/0.10.0-ea.4.md).

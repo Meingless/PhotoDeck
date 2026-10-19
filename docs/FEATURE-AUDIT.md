@@ -1,8 +1,8 @@
 # PhotoDeck özellik doğrulama kapsamı
 
-Bu denetim, **0.10.0-ea.3** kaynak adayının davranış ve test kapsamını gösterir. Test adı bulunması testin bu commit'te geçtiği anlamına gelmez; çalıştırılan kaynak, ortam ve sonuçlar [0.10 geliştirme notlarında](DEVELOPMENT-0.10.md) ayrı kaydedilir. Aşağıdaki 0.2–0.9.1 sonuçları tarihseldir; yeni dalın paket veya CI kanıtı değildir. Henüz uygulanmayan Photoshop farkları [PHOTOSHOP-COMPARISON.md](PHOTOSHOP-COMPARISON.md) içinde açık hedefler olarak izlenir; testlerin geçmesi bunları kapatmaz.
+Bu denetim, **0.10.0-ea.4** kaynak adayının davranış ve test kapsamını gösterir. Test adı bulunması testin bu commit'te geçtiği anlamına gelmez; çalıştırılan kaynak, ortam ve sonuçlar [0.10 geliştirme notlarında](DEVELOPMENT-0.10.md) ayrı kaydedilir. Aşağıdaki 0.2–0.9.1 sonuçları tarihseldir; yeni dalın paket veya CI kanıtı değildir. Henüz uygulanmayan Photoshop farkları [PHOTOSHOP-COMPARISON.md](PHOTOSHOP-COMPARISON.md) içinde açık hedefler olarak izlenir; testlerin geçmesi bunları kapatmaz.
 
-## 0.10.0-ea.3 — güncel kapsam
+## 0.10.0-ea.4 — güncel kapsam
 
 | Davranış | Kaynak testleri ve kullanım sınırları |
 |---|---|

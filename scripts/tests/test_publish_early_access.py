@@ -119,6 +119,7 @@ class FakeAPI:
         self.releases = []
         self.remote = []
         self.writes = []
+        self.reads = []
         self.bad_upload = False
 
     def api(self, path, method='GET', data=None, optional=False):
@@ -134,18 +135,20 @@ class FakeAPI:
             self.tag = data['sha']
             return {'object': {'type': 'commit', 'sha': self.tag}}
         if path == '/releases' and method == 'POST':
-            self.releases = [dict(data, id=7, html_url='https://github.com/example/release')]
-            return copy.deepcopy(self.releases[0])
+            self.releases.append(dict(data, id=7, html_url='https://github.com/example/release'))
+            return copy.deepcopy(self.releases[-1])
         if path == '/releases/7':
+            release = next(item for item in self.releases if item['id'] == 7)
             if method == 'PATCH':
-                self.releases[0].update(data)
-            return copy.deepcopy(self.releases[0])
+                release.update(data)
+            return copy.deepcopy(release)
         raise AssertionError(f'Unexpected fake API call {method} {path}')
 
     def pages(self, path, key=None):
+        self.reads.append(path)
         if path.startswith('/actions/workflows/validate.yml/runs?'):
             return copy.deepcopy(self.pr_runs if 'event=pull_request' in path else self.runs)
-        if path in {'/actions/runs/42/jobs?filter=latest', '/actions/runs/41/jobs?filter=latest'}:
+        if re.fullmatch(r'/actions/runs/[0-9]+/jobs\?filter=latest', path):
             return copy.deepcopy(self.jobs)
         if path == '/releases':
             return copy.deepcopy(self.releases)
@@ -180,16 +183,17 @@ class GuardTests(unittest.TestCase):
         self.assertEqual(self.check(), '42')
 
     def test_publisher_is_pinned_to_release_pr_and_reviewed_main(self):
-        self.assertEqual(publisher.PR_NUMBER, 5)
-        self.assertEqual(publisher.PR_HEAD_REF, 'feature/embedded-smart-objects-20261017')
-        self.assertEqual(publisher.TAG, 'v0.10.0-ea.3')
+        self.assertEqual(publisher.PR_NUMBER, 6)
+        self.assertEqual(publisher.PR_HEAD_REF, 'integration/next-release-qa-fixes')
+        self.assertEqual(publisher.TAG, 'v0.10.0-ea.4')
+        self.assertEqual(publisher.VERSION, '0.10.0-ea.4')
         self.assertEqual(set(publisher.TEST_CLASSES), publisher.TEST_EXECUTABLES)
         self.assertEqual(len(publisher.TEST_EXECUTABLES), 24)
         self.assertEqual(publisher.TEST_SUITE_COUNT, 24)
-        self.assertEqual(publisher.NOTES_PATH, Path('docs/releases/0.10.0-ea.3.md'))
+        self.assertEqual(publisher.NOTES_PATH, Path('docs/releases/0.10.0-ea.4.md'))
         self.assertEqual(publisher.TEST_CLASSES['photodeck-smart-objects-tests'], 'SmartObjectTests')
         self.assertEqual(publisher.TEST_CLASSES['photodeck-export-dialog-tests'], 'ExportDialogTests')
-        self.assertEqual(publisher.BASE_SHA, 'afeeeeb54f1195df4805b17e229f07ba5aa74f33')
+        self.assertEqual(publisher.BASE_SHA, '580b1896f883acbf6c5591092d5045f60d017826')
         calls = []
         def recording_git(*args):
             calls.append(args)
@@ -201,6 +205,20 @@ class GuardTests(unittest.TestCase):
             ('merge-base', '--is-ancestor', publisher.BASE_SHA, SHA),
             ('merge-base', '--is-ancestor', HEAD, SHA),
         ])
+
+    def test_windows_skip_authorization_remains_exactly_scoped(self):
+        self.assertEqual(publisher.ALLOWED_SKIPS, {
+            ('windows-x64', 'photodeck-save-safety-tests'): {
+                'suite': 'SaveSafetyTests', 'tests': 17, 'cases': {
+                    'symbolicAliasesAndRetargetingAreProtected':
+                        'This test requires Unix symbolic links.',
+                },
+            },
+            ('windows-x64', 'photodeck-recovery-files-tests'): {
+                'suite': 'RecoveryFilesTests', 'tests': 70,
+                'cases': RECOVERY_WINDOWS_SKIPS,
+            },
+        })
 
     def test_repository_metadata_matches_the_authorized_release(self):
         root = SCRIPT.parents[1]
@@ -244,6 +262,28 @@ class GuardTests(unittest.TestCase):
         payload['inputs']['expected_sha'] = HEAD
         with self.assertRaises(publisher.GuardError):
             self.check(payload=payload)
+
+    def test_prior_ea3_tag_is_rejected_in_both_manual_authorization_fields(self):
+        for target in ('environment', 'input', 'both'):
+            env, payload, api = environment(), event(), FakeAPI()
+            if target in {'environment', 'both'}:
+                env['REQUESTED_TAG'] = 'v0.10.0-ea.3'
+            if target in {'input', 'both'}:
+                payload['inputs']['version'] = 'v0.10.0-ea.3'
+            with self.subTest(target=target), self.assertRaises(publisher.GuardError):
+                self.check(api=api, env=env, payload=payload)
+            self.assertFalse(api.writes)
+
+    def test_prior_pr5_identity_and_branch_cannot_authorize_this_release(self):
+        for target in ('number', 'branch', 'both'):
+            api = FakeAPI()
+            if target in {'number', 'both'}:
+                api.pull['number'] = 5
+            if target in {'branch', 'both'}:
+                api.pull['head']['ref'] = 'feature/embedded-smart-objects-20261017'
+            with self.subTest(target=target), self.assertRaises(publisher.GuardError):
+                self.check(api=api)
+            self.assertFalse(api.writes)
 
     def test_workflow_run_identity(self):
         env = environment()
@@ -291,7 +331,7 @@ class GuardTests(unittest.TestCase):
                 self.check(api=api)
 
     def test_reject_missing_failed_wrong_sha_or_other_pr_head_ci(self):
-        for target in ('missing', 'failed', 'wrongsha', 'otherpr'):
+        for target in ('missing', 'failed', 'wrongsha', 'otherpr', 'priorpr'):
             api = FakeAPI()
             if target == 'missing':
                 api.pr_runs = []
@@ -300,15 +340,78 @@ class GuardTests(unittest.TestCase):
             elif target == 'wrongsha':
                 api.pr_runs[0]['head_sha'] = SHA
             else:
-                api.pr_runs[0]['pull_requests'] = [{'number': 1}]
+                api.pr_runs[0]['pull_requests'] = [{'number': 5 if target == 'priorpr' else 1}]
             with self.subTest(target=target), self.assertRaises(publisher.GuardError):
                 self.check(api=api)
             self.assertFalse(api.writes)
 
+    def test_ci_queries_cannot_hide_newer_non_successful_runs(self):
+        api = FakeAPI()
+        self.check(api=api)
+        queries = [path for path in api.reads if '/validate.yml/runs?' in path]
+        self.assertEqual(len(queries), 2)
+        self.assertTrue(all('status=' not in path for path in queries))
+
+    def test_latest_pr_and_main_ci_must_succeed_despite_older_green_evidence(self):
+        for target in ('pr', 'main'):
+            for status, conclusion in [('completed', 'failure'), ('completed', 'cancelled'),
+                                       ('completed', 'skipped'), ('in_progress', None),
+                                       ('queued', None)]:
+                api = FakeAPI()
+                runs = api.pr_runs if target == 'pr' else api.runs
+                runs.append(dict(runs[0], id=43, status=status, conclusion=conclusion))
+                with self.subTest(target=target, status=status, conclusion=conclusion), \
+                        self.assertRaisesRegex(publisher.GuardError, 'Latest .* must succeed'):
+                    self.check(api=api)
+                self.assertFalse(api.writes)
+
+    def test_latest_successful_main_ci_is_selected_and_pinned(self):
+        api = FakeAPI()
+        api.runs.append(dict(ci_run(), id=43))
+        self.assertEqual(self.check(api=api), '43')
+        self.assertIn('/actions/runs/43/jobs?filter=latest', api.reads)
+        env = dict(environment(), EXPECTED_CI_RUN_ID='42')
+        with self.assertRaisesRegex(publisher.GuardError, 'not the latest'):
+            self.check(api=api, env=env)
+        env['EXPECTED_CI_RUN_ID'] = '43'
+        self.assertEqual(self.check(api=api, env=env), '43')
+
+    def test_workflow_run_trigger_cannot_pin_older_green_main_ci(self):
+        api = FakeAPI()
+        api.runs.append(dict(ci_run(), id=43))
+        env = dict(environment(), GITHUB_EVENT_NAME='workflow_run')
+        with self.assertRaisesRegex(publisher.GuardError, 'not the latest'):
+            self.check(api=api, env=env, payload={'workflow_run': ci_run()})
+
+    def test_latest_successful_final_pr_ci_is_selected(self):
+        api = FakeAPI()
+        api.pr_runs.append(dict(api.pr_runs[0], id=43))
+        self.check(api=api)
+        self.assertIn('/actions/runs/43/jobs?filter=latest', api.reads)
+
+    def test_newer_unrelated_ci_does_not_change_latest_relevant_validation(self):
+        identities = [('name', 'Other workflow'), ('path', '.github/workflows/other.yml'),
+                      ('head_sha', 'd' * 40),
+                      ('head_repository', {'full_name': 'someone/PhotoDeck'})]
+        for target in ('pr', 'main'):
+            extras = [('pull_requests', [{'number': 5}])] if target == 'pr' else [
+                ('event', 'pull_request'), ('head_branch', 'other-branch')]
+            for field, value in [*identities, *extras]:
+                api = FakeAPI()
+                runs = api.pr_runs if target == 'pr' else api.runs
+                newer = dict(runs[0], id=43, conclusion='failure')
+                newer[field] = value
+                runs.append(newer)
+                with self.subTest(target=target, field=field):
+                    self.assertEqual(self.check(api=api), '42')
+                self.assertNotIn('/actions/runs/43/jobs?filter=latest', api.reads)
+
     def test_reject_missing_ancestry_different_tree_or_checkout(self):
-        for target in ('ancestry', 'tree', 'checkout'):
+        ancestry_edges = [(publisher.BASE_SHA, HEAD), (publisher.BASE_SHA, SHA), (HEAD, SHA)]
+        for target in [*ancestry_edges, 'tree', 'checkout']:
+            api = FakeAPI()
             def invalid_git(*args):
-                if target == 'ancestry' and args[0] == 'merge-base':
+                if isinstance(target, tuple) and args == ('merge-base', '--is-ancestor', *target):
                     raise publisher.GuardError('Not an ancestor')
                 if target == 'tree' and args == ('rev-parse', HEAD + '^{tree}'):
                     return 'd' * 40
@@ -316,16 +419,18 @@ class GuardTests(unittest.TestCase):
                     return HEAD
                 return fake_git(*args)
             with self.subTest(target=target), self.assertRaises(publisher.GuardError):
-                self.check(git_fn=invalid_git)
+                self.check(api=api, git_fn=invalid_git)
+            self.assertFalse(api.writes)
 
     def test_reject_wrong_source_version(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             (root / 'src').mkdir()
-            (root / 'src/version.h').write_text('inline const char *Version = "0.9.0-ea.1";')
             (root / 'CMakeLists.txt').write_text('project(PhotoDeck VERSION 0.10.0 LANGUAGES CXX)')
-            with self.assertRaises(publisher.GuardError):
-                publisher.verify_source_version(root)
+            for version in ('0.9.0-ea.1', '0.10.0-ea.3'):
+                (root / 'src/version.h').write_text(f'inline const char *Version = "{version}";')
+                with self.subTest(version=version), self.assertRaises(publisher.GuardError):
+                    publisher.verify_source_version(root)
 
 
 class APITransportTests(unittest.TestCase):
@@ -729,11 +834,29 @@ class PublicationTests(unittest.TestCase):
             self.publish()
         self.assertFalse(self.api.writes)
 
+    def test_prior_ea3_packages_cannot_be_published_as_ea4(self):
+        assets = {name.replace('0.10.0-ea.4', '0.10.0-ea.3'): asset
+                  for name, asset in self.assets.items()}
+        with self.assertRaisesRegex(publisher.GuardError, 'complete five packages'):
+            publisher.publish(self.api, SHA, assets, self.body, self.reguard)
+        self.assertFalse(self.api.writes)
+
+    def test_previous_ea3_publication_remains_untouched(self):
+        previous = {'id': 5, 'tag_name': 'v0.10.0-ea.3', 'draft': False,
+                    'target_commitish': publisher.BASE_SHA}
+        self.api.releases = [copy.deepcopy(previous)]
+        self.publish()
+        self.assertEqual(self.api.releases[0], previous)
+        self.assertEqual(self.api.releases[1]['tag_name'], 'v0.10.0-ea.4')
+        self.assertFalse(self.api.releases[1]['draft'])
+        self.assertFalse(any(write[1] == '/releases/5' for write in self.api.writes))
+
     def test_release_body_describes_exact_proof_scope(self):
         self.assertIn('exact 24-suite native CTest', self.body)
         self.assertIn('Linux and Windows additionally reran all 24 suites', self.body)
         self.assertIn('RELEASE-PROOF.json', self.body)
-        self.assertIn('/pull/5', self.body)
+        self.assertIn('/pull/6', self.body)
+        self.assertNotIn('/pull/5', self.body)
 
     def test_creates_draft_uploads_verified_set_then_publishes(self):
         result = self.publish()
@@ -813,6 +936,31 @@ class PublicationTests(unittest.TestCase):
             publisher.publish(self.api, SHA, self.assets, self.body, fail_second_guard)
         self.assertTrue(self.api.releases[0]['draft'])
         self.assertFalse(any(write[0] == 'PATCH' for write in self.api.writes))
+
+    def test_final_tree_or_latest_ci_regression_during_upload_leaves_draft(self):
+        for target in ('tree', 'prci', 'mainci'):
+            self.api = FakeAPI()
+            self.guards = 0
+            def recheck_guard():
+                self.guards += 1
+                if self.guards == 2:
+                    if target == 'prci':
+                        self.api.pr_runs.append(dict(self.api.pr_runs[0], id=43,
+                                                     conclusion='failure'))
+                    elif target == 'mainci':
+                        self.api.runs.append(dict(ci_run(), id=43, status='in_progress',
+                                                 conclusion=None))
+                def current_git(*args):
+                    if self.guards == 2 and target == 'tree' and args == (
+                            'rev-parse', HEAD + '^{tree}'):
+                        return 'd' * 40
+                    return fake_git(*args)
+                with patch.object(publisher, 'verify_source_version'):
+                    publisher.verify_guard(self.api, SHA, environment(), event(), current_git)
+            with self.subTest(target=target), self.assertRaises(publisher.GuardError):
+                publisher.publish(self.api, SHA, self.assets, self.body, recheck_guard)
+            self.assertTrue(self.api.releases[0]['draft'])
+            self.assertFalse(any(write[0] == 'PATCH' for write in self.api.writes))
 
 
 if __name__ == '__main__':
