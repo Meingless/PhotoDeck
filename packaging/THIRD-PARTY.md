@@ -1,7 +1,9 @@
-# Third-party software
+# Rust dependencies
 
-PhotoDeck's original code and example artwork are MIT licensed. The distributed application dynamically links Qt 6 (LGPLv3, with applicable third-party components), and platform support libraries. The Qt binaries are unmodified. Users may replace the shared Qt libraries and rebuild/relink PhotoDeck from its supplied source. No application-level check prevents replacing those libraries.
+PhotoDeck's application code and original artwork are MIT licensed. Cargo.lock records the exact Rust dependency versions. The Rust executable does not link PhotoDeck's old Qt application code.
 
-Qt source: https://code.qt.io/cgit/qt/ and https://download.qt.io/official_releases/qt/ . CI packages use Qt 6.8.3. The local development build uses the installed Qt version. Qt LGPL/GPL license texts are included in licenses/. Windows runtime files retain Microsoft's own redistribution terms. macOS operating system frameworks are not redistributed. Linux package copyright notices for bundled distribution libraries are copied into licenses/system where the packaging host supplies them.
+Primary dependencies include eframe/egui (MIT OR Apache-2.0), winit (Apache-2.0), image (MIT OR Apache-2.0), cosmic-text (MIT OR Apache-2.0), fontdb (MIT), rfd (MIT), arboard (MIT OR Apache-2.0), serde (MIT OR Apache-2.0), tempfile (MIT OR Apache-2.0), tiff (MIT), png (MIT OR Apache-2.0), and lcms2 (MIT). Little CMS is bundled through lcms2-sys's static feature and is MIT licensed. System fonts remain system resources and are not redistributed by PhotoDeck.
 
-The source release includes PhotoDeck's CMake/qmake build files. Build and installation instructions are in README.md and EARLY-ACCESS.md. No license in this application changes the terms of a bundled third-party library.
+Exact metadata for every transitive dependency is available with `cargo metadata --locked --format-version 1`. The release packager collects their license/copyright texts from the registry sources and pinned upstream revisions. Explicitly audited packages without their own license file include the declared license text from a pinned SPDX license-data revision together with the original package/author evidence. Every binary package includes the resulting THIRD-PARTY-LICENSES inventory and SHA-256 records. Windows packages are unsigned; macOS packages are ad-hoc signed and are not notarized.
+
+The historical Qt package's separate notice is retained in legacy/qt/packaging/THIRD-PARTY.md and applies only to that older build.
