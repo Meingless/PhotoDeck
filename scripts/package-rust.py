@@ -10,6 +10,7 @@ import plistlib
 import re
 import shutil
 import stat
+import struct
 import subprocess
 import sys
 import tarfile
@@ -22,10 +23,96 @@ TARGETS = {'linux-x86_64': 'x86_64-unknown-linux-gnu', 'windows-x64': 'x86_64-pc
 ROOT = Path(__file__).resolve().parents[1]
 
 def run(args, **kwargs):
-    return subprocess.run([str(x) for x in args], check=True, text=True, capture_output=True, **kwargs)
+    return subprocess.run([str(x) for x in args], check=True, text=True, encoding="utf-8", capture_output=True, **kwargs)
 
 def sha(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
+
+def windows_imports(path):
+    """Inspect bounded PE32+ normal/delay imports; require AMD64 and static MSVC CRT."""
+    if path.stat().st_size > 256 * 1024 * 1024:
+        raise ValueError('PE exceeds 256 MiB inspection limit')
+    data = path.read_bytes()
+    def bounds(offset, size):
+        if offset < 0 or size < 0 or offset + size > len(data):
+            raise ValueError('Truncated or invalid PE bounds')
+        return offset
+    def u16(offset):
+        return struct.unpack_from('<H', data, bounds(offset, 2))[0]
+    def u32(offset):
+        return struct.unpack_from('<I', data, bounds(offset, 4))[0]
+    if data[:2] != b'MZ':
+        raise ValueError('Windows binary lacks MZ signature')
+    pe = u32(0x3c)
+    if data[bounds(pe, 24):pe + 4] != b'PE\0\0' or u16(pe + 4) != 0x8664:
+        raise ValueError('Windows binary must be AMD64 PE')
+    count, optional_size = u16(pe + 6), u16(pe + 20)
+    optional = pe + 24
+    bounds(optional, optional_size)
+    if not 1 <= count <= 96 or optional_size < 112 or u16(optional) != 0x20b:
+        raise ValueError('Invalid PE32+ optional header or section count')
+    directories = u32(optional + 108)
+    if directories > 16 or 112 + directories * 8 > optional_size:
+        raise ValueError('Invalid PE data directories')
+    headers = u32(optional + 60)
+    bounds(0, headers)
+    section_table = optional + optional_size
+    bounds(section_table, count * 40)
+    sections = []
+    for index in range(count):
+        entry = section_table + index * 40
+        virtual_size, virtual, raw_size, raw = [u32(entry + offset) for offset in (8, 12, 16, 20)]
+        bounds(raw, raw_size)
+        sections.append((virtual, max(virtual_size, raw_size), raw, raw_size))
+    def rva(address, size):
+        candidates = []
+        if address < headers and address + size <= headers:
+            candidates.append(address)
+        for virtual, span, raw, raw_size in sections:
+            delta = address - virtual
+            if 0 <= delta < span and delta + size <= raw_size:
+                candidates.append(raw + delta)
+        if len(candidates) != 1:
+            raise ValueError('Unmapped or ambiguous PE RVA')
+        return bounds(candidates[0], size)
+    def library(address):
+        name = bytearray()
+        for index in range(256):
+            value = data[rva(address + index, 1)]
+            if value == 0:
+                break
+            name.append(value)
+        else:
+            raise ValueError('Unterminated PE import name')
+        try:
+            decoded = name.decode('ascii')
+        except UnicodeDecodeError as error:
+            raise ValueError('Non-ASCII PE import name') from error
+        if not re.fullmatch(r'[A-Za-z0-9_.-]+\.dll', decoded, re.I):
+            raise ValueError('Invalid PE import library name')
+        return decoded
+    imports = set()
+    for directory, stride, name_offset in ((1, 20, 12), (13, 32, 4)):
+        if directories <= directory:
+            continue
+        address, size = u32(optional + 112 + directory * 8), u32(optional + 116 + directory * 8)
+        if address == size == 0:
+            continue
+        if not address or size < stride or size > stride * 4096:
+            raise ValueError('Invalid PE import directory size')
+        for index in range(size // stride):
+            entry = rva(address + index * stride, stride)
+            if not any(data[entry:entry + stride]):
+                break
+            if directory == 13 and u32(entry) != 1:
+                raise ValueError('Unsupported non-RVA delayed import')
+            imports.add(library(u32(entry + name_offset)))
+        else:
+            raise ValueError('Unterminated PE import directory')
+    forbidden = [name for name in imports if re.match(r'(?:vcruntime|msvcp|msvcr|concrt|vcomp|mfc|atl)[0-9_].*\.dll$', name, re.I)]
+    if forbidden:
+        raise ValueError('Windows package requires private MSVC runtime DLLs: ' + ', '.join(sorted(forbidden)))
+    return sorted(imports, key=str.lower)
 
 def safe(value):
     if not re.fullmatch(r'[A-Za-z0-9_.+-]+', value):
@@ -190,6 +277,7 @@ def package(root, metadata, platform, source_sha, binary, output, smoke=False):
             executable = stage / ('photodeck.exe' if platform == 'windows-x64' else 'photodeck')
         shutil.copyfile(binary, executable)
         executable.chmod(0o755)
+        imports = windows_imports(executable) if platform == 'windows-x64' else None
         if platform.startswith('linux'):
             (stage / 'launch.sh').write_text('#!/usr/bin/env sh\nset -eu\nphotodeck_root=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)\nexec "$photodeck_root/photodeck" "$@"\n')
             (stage / 'launch.sh').chmod(0o755)
@@ -216,6 +304,8 @@ def package(root, metadata, platform, source_sha, binary, output, smoke=False):
             run(['codesign', '--verify', '--deep', '--strict', stage / 'PhotoDeck.app'])
             signing = 'ad-hoc; codesign --verify --deep --strict passed'
         manifest = {'version': version, 'sourceSha': source_sha.lower(), 'platform': platform, 'target': TARGETS[platform], 'binarySha256': sha(executable), 'licenses': inventory, 'signing': signing, 'releaseBaseline': 'Ubuntu 24.04' if platform.startswith('linux') else ('macOS 12.0' if platform.startswith('macos') else 'Windows runner native build')}
+        if imports is not None:
+            manifest['windowsImports'] = imports
         (stage / 'PACKAGE-MANIFEST.json').write_text(json.dumps(manifest, indent=2) + '\n')
         archive = output / (name + ('.tar.gz' if platform.startswith('linux') else '.zip'))
         make_archive(stage, archive, platform)

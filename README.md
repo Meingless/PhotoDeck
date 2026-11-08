@@ -6,7 +6,7 @@ PhotoDeck 0.10.0-ea.4 (`f97ef8b`) temel alınarak yazılmış yerel Rust fotoğr
 
 ## Çalıştırma
 
-Rust 1.89 veya sonrası ve sistem C derleyicisi gerekir. Linux'ta X11/Wayland ile OpenGL kitaplıkları gerekir. Debian/Ubuntu geliştirme paketleri: `build-essential pkg-config libxkbcommon-dev libwayland-dev libgl1-mesa-dev`. Rust'ı [rustup](https://rustup.rs) ile kurabilirsiniz.
+Rust 1.89 veya sonrası ve sistem C derleyicisi gerekir. Linux'ta X11/Wayland ile OpenGL kitaplıkları gerekir. Debian/Ubuntu geliştirme paketleri: `build-essential pkg-config libxkbcommon-dev libxkbcommon-x11-0 libwayland-dev libgl1-mesa-dev`. Rust'ı [rustup](https://rustup.rs) ile kurabilirsiniz.
 
 ```sh
 ./scripts/build.sh

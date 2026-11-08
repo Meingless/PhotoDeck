@@ -18,12 +18,18 @@ jobs:
         include:
           - os: ubuntu-24.04
             platform: linux-x86_64
+            binary: target/release/photodeck
           - os: windows-2022
             platform: windows-x64
+            release_args: --target x86_64-pc-windows-msvc
+            release_rustflags: -C target-feature=+crt-static
+            binary: target/x86_64-pc-windows-msvc/release/photodeck.exe
           - os: macos-15-intel
             platform: macos-intel
+            binary: target/release/photodeck
           - os: macos-15
             platform: macos-apple-silicon
+            binary: target/release/photodeck
     runs-on: ${{ matrix.os }}
     timeout-minutes: 45
     env:
@@ -40,7 +46,7 @@ jobs:
         run: python -m unittest discover -s scripts/tests -p test_package_rust.py -v
       - uses: Swatinem/rust-cache@v2
       - if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y libxkbcommon-dev libwayland-dev libgl1-mesa-dev libegl1-mesa-dev xvfb fonts-dejavu-core
+        run: sudo apt-get update && sudo apt-get install -y libxkbcommon-dev libxkbcommon-x11-0 libwayland-dev libgl1-mesa-dev libegl1-mesa-dev xvfb fonts-dejavu-core
       - name: Fetch pinned dependencies and license sources
         run: cargo fetch --locked
       - name: Format
@@ -50,9 +56,11 @@ jobs:
       - name: Native Rust tests
         run: cargo test --all-targets --locked
       - name: Release build
-        run: cargo build --release --locked
+        env:
+          RUSTFLAGS: ${{ matrix.release_rustflags }}
+        run: cargo build --release --locked ${{ matrix.release_args }}
       - name: Native package and extracted executable smoke
-        run: python scripts/package-rust.py --platform ${{ matrix.platform }} --source-sha ${{ github.sha }} --output dist --smoke
+        run: python scripts/package-rust.py --platform ${{ matrix.platform }} --source-sha ${{ github.sha }} --output dist --binary ${{ matrix.binary }} --smoke
       - name: Linux extracted package GUI startup
         if: runner.os == 'Linux'
         shell: bash
