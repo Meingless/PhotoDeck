@@ -36,6 +36,8 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+      - name: Packaging regression tests
+        run: python -m unittest discover -s scripts/tests -p test_package_rust.py -v
       - uses: Swatinem/rust-cache@v2
       - if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y libxkbcommon-dev libwayland-dev libgl1-mesa-dev libegl1-mesa-dev xvfb fonts-dejavu-core
@@ -47,8 +49,6 @@ jobs:
         run: cargo clippy --all-targets --locked -- -D warnings
       - name: Native Rust tests
         run: cargo test --all-targets --locked
-      - name: Packaging regression tests
-        run: python -m unittest discover -s scripts/tests -p test_package_rust.py -v
       - name: Release build
         run: cargo build --release --locked
       - name: Native package and extracted executable smoke

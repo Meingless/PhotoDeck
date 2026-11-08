@@ -148,8 +148,14 @@ def collect_licenses(metadata, destination):
 
 def make_archive(stage, archive, platform):
     if platform.startswith('linux'):
+        executables = {stage.name + '/' + name for name in ('photodeck', 'launch.sh', 'scripts/install-user.sh')}
+        def permissions(info):
+            # The archive owns POSIX modes, including when its fixture is built
+            # on Windows, where chmod cannot represent executable permission.
+            info.mode = 0o755 if info.isdir() or info.name in executables else 0o644
+            return info
         with tarfile.open(archive, 'w:gz') as stream:
-            stream.add(stage, arcname=stage.name)
+            stream.add(stage, arcname=stage.name, filter=permissions)
     elif sys.platform == 'darwin':
         run(['ditto', '-c', '-k', '--sequesterRsrc', '--keepParent', stage, archive])
     else:
