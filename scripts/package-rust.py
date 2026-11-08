@@ -40,6 +40,23 @@ def license_files(directory):
         or ('fonts' in p.parts and p.suffix.lower() in ('.txt', '.md'))
         or ('vendor' in p.parts and p.suffix.lower() in ('.c', '.h') and b'copyright' in p.read_bytes().lower())))
 
+def read_url(url):
+    """Retry transient transport failures; never substitute another source."""
+    for attempt in range(3):
+        try:
+            with urllib.request.urlopen(url, timeout=30) as response:
+                data = response.read(4 * 1024 * 1024 + 1)
+            if not data.strip() or len(data) > 4 * 1024 * 1024:
+                raise ValueError('Invalid or oversized upstream license: ' + url)
+            return data
+        except urllib.error.HTTPError as error:
+            if error.code < 500 or attempt == 2:
+                raise
+        except (urllib.error.URLError, TimeoutError):
+            if attempt == 2:
+                raise
+    raise RuntimeError('Unreachable')
+
 def upstream_licenses(package, directory):
     """Retrieve omitted workspace licenses from the crate's recorded exact revision."""
     vcs = directory / '.cargo_vcs_info.json'
@@ -58,8 +75,7 @@ def upstream_licenses(package, directory):
         if chosen not in (package.get('license') or ''):
             raise ValueError('Audited license exception no longer matches declaration')
         url = 'https://raw.githubusercontent.com/spdx/license-list-data/31846481de7ea17d92f2f46fad76abe58b2e9bb0/text/' + chosen + '.txt'
-        with urllib.request.urlopen(url, timeout=30) as response:
-            data = response.read(4 * 1024 * 1024 + 1)
+        data = read_url(url)
         if not data.strip() or len(data) > 4 * 1024 * 1024:
             raise ValueError('Invalid canonical license')
         result = [(chosen + '.txt', data, url), ('Cargo.toml', (directory / 'Cargo.toml').read_bytes(), 'crate:Cargo.toml')]
@@ -67,8 +83,7 @@ def upstream_licenses(package, directory):
             result.append(('Cargo.toml.orig', (directory / 'Cargo.toml.orig').read_bytes(), 'crate:Cargo.toml.orig'))
         if package['name'] == 'r-efi':
             url = 'https://raw.githubusercontent.com/' + repository.removeprefix('https://github.com/') + '/' + revision + '/AUTHORS'
-            with urllib.request.urlopen(url, timeout=30) as response:
-                authors = response.read(4 * 1024 * 1024 + 1)
+            authors = read_url(url)
             if not authors.strip() or len(authors) > 4 * 1024 * 1024:
                 raise ValueError('Missing r-efi attribution')
             result.append(('AUTHORS', authors, url))
@@ -82,8 +97,7 @@ def fetch_licenses(repository, revision):
     for filename in ('LICENSE', 'LICENSE-MIT', 'LICENSE-APACHE', 'LICENSE.txt', 'LICENSE.md', 'LICENSE-MIT.txt', 'LICENSE-APACHE2.txt', 'LICENSE-CC0', 'COPYING', 'COPYRIGHT', 'UNLICENSE'):
         url = base + filename
         try:
-            with urllib.request.urlopen(url, timeout=30) as response:
-                data = response.read(4 * 1024 * 1024 + 1)
+            data = read_url(url)
             if len(data) > 4 * 1024 * 1024:
                 raise ValueError('Upstream license exceeds size limit: ' + url)
             if not data.strip() or b'<!DOCTYPE html' in data[:100]:
