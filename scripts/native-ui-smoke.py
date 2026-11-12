@@ -69,6 +69,8 @@ class Keyboard:
             self.user.SetForegroundWindow.argtypes = [wintypes.HWND]
             self.user.IsWindowVisible.argtypes = [wintypes.HWND]
             self.user.GetWindowThreadProcessId.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.DWORD)]
+            self.user.GetWindowTextW.argtypes = [wintypes.HWND, wintypes.LPWSTR, ctypes.c_int]
+            self.user.GetWindowRect.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.RECT)]
             callback_type = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
 
             def find():
@@ -79,13 +81,20 @@ class Keyboard:
                     owner = wintypes.DWORD()
                     self.user.GetWindowThreadProcessId(handle, ctypes.byref(owner))
                     if owner.value == pid and self.user.IsWindowVisible(handle):
-                        matches.append(handle)
+                        # Native tablet/IME services may own visible helper
+                        # windows in this process. Select the editor window.
+                        caption = ctypes.create_unicode_buffer(4096)
+                        rect = wintypes.RECT()
+                        self.user.GetWindowTextW(handle, caption, len(caption))
+                        self.user.GetWindowRect(handle, ctypes.byref(rect))
+                        if "PhotoDeck" in caption.value and rect.right - rect.left > 100 and rect.bottom - rect.top > 100:
+                            matches.append(handle)
                     return True
 
                 self.user.EnumWindows(visit, 0)
                 return matches[0] if matches else None
 
-            self.window = wait_for(find, "native Windows window")
+            self.window = wait_for(find, "native Windows editor window", timeout=60)
         elif sys.platform == "darwin":
             time.sleep(1)
         else:
@@ -191,6 +200,7 @@ def main():
         environment.pop("WAYLAND_DISPLAY", None)
         environment.pop("WAYLAND_SOCKET", None)
     process = None
+    keyboard = None
     try:
         with tempfile.TemporaryDirectory(prefix="photodeck-ui-", dir=args.output) as tmp:
             project = Path(tmp) / "native-smoke.pdeck"
@@ -200,7 +210,10 @@ def main():
             with (args.output / "native-ui.log").open("w") as log:
                 process = subprocess.Popen([binary, "--no-settings", "--window-size", "1024", "768", project], env=environment, stdout=log, stderr=log)
                 keyboard = Keyboard(process.pid)
-                wait_for(lambda: project.name in keyboard.title(), "document window is initialized")
+                proof["initial_window_title"] = keyboard.title()
+                # Cold system-font discovery and Mesa initialization on a
+                # hosted VM can take longer than an ordinary edit/save action.
+                wait_for(lambda: project.name in keyboard.title(), "document window is initialized", timeout=60)
                 time.sleep(1)
                 for label, key, shift, expected in [
                     ("keyboard add layer and save", "n", True, 5),
@@ -243,6 +256,13 @@ def main():
             proof["passed"] = True
     except Exception as error:
         proof["error"] = str(error)
+        if keyboard is not None:
+            try:
+                proof["last_window_title"] = keyboard.title()
+            except Exception as title_error:
+                proof["window_title_error"] = str(title_error)
+        if process is not None:
+            proof["process_exit_code"] = process.poll()
         raise
     finally:
         if process is not None and process.poll() is None:
