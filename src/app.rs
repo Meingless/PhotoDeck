@@ -2906,7 +2906,7 @@ fn drag_rect(a: (f64, f64), b: (f64, f64)) -> Rect {
         (a.1.max(b.1).ceil() - y).max(1.) as u32,
     )
 }
-#[cfg(test)]
+#[cfg(all(test, unix))]
 fn spawn_reaped(
     command: &mut std::process::Command,
 ) -> std::io::Result<std::thread::JoinHandle<std::io::Result<std::process::ExitStatus>>> {
