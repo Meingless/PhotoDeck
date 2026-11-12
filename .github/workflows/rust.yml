@@ -59,6 +59,22 @@ jobs:
         env:
           RUSTFLAGS: ${{ matrix.release_rustflags }}
         run: cargo build --release --locked ${{ matrix.release_args }}
+      - name: Software OpenGL for Windows hosted runner GUI checks
+        if: runner.os == 'Windows'
+        shell: pwsh
+        # The hosted VM exposes only OpenGL 1.1. These test-only Mesa DLLs
+        # stay beside the build binary; package-rust.py copies only the EXE.
+        run: |
+          $mesaArchive = Join-Path $env:RUNNER_TEMP 'mesa3d-26.2.6.7z'
+          $mesaRoot = Join-Path $env:RUNNER_TEMP 'photodeck-mesa'
+          Invoke-WebRequest -Uri 'https://github.com/pal1000/mesa-dist-win/releases/download/26.2.6/mesa3d-26.2.6-release-mingw.7z' -OutFile $mesaArchive -MaximumRetryCount 3 -RetryIntervalSec 3
+          $expected = 'da0f71d9181b672c1918f3c342f11118c687f6059a46b16502845160733cc388'
+          if ((Get-FileHash $mesaArchive -Algorithm SHA256).Hash.ToLowerInvariant() -ne $expected) { throw 'Mesa archive SHA-256 mismatch' }
+          7z x $mesaArchive "-o$mesaRoot" x64/opengl32.dll x64/libgallium_wgl.dll -y
+          if ($LASTEXITCODE -ne 0) { throw 'Mesa extraction failed' }
+          $binaryDir = Split-Path '${{ matrix.binary }}'
+          Copy-Item "$mesaRoot/x64/opengl32.dll", "$mesaRoot/x64/libgallium_wgl.dll" -Destination $binaryDir
+          Add-Content -Path $env:GITHUB_ENV -Value 'GALLIUM_DRIVER=llvmpipe'
       - name: Native keyboard test dependencies
         if: runner.os == 'Linux'
         run: python -m pip install python-xlib
