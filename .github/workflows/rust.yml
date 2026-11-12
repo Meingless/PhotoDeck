@@ -59,6 +59,41 @@ jobs:
         env:
           RUSTFLAGS: ${{ matrix.release_rustflags }}
         run: cargo build --release --locked ${{ matrix.release_args }}
+      - name: Native keyboard test dependencies
+        if: runner.os == 'Linux'
+        run: python -m pip install python-xlib
+      - name: Native keyboard, undo, save and reopen
+        if: runner.os != 'Linux'
+        # Hosted macOS runners may deny System Events Accessibility access.
+        # Always preserve the proof JSON; a denied run is not a passing test.
+        continue-on-error: ${{ runner.os == 'macOS' }}
+        run: python scripts/native-ui-smoke.py --binary ${{ matrix.binary }} --output artifacts/native-ui
+      - name: Linux native keyboard, undo, save and reopen
+        if: runner.os == 'Linux'
+        env:
+          LIBGL_ALWAYS_SOFTWARE: '1'
+        run: xvfb-run -a python scripts/native-ui-smoke.py --binary ${{ matrix.binary }} --output artifacts/native-ui
+      - name: Native compact and scaled window screenshots
+        if: runner.os != 'Linux'
+        shell: bash
+        run: |
+          mkdir -p artifacts/native-ui
+          "${{ matrix.binary }}" --no-settings --window-size 800 560 --screenshot "$PWD/artifacts/native-ui/compact.png"
+          "${{ matrix.binary }}" --no-settings --window-size 1380 900 --ui-scale 1.5 --screenshot "$PWD/artifacts/native-ui/scaled.png"
+      - name: Linux compact and scaled window screenshots
+        if: runner.os == 'Linux'
+        env:
+          LIBGL_ALWAYS_SOFTWARE: '1'
+        run: |
+          xvfb-run -a "${{ matrix.binary }}" --no-settings --window-size 800 560 --screenshot "$PWD/artifacts/native-ui/compact.png"
+          xvfb-run -a "${{ matrix.binary }}" --no-settings --window-size 1380 900 --ui-scale 1.5 --screenshot "$PWD/artifacts/native-ui/scaled.png"
+      - name: Preserve native GUI evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-ui-${{ matrix.platform }}
+          if-no-files-found: warn
+          path: artifacts/native-ui/
       - name: Native package and extracted executable smoke
         run: python scripts/package-rust.py --platform ${{ matrix.platform }} --source-sha ${{ github.sha }} --output dist --binary ${{ matrix.binary }} --smoke
       - name: Linux extracted package GUI startup

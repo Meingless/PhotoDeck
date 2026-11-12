@@ -38,10 +38,20 @@ Yerel kanıt Linux içindir. CI dosyasının eklenmesi Windows/macOS testlerinin
 
 ## Kalan platform farkları
 
-- Fırça motoru basınç/eğim değerlerini hesaplar ve presetlerde saklar; kullanılan eframe/winit sürümü yerel kalemin basınç, eğim ve silgi ucunu bu arayüze iletmez. Fare tam basınçla çalışır. Bu açıdan Qt tablet iş akışı henüz eşdeğer değildir.
-- Yazdırma, üretilen PDF'yi sistem görüntüleyicisine açıp oradan yazdırma yoludur; uygulama içindeki eski Qt yazıcı diyaloğu taşınmadı. Fiziksel yazıcı/tablet testi yapılmadı.
+- Geliştirme kaynaklarına `octotablet` üzerinden Wayland tablet-v2 ve Windows Ink bağlandı: basınç, eğim ve silgi örnekleri fırça motoruna taşınır; aynı çizimin fare emülasyonuyla iki kez uygulanması engellenir. X11 ve macOS için yerel kalem adaptörü henüz yoktur. Fiziksel tablet testi yapılmadı; kaynak/test örneklerinin doğrulanması fiziksel cihaz kanıtı değildir.
+- Geliştirme kaynaklarında yazdırma Linux'ta `xdg-desktop-portal` Print arayüzünü, Windows'ta PrintDlgW/GDI'yi, macOS'ta NSPrintOperation'ı kullanır. PDF açmayı yerel yazıcı diyaloğu olarak adlandırmaz. Linux'ta Print portalı gerekir; mevcut oturumda sürüm 4 arayüzü görüldü. Fiziksel yazıcı, diğer OS üzerindeki diyalog ve spool davranışı denenmedi; Windows/macOS adaptörlerinin gerçek kaynakları çapraz tür kontrolünden geçti. Tam çapraz uygulama derlemesi Little CMS için eksik C araç zincirinde kaldı.
 - WebP kayıpsız kodlanır; JPEG kalite denetimi WebP'de kayıplı kodlama sağlamaz.
 - Çalışma alanları Rust panel sistemine uyarlanmıştır. Qt'nin bütün dock yerleşim ayrıntıları ve eski `.conf` içindeki oturum yerleşimi bire bir otomatik taşınmaz.
 - Eski `.pdui` dosyasındaki bazı görünüm alanları (font ailesi, cetveller, menü/durum görünürlüğü, simge boyutu ve köşe yarıçapı) aktarımda saklanır; hepsi Rust görünümünü henüz yönetmez. Filmşeridi küçük resim satırı yoktur. Perspektif sayısal matris alanlarıyla ayarlanır; eski dört köşe nokta düzenleyicisi yoktur. Tuval boyutunda dokuz sabitleme noktası sunulur.
 
 Bu farklar giderilmeden tablet/dock/yazdırma dahil yüzde yüz EA4 arayüz eşdeğerliği iddiası yapılmamalıdır. PSD/RAW/CMYK ve önceki sürümün desteklemediği profesyonel Photoshop iş akışları da bu çalışmanın kapsamına eklenmedi.
+
+## Klasik Pro geliştirme güncellemesi
+
+8 Kasım 2026'da kullanıcı Klasik Pro yönünü ve özgün PhotoDeck logosunu seçti. Yeni arayüz; renk/özellik/geçmiş dock'u, katman/maske önizlemeleri, cetvel, küçük ekranda açılır panel ve 0.75–2× ölçek sunar. Eski presetler ve `.pdui` verileri korunur. Kullanıcı değiştirmemiş eski varsayılan görünüm yeni varsayılana geçirilir; kişisel görünüm üzerine zorla yazılmaz.
+
+Uzun işlemler tek işçi ve en fazla bir bekleyen kullanıcı isteğiyle yürütülür. Önizlemeler belge kimliği, revision ve düzenleme nesliyle doğrulanır; iptal edilmiş sonucun seçimi değiştirmesi veya yazdırmayı başlatması engellenir. İptal, çıktı dosyasının atomik yayımlanmasıyla sıralanır. Codec, ICC dönüşümü ve disk eşitleme gibi tek kitaplık/sistem çağrıları bitmeden iptal tamamlanmayabilir; UI isteği sıraya alır. Önceden yayımlanan çıktılar geri silinmez.
+
+Kement, eski 4×4 örnekleme ve even-odd kapsamasını koruyarak aktif kenar/scanline hesabına geçti; yoğun seçimler arka planda iptal edilebilir. Hata sonrası diyaloglar girişleri korur; başarısız dönüşüm/efekt işlemi yeniden denenmeden önce geri alma işlemi yeniden açılır. Son kullanılan 12 yol ve kurtarma kaynağı yerel olarak saklanır; kurtarma kaynağı otomatik açılmaz.
+
+`cosmic-text` 0.19 ve `rfd` 0.17.2'ye yükseltildi. Rust 1.89 alt sınırı korundu; kalan eframe/AccessKit/fontdb zincirini kaldırmak daha geniş geçiş gerektirir. Güncel audit sonucu bilinen açık 0, bakımsız bağımlılık uyarısı 4'tür. Yeni CI senaryoları yayımlanıp çalıştırılana kadar diğer OS'lerde çalıştırılmış sayılmaz; macOS klavye senaryosu Accessibility izni gerektirir ve başarısızlık kanıtı ayrı saklanır.

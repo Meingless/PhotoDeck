@@ -1,0 +1,36 @@
+name: Bounded project parser fuzzing
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '17 4 * * 0'
+  pull_request:
+    paths:
+      - 'src/project.rs'
+      - 'src/document.rs'
+      - 'src/types.rs'
+      - 'fuzz/**'
+      - 'Cargo.lock'
+      - '.github/workflows/fuzz.yml'
+permissions:
+  contents: read
+jobs:
+  project-parser:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: fuzz
+      - run: sudo apt-get update && sudo apt-get install -y clang libxkbcommon-dev libwayland-dev libgl1-mesa-dev
+      - run: cargo install cargo-fuzz --locked
+      - run: python3 fuzz/prepare_corpus.py
+      - name: Exercise the native project decoder under AddressSanitizer
+        run: cargo fuzz run project_decode -- -max_total_time=60 -timeout=10 -rss_limit_mb=2048 -max_len=1048576
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: parser-fuzz-crashes
+          if-no-files-found: warn
+          path: fuzz/artifacts/

@@ -474,40 +474,105 @@ impl Selection {
         Self::from_mask(m)
     }
     pub fn from_path(points: &[Point], s: Size) -> Self {
+        Self::from_path_controlled(points, s, &crate::jobs::CancellationToken::default())
+            .expect("An uncancelled selection rasterization cannot fail")
+    }
+    /// Even-odd fill with the same 4×4 sample positions as the original path
+    /// rasterizer. Only edges crossing the current sub-scanline are visited.
+    pub fn from_path_controlled(
+        points: &[Point],
+        s: Size,
+        token: &crate::jobs::CancellationToken,
+    ) -> crate::types::Result<Self> {
+        token.check()?;
         if !valid(s) {
-            return Self::None;
+            return Ok(Self::None);
         }
-        Self::from_mask(GrayImage::from_fn(s.width, s.height, |x, y| {
-            let mut count = 0;
+        let mut mask = GrayImage::new(s.width, s.height);
+        if points.len() < 3 {
+            return Ok(Self::from_mask(mask));
+        }
+        let mut edges: Vec<_> = points
+            .iter()
+            .copied()
+            .zip(points.iter().copied().cycle().skip(points.len() - 1))
+            .filter(|(a, b)| a.y != b.y)
+            .collect();
+        edges.sort_unstable_by_key(|(a, b)| a.y.min(b.y));
+        let top = points
+            .iter()
+            .map(|p| p.y)
+            .min()
+            .unwrap()
+            .clamp(0, s.height as i32) as u32;
+        let bottom = points
+            .iter()
+            .map(|p| p.y)
+            .max()
+            .unwrap()
+            .clamp(0, s.height as i32) as u32;
+        let mut next = 0;
+        let mut active: Vec<usize> = Vec::new();
+        let mut crossings = Vec::new();
+        let mut coverage = vec![0u8; s.width as usize];
+        for y in top..bottom {
+            token.check()?;
+            token.report(
+                "Kement seçimi",
+                (y - top) as usize,
+                Some((bottom - top) as usize),
+            );
+            coverage.fill(0);
             for sy in 0..4 {
-                for sx in 0..4 {
-                    let (px, py) = (
-                        x as f64 + (sx as f64 + 0.5) / 4.,
-                        y as f64 + (sy as f64 + 0.5) / 4.,
-                    );
-                    let mut inside = false;
-                    if points.len() > 2 {
-                        let mut j = points.len() - 1;
-                        for i in 0..points.len() {
-                            let (a, b) = (points[i], points[j]);
-                            if (a.y as f64 > py) != (b.y as f64 > py)
-                                && px
-                                    < (b.x as f64 - a.x as f64) * (py - a.y as f64)
-                                        / (b.y as f64 - a.y as f64)
-                                        + a.x as f64
-                            {
-                                inside = !inside
-                            }
-                            j = i
-                        }
+                let py = y as f64 + (sy as f64 + 0.5) / 4.;
+                while next < edges.len() && edges[next].0.y.min(edges[next].1.y) as f64 <= py {
+                    if edges[next].0.y.max(edges[next].1.y) as f64 > py {
+                        active.push(next);
                     }
-                    if inside {
-                        count += 1
+                    next += 1;
+                }
+                active.retain(|&i| edges[i].0.y.max(edges[i].1.y) as f64 > py);
+                crossings.clear();
+                for &i in &active {
+                    let (a, b) = edges[i];
+                    crossings.push(
+                        (b.x as f64 - a.x as f64) * (py - a.y as f64) / (b.y as f64 - a.y as f64)
+                            + a.x as f64,
+                    );
+                }
+                crossings.sort_unstable_by(f64::total_cmp);
+                for pair in crossings.as_chunks::<2>().0 {
+                    // Sample k is at (k + 0.5)/4; left inclusive, right exclusive.
+                    let first = (pair[0] * 4. - 0.5).ceil().clamp(0., s.width as f64 * 4.) as usize;
+                    let end = (pair[1] * 4. - 0.5).ceil().clamp(0., s.width as f64 * 4.) as usize;
+                    if first >= end {
+                        continue;
+                    }
+                    for (x, count) in coverage
+                        .iter_mut()
+                        .enumerate()
+                        .take((end - 1) / 4 + 1)
+                        .skip(first / 4)
+                    {
+                        *count += (end.min(x * 4 + 4) - first.max(x * 4)) as u8;
                     }
                 }
             }
-            Luma([((count * 255 + 8) / 16) as u8])
-        }))
+            let offset = y as usize * s.width as usize;
+            for (out, &count) in mask.as_mut()[offset..offset + s.width as usize]
+                .iter_mut()
+                .zip(&coverage)
+            {
+                *out = ((count as u32 * 255 + 8) / 16) as u8;
+            }
+        }
+        token.check()?;
+        token.report(
+            "Kement seçimi",
+            (bottom - top) as usize,
+            Some((bottom - top) as usize),
+        );
+        Ok(Self::from_mask(mask))
     }
     pub fn ellipse(r: Rect, s: Size) -> Self {
         if !valid(s) {
@@ -537,6 +602,98 @@ impl Selection {
 #[cfg(test)]
 mod tests {
     use super::*;
+    fn reference_path(points: &[Point], size: Size) -> GrayImage {
+        GrayImage::from_fn(size.width, size.height, |x, y| {
+            let mut count = 0;
+            for sy in 0..4 {
+                for sx in 0..4 {
+                    let px = x as f64 + (sx as f64 + 0.5) / 4.;
+                    let py = y as f64 + (sy as f64 + 0.5) / 4.;
+                    let mut inside = false;
+                    if points.len() > 2 {
+                        let mut previous = points.len() - 1;
+                        for i in 0..points.len() {
+                            let (a, b) = (points[i], points[previous]);
+                            if (a.y as f64 > py) != (b.y as f64 > py)
+                                && px
+                                    < (b.x as f64 - a.x as f64) * (py - a.y as f64)
+                                        / (b.y as f64 - a.y as f64)
+                                        + a.x as f64
+                            {
+                                inside = !inside;
+                            }
+                            previous = i;
+                        }
+                    }
+                    count += u32::from(inside);
+                }
+            }
+            Luma([((count * 255 + 8) / 16) as u8])
+        })
+    }
+    #[test]
+    fn scanline_matches_supersampled_even_odd_reference() {
+        let size = Size::new(24, 20);
+        let mut polygons = vec![
+            vec![],
+            vec![Point::new(3, 3)],
+            vec![
+                Point::new(0, 0),
+                Point::new(10, 0),
+                Point::new(10, 10),
+                Point::new(0, 10),
+            ],
+            vec![
+                Point::new(-8, -5),
+                Point::new(40, 25),
+                Point::new(-8, 25),
+                Point::new(40, -5),
+            ],
+            vec![
+                Point::new(0, 0),
+                Point::new(20, 3),
+                Point::new(6, 8),
+                Point::new(20, 20),
+                Point::new(0, 20),
+            ],
+            vec![
+                Point::new(i32::MIN, i32::MIN),
+                Point::new(i32::MAX, i32::MIN),
+                Point::new(i32::MAX, i32::MAX),
+                Point::new(i32::MIN, i32::MAX),
+            ],
+        ];
+        let mut seed = 0x7946_u32;
+        for n in 0..64 {
+            let mut points = Vec::new();
+            for _ in 0..3 + n % 13 {
+                seed = seed.wrapping_mul(1664525).wrapping_add(1013904223);
+                let x = (seed % 48) as i32 - 12;
+                seed = seed.wrapping_mul(1664525).wrapping_add(1013904223);
+                points.push(Point::new(x, (seed % 40) as i32 - 10));
+            }
+            polygons.push(points);
+        }
+        for points in polygons {
+            assert_eq!(
+                Selection::from_path(&points, size).mask(size),
+                reference_path(&points, size),
+                "{points:?}"
+            );
+        }
+    }
+    #[test]
+    fn path_selection_cancellation_returns_no_partial_selection() {
+        let token = crate::jobs::CancellationToken::default();
+        token.cancel();
+        assert!(
+            Selection::from_path_controlled(&[Point::new(0, 0); 3], Size::new(32, 32), &token)
+                .is_err()
+        );
+        let empty = Selection::from_path(&[], Size::new(32, 32));
+        assert!(!empty.is_none());
+        assert!(!empty.has_pixels());
+    }
     #[test]
     fn rectangle_transforms_stay_compact() {
         let s = Size::new(1000, 1000);

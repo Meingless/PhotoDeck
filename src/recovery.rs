@@ -12,6 +12,20 @@ use std::{
 pub struct RecoveryCandidate {
     pub path: PathBuf,
     pub title: String,
+    /// Display-only provenance; never a trusted source for reading or overwriting.
+    pub source_path: Option<PathBuf>,
+}
+#[derive(serde::Serialize, serde::Deserialize)]
+struct RecoveryMetadata {
+    title: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    source_path: Option<PathBuf>,
+}
+#[derive(serde::Deserialize)]
+#[serde(untagged)]
+enum StoredMetadata {
+    Legacy(String),
+    Current(RecoveryMetadata),
 }
 struct Completion {
     id: u64,
@@ -25,6 +39,7 @@ pub struct Recovery {
     worker: Option<JoinHandle<()>>,
     rx: Option<mpsc::Receiver<Completion>>,
     busy: bool,
+    in_flight: Option<u64>,
     removed: Arc<Mutex<HashSet<u64>>>,
 }
 pub fn directory() -> Result<PathBuf> {
@@ -61,6 +76,7 @@ impl Recovery {
             worker: None,
             rx: None,
             busy: false,
+            in_flight: None,
             removed: Arc::new(Mutex::new(HashSet::new())),
         })
     }
@@ -77,6 +93,15 @@ impl Recovery {
         Ok(candidates)
     }
     pub fn submit(&mut self, id: u64, state: &State, title: &str) -> Result<bool> {
+        self.submit_with_source(id, state, title, None)
+    }
+    pub fn submit_with_source(
+        &mut self,
+        id: u64,
+        state: &State,
+        title: &str,
+        source: Option<&Path>,
+    ) -> Result<bool> {
         if self.busy {
             return Ok(false);
         }
@@ -91,10 +116,20 @@ impl Recovery {
         let removed = self.removed.clone();
         let state = state.clone();
         let path = self.path(id);
-        let title = title.to_owned();
+        // JSON paths are Unicode. An unrepresentable source must not prevent a
+        // valid document snapshot from being recovered; omit display provenance.
+        let metadata = serde_json::to_vec(&RecoveryMetadata {
+            title: title.to_owned(),
+            source_path: source.and_then(Path::to_str).map(PathBuf::from),
+        })
+        .map_err(|e| e.to_string())?;
+        if metadata.len() > 65536 {
+            return Err("Kurtarma bilgisi 64 KiB sınırını aşıyor".into());
+        }
         let lock = self._lock.clone();
         let (tx, rx) = mpsc::channel();
         self.busy = true;
+        self.in_flight = Some(id);
         self.rx = Some(rx);
         self.worker = Some(thread::spawn(move || {
             let _ownership = lock;
@@ -114,12 +149,7 @@ impl Recovery {
                     return Ok(());
                 }
                 staged.persist(&path).map_err(|e| e.to_string())?;
-                project::atomic_write(
-                    &path.with_extension("json"),
-                    serde_json::to_string(&title)
-                        .map_err(|e| e.to_string())?
-                        .as_bytes(),
-                )
+                project::atomic_write(&path.with_extension("json"), &metadata)
             })();
             let _ = tx.send(Completion { id, result });
         }));
@@ -131,11 +161,16 @@ impl Recovery {
             Err(mpsc::TryRecvError::Empty) => return None,
             Err(_) => {
                 self.busy = false;
+                self.in_flight = None;
+                if let Ok(mut removed) = self.removed.lock() {
+                    removed.clear();
+                }
                 self.rx = None;
                 return Some(Err("Kurtarma işçisi beklenmedik biçimde durdu".into()));
             }
         };
         self.busy = false;
+        self.in_flight = None;
         self.rx = None;
         if let Some(worker) = self.worker.take() {
             let _ = worker.join();
@@ -157,7 +192,9 @@ impl Recovery {
     }
     pub fn remove(&mut self, id: u64) -> Result<()> {
         let mut removed = self.removed.lock().map_err(|_| "Kurtarma kilidi bozuldu")?;
-        removed.insert(id);
+        if self.in_flight == Some(id) {
+            removed.insert(id);
+        }
         self.delete_files(id)
     }
 }
@@ -217,19 +254,34 @@ fn candidates_in(directory: &Path) -> Result<Vec<RecoveryCandidate>> {
         {
             continue;
         }
-        let title = read_title(&path.with_extension("json"))
+        let metadata = read_title(&path.with_extension("json"))
             .ok()
             .filter(|b| b.len() <= 65536)
-            .and_then(|b| serde_json::from_slice::<String>(&b).ok())
-            .unwrap_or_else(|| "Kurtarılan belge".into());
-        out.push(RecoveryCandidate { path, title });
+            .and_then(|b| serde_json::from_slice::<StoredMetadata>(&b).ok());
+        let (title, source_path) = match metadata {
+            Some(StoredMetadata::Legacy(title)) => (title, None),
+            Some(StoredMetadata::Current(metadata)) => (metadata.title, metadata.source_path),
+            None => ("Kurtarılan belge".into(), None),
+        };
+        out.push(RecoveryCandidate {
+            path,
+            title,
+            source_path,
+        });
     }
     Ok(out)
 }
 fn read_title(path: &Path) -> std::io::Result<Vec<u8>> {
     use std::io::Read;
+    if !fs::metadata(path)?.is_file() {
+        return Err(std::io::Error::other("Kurtarma başlığı normal dosya değil"));
+    }
+    let file = File::open(path)?;
+    if !file.metadata()?.is_file() {
+        return Err(std::io::Error::other("Kurtarma başlığı normal dosya değil"));
+    }
     let mut bytes = Vec::new();
-    File::open(path)?.take(65537).read_to_end(&mut bytes)?;
+    file.take(65537).read_to_end(&mut bytes)?;
     Ok(bytes)
 }
 pub fn recover(path: &Path) -> Result<Document> {
@@ -249,4 +301,19 @@ pub fn discard(path: &Path) -> Result<()> {
     fs::remove_file(path).map_err(|e| e.to_string())?;
     let _ = fs::remove_file(path.with_extension("json"));
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn removing_idle_documents_does_not_retain_ids() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut recovery = Recovery::in_directory(dir.path().to_owned()).unwrap();
+        for id in 0..1000 {
+            recovery.remove(id).unwrap();
+        }
+        assert!(recovery.removed.lock().unwrap().is_empty());
+    }
 }

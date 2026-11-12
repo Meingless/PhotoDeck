@@ -299,3 +299,102 @@ fn deleted_windows_source_case_alias_still_conflicts() {
     ));
     assert!(!alias.exists());
 }
+
+#[test]
+fn tightly_packed_selection_masks_roundtrip_at_budget_boundary() {
+    let mut state = Document::new(Size::new(1025, 16368), false).unwrap().state;
+    let mask = Arc::new(image::GrayImage::new(1025, 16368));
+    for i in 0..4 {
+        state.saved_selections.push(SavedSelection {
+            name: format!("Mask {i}"),
+            selection: Selection::Mask(mask.clone()),
+        });
+    }
+    photodeck::document::validate_state(&state).unwrap();
+    let bytes = project::encode_state(&state, false).unwrap();
+    let (reopened, _) = project::decode_state(&bytes).unwrap();
+    assert_eq!(reopened.saved_selections, state.saved_selections);
+}
+
+#[cfg(unix)]
+#[test]
+fn non_regular_brush_and_recovery_metadata_do_not_block() {
+    let tmp = tempfile::tempdir().unwrap();
+    let brush = tmp.path().join("blocked.pdbrush");
+    assert!(
+        std::process::Command::new("mkfifo")
+            .arg(&brush)
+            .status()
+            .unwrap()
+            .success()
+    );
+    let path = tmp
+        .path()
+        .join("22f47573-8243-49ed-a286-2ed1b8910725-1.pdeck");
+    fs::write(&path, project::encode_state(&doc().state, true).unwrap()).unwrap();
+    assert!(
+        std::process::Command::new("mkfifo")
+            .arg(path.with_extension("json"))
+            .status()
+            .unwrap()
+            .success()
+    );
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        assert!(settings::read_brushes(&brush).is_err());
+        assert!(settings::BrushStore::at(brush).is_err());
+        let observer = Recovery::in_directory(tmp.path().to_owned()).unwrap();
+        let candidates = observer.candidates().unwrap();
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(candidates[0].title, "Kurtarılan belge");
+        tx.send(()).unwrap();
+    });
+    rx.recv_timeout(Duration::from_secs(3))
+        .expect("non-regular input blocked reader");
+}
+
+#[test]
+fn recovery_metadata_roundtrips_source_without_reading_it() {
+    let tmp = tempfile::tempdir().unwrap();
+    let source = tmp.path().join("missing-original.pdeck");
+    let mut r = Recovery::in_directory(tmp.path().to_owned()).unwrap();
+    r.submit_with_source(1, &doc().state, "Çalışma", Some(&source))
+        .unwrap();
+    finish(&mut r);
+    drop(r);
+    let observer = Recovery::in_directory(tmp.path().to_owned()).unwrap();
+    let candidates = observer.candidates().unwrap();
+    assert_eq!(candidates.len(), 1);
+    assert_eq!(candidates[0].title, "Çalışma");
+    assert_eq!(candidates[0].source_path.as_deref(), Some(source.as_path()));
+    assert!(!source.exists());
+    assert!(recovery::recover(&candidates[0].path).unwrap().dirty);
+    assert!(!source.exists());
+}
+
+#[test]
+fn recovery_reads_legacy_string_and_bounds_new_metadata() {
+    let tmp = tempfile::tempdir().unwrap();
+    let path = tmp
+        .path()
+        .join("22f47573-8243-49ed-a286-2ed1b8910725-1.pdeck");
+    fs::write(&path, project::encode_state(&doc().state, true).unwrap()).unwrap();
+    fs::write(path.with_extension("json"), br#""Legacy title""#).unwrap();
+    let observer = Recovery::in_directory(tmp.path().to_owned()).unwrap();
+    let candidates = observer.candidates().unwrap();
+    assert_eq!(candidates[0].title, "Legacy title");
+    assert!(candidates[0].source_path.is_none());
+    fs::write(
+        path.with_extension("json"),
+        serde_json::to_vec(&serde_json::json!({
+            "title": "Too large", "source_path": "x".repeat(65536)
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    let candidates = observer.candidates().unwrap();
+    assert_eq!(candidates[0].title, "Kurtarılan belge");
+    assert!(candidates[0].source_path.is_none());
+    fs::write(path.with_extension("json"), b"{invalid").unwrap();
+    assert_eq!(observer.candidates().unwrap()[0].title, "Kurtarılan belge");
+}

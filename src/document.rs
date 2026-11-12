@@ -274,13 +274,23 @@ impl Document {
             content_id,
         });
         self.cursor += 1;
-        while self.history.len() > 30
-            || self.history.len() > 1 && self.history_bytes() > HISTORY_BUDGET
-        {
-            self.history.remove(0);
-            self.cursor = self.cursor.saturating_sub(1);
-        }
+        self.trim_history();
         self.dirty = content_id != self.saved_id;
+    }
+    fn trim_history(&mut self) {
+        // Keep the current revision and its nearest undo/redo neighbours. The
+        // live buffers change on navigation, so extra history must be recounted.
+        while self.history.len() > 1
+            && (self.history.len() > 30 || self.history_bytes() > HISTORY_BUDGET)
+        {
+            let redo_distance = self.history.len() - 1 - self.cursor;
+            if self.cursor > 0 && self.cursor >= redo_distance {
+                self.history.remove(0);
+                self.cursor -= 1;
+            } else {
+                self.history.pop();
+            }
+        }
     }
     pub fn transact(
         &mut self,
@@ -326,6 +336,7 @@ impl Document {
         self.state = self.history[self.cursor].state.clone();
         self.dirty = self.history[self.cursor].content_id != self.saved_id;
         self.editing_mask = false;
+        self.trim_history();
     }
     pub fn history(&self) -> Vec<(u64, String)> {
         self.history
@@ -674,14 +685,19 @@ impl Document {
             if l.is_smart_object() || !l.geometry.is_identity() {
                 return Err("Piksel düzenleme için önce rasterleştirin.".into());
             }
+            let mut changed = false;
             for (x, y, p) in Arc::make_mut(&mut l.pixels).enumerate_pixels_mut() {
                 let w = selection_weight(
                     &s.selection,
                     Point::new(x as i32 + l.offset.x, y as i32 + l.offset.y),
                 );
-                p[3] = (p[3] as u32 * (255 - w as u32) / 255) as u8;
+                let alpha = (p[3] as u32 * (255 - w as u32) / 255) as u8;
+                changed |= p[3] != alpha;
+                p[3] = alpha;
             }
-            l.text.clear();
+            if changed {
+                l.text.clear();
+            }
             Ok(())
         })
     }
@@ -1171,6 +1187,67 @@ fn union_bounds(layers: &[Layer]) -> Result<Rect> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn navigation_rebudgets_history_without_changing_current_revision() {
+        // Nine distinct 16 MiB buffers cross the real 128 MiB budget while
+        // keeping this regression below 145 MiB of image storage.
+        let mut d = Document::new(Size::new(1, 1), false).unwrap();
+        let initial = d.revision();
+        for _ in 0..9 {
+            d.insert_layer(Layer::new("L", RgbaImage::new(2048, 2048)))
+                .unwrap();
+        }
+        let newest = d.revision();
+        assert_eq!(d.history_bytes(), 0);
+        // Jump, undo and redo all use restore; exercise both endpoints and
+        // normal one-step navigation after pruning the most distant redo.
+        assert!(d.jump_history(initial));
+        assert_eq!(d.revision(), initial);
+        assert!(!d.dirty);
+        assert!(d.history_bytes() <= HISTORY_BUDGET);
+        assert!(!d.history().iter().any(|(id, _)| *id == newest));
+        assert!(d.can_redo());
+        d.redo();
+        let next = d.revision();
+        assert_ne!(next, initial);
+        assert_eq!(d.state.layers.len(), 2);
+        d.undo();
+        assert_eq!(d.revision(), initial);
+        assert!(d.history_bytes() <= HISTORY_BUDGET);
+        d.redo();
+        assert_eq!(d.revision(), next);
+    }
+    #[test]
+    fn deleting_uncovered_text_is_a_noop_and_preserves_redo() {
+        for selection in [
+            Selection::Mask(Arc::new(GrayImage::new(3, 1))),
+            Selection::Rectangle(Rect::new(2, 0, 1, 1)),
+        ] {
+            let mut d = Document::new(Size::new(3, 1), false).unwrap();
+            d.transact("Text", true, |s| {
+                s.layers[0].pixels = Arc::new(RgbaImage::from_pixel(1, 1, Rgba([255; 4])));
+                s.layers[0].text = "A".into();
+                Ok(())
+            })
+            .unwrap();
+            d.set_selection(selection).unwrap();
+            d.mark_saved();
+            let before = d.state.clone();
+            let revision = d.revision();
+            d.add_layer("Redo").unwrap();
+            d.undo();
+            d.delete_selection().unwrap();
+            assert_eq!(d.state, before);
+            assert_eq!(d.revision(), revision);
+            assert!(!d.dirty);
+            assert!(d.can_redo());
+            d.set_selection(Selection::Rectangle(Rect::new(0, 0, 1, 1)))
+                .unwrap();
+            d.delete_selection().unwrap();
+            assert!(d.active_layer().text.is_empty());
+            assert_eq!(d.active_layer().pixels.get_pixel(0, 0)[3], 0);
+        }
+    }
     #[test]
     fn rejected_transaction_preserves_redo() {
         let mut d = Document::new(Size::new(10, 10), false).unwrap();

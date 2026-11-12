@@ -1,5 +1,5 @@
 //! Deterministic CPU renderer: straight-alpha storage, premultiplied resampling/compositing.
-use crate::{effects, types::*};
+use crate::{effects, jobs::CancellationToken, types::*};
 use image::{Rgba, RgbaImage};
 use std::sync::Arc;
 fn lum(c: [f64; 3]) -> f64 {
@@ -180,8 +180,32 @@ pub fn compose(
     origin: Point,
     clipped: bool,
 ) {
+    compose_controlled(
+        destination,
+        source,
+        offset,
+        opacity,
+        mode,
+        origin,
+        clipped,
+        &CancellationToken::default(),
+    )
+    .expect("Uncancelled composition");
+}
+#[allow(clippy::too_many_arguments)]
+fn compose_controlled(
+    destination: &mut RgbaImage,
+    source: &RgbaImage,
+    offset: Point,
+    opacity: f64,
+    mode: u8,
+    origin: Point,
+    clipped: bool,
+    token: &CancellationToken,
+) -> Result<()> {
+    token.check()?;
     if !opacity.is_finite() || opacity <= 0. {
-        return;
+        return Ok(());
     }
     // Qt's native raster composition quantizes painter opacity to 8 fractional bits.
     // Custom blend and clipping paths use their explicit floating-point weights.
@@ -198,6 +222,7 @@ pub fn compose(
         destination.height(),
     ));
     for y in r.y..r.y + r.height as i32 {
+        token.check()?;
         for x in r.x..r.x + r.width as i32 {
             let top = source
                 .get_pixel((x - offset.x) as u32, (y - offset.y) as u32)
@@ -240,6 +265,7 @@ pub fn compose(
             }
         }
     }
+    Ok(())
 }
 /// Bilinear sample at pixel-edge coordinates, with transparent out-of-bounds taps.
 pub fn sample(image: &RgbaImage, x: f64, y: f64) -> Rgba<u8> {
@@ -277,22 +303,43 @@ pub fn sample(image: &RgbaImage, x: f64, y: f64) -> Rgba<u8> {
     ])
 }
 pub fn resize_image(image: &RgbaImage, size: Size) -> RgbaImage {
+    resize_image_controlled(image, size, &CancellationToken::default()).expect("Uncancelled resize")
+}
+pub fn resize_image_controlled(
+    image: &RgbaImage,
+    size: Size,
+    token: &CancellationToken,
+) -> Result<RgbaImage> {
+    token.check()?;
     if image.dimensions() == (size.width, size.height) {
-        return image.clone();
+        return Ok(image.clone());
     }
-    RgbaImage::from_fn(size.width, size.height, |x, y| {
-        sample(
-            image,
-            ((x as f64 + 0.5) * image.width() as f64 / size.width as f64)
-                .clamp(0.5, image.width() as f64 - 0.5),
-            ((y as f64 + 0.5) * image.height() as f64 / size.height as f64)
-                .clamp(0.5, image.height() as f64 - 0.5),
-        )
-    })
+    let mut out = RgbaImage::new(size.width, size.height);
+    for y in 0..size.height {
+        token.check()?;
+        for x in 0..size.width {
+            out.put_pixel(
+                x,
+                y,
+                sample(
+                    image,
+                    ((x as f64 + 0.5) * image.width() as f64 / size.width as f64)
+                        .clamp(0.5, image.width() as f64 - 0.5),
+                    ((y as f64 + 0.5) * image.height() as f64 / size.height as f64)
+                        .clamp(0.5, image.height() as f64 - 0.5),
+                ),
+            );
+        }
+    }
+    Ok(out)
 }
 pub fn render_layer(layer: &Layer) -> RgbaImage {
+    render_layer_controlled(layer, &CancellationToken::default()).expect("Uncancelled layer")
+}
+pub fn render_layer_controlled(layer: &Layer, token: &CancellationToken) -> Result<RgbaImage> {
+    token.check()?;
     let Some(bounds) = layer.geometry.bounds(layer.source_size()) else {
-        return RgbaImage::new(0, 0);
+        return Ok(RgbaImage::new(0, 0));
     };
     let frame = layer.source_size();
     let has_mask =
@@ -307,70 +354,98 @@ pub fn render_layer(layer: &Layer) -> RgbaImage {
     let source = if direct {
         (*layer.pixels).clone()
     } else {
-        let source = resize_image(&layer.pixels, frame);
-        let mut result = effects::apply(&source, layer);
+        let source = resize_image_controlled(&layer.pixels, frame, token)?;
+        let mut result = effects::apply_controlled(&source, layer, token)?;
         if has_mask {
-            let mask = effects::mask_coverage(layer.mask.as_ref().unwrap(), &layer.mask_settings);
+            let mask = effects::mask_coverage_controlled(
+                layer.mask.as_ref().unwrap(),
+                &layer.mask_settings,
+                token,
+            )?;
             for (x, y, p) in result.enumerate_pixels_mut() {
+                if x == 0 {
+                    token.check()?;
+                }
                 p[3] = (p[3] as u32 * mask.get_pixel(x, y)[0] as u32 / 255) as u8;
             }
         }
         result
     };
     if layer.geometry.is_identity() {
-        return source;
+        return Ok(source);
     }
     let inv = layer.geometry.inverse().unwrap();
-    RgbaImage::from_fn(bounds.width, bounds.height, |x, y| {
-        let (mut sx, mut sy) = inv.map(
-            x as f64 + bounds.x as f64 + 0.5,
-            y as f64 + bounds.y as f64 + 0.5,
-        );
-        if direct {
-            sx *= source.width() as f64 / frame.width as f64;
-            sy *= source.height() as f64 / frame.height as f64;
+    let mut out = RgbaImage::new(bounds.width, bounds.height);
+    for y in 0..bounds.height {
+        token.check()?;
+        for x in 0..bounds.width {
+            let pixel = {
+                let (mut sx, mut sy) = inv.map(
+                    x as f64 + bounds.x as f64 + 0.5,
+                    y as f64 + bounds.y as f64 + 0.5,
+                );
+                if direct {
+                    sx *= source.width() as f64 / frame.width as f64;
+                    sy *= source.height() as f64 / frame.height as f64;
+                }
+                if sx < 0. || sy < 0. || sx >= source.width() as f64 || sy >= source.height() as f64
+                {
+                    Rgba([0; 4])
+                } else {
+                    // Edge taps repeat the source edge; transparency belongs outside the
+                    // transformed source polygon, not to the bilinear interpolation kernel.
+                    sample(
+                        &source,
+                        sx.clamp(0.5, source.width() as f64 - 0.5),
+                        sy.clamp(0.5, source.height() as f64 - 0.5),
+                    )
+                }
+            };
+            out.put_pixel(x, y, pixel);
         }
-        if sx < 0. || sy < 0. || sx >= source.width() as f64 || sy >= source.height() as f64 {
-            Rgba([0; 4])
-        } else {
-            // Edge taps repeat the source edge; transparency belongs outside the
-            // transformed source polygon, not to the bilinear interpolation kernel.
-            sample(
-                &source,
-                sx.clamp(0.5, source.width() as f64 - 0.5),
-                sy.clamp(0.5, source.height() as f64 - 0.5),
-            )
-        }
-    })
+    }
+    Ok(out)
 }
 pub fn composite_region(state: &State, bounds: Rect) -> RgbaImage {
+    composite_region_controlled(state, bounds, &CancellationToken::default())
+        .expect("Uncancelled composition")
+}
+fn composite_region_controlled(
+    state: &State,
+    bounds: Rect,
+    token: &CancellationToken,
+) -> Result<RgbaImage> {
+    token.check()?;
     let mut output = RgbaImage::new(bounds.width, bounds.height);
     let mut i = 0;
     while i < state.layers.len() {
+        token.check()?;
+        token.report("Katmanlar işleniyor", i, Some(state.layers.len()));
         let base = &state.layers[i];
         let mut end = i + 1;
         while end < state.layers.len() && state.layers[end].clipped {
             end += 1;
         }
         if base.visible {
-            let mut group = render_layer(base);
+            let mut group = render_layer_controlled(base, token)?;
             if let Some(at) = base.bounds() {
                 for child in &state.layers[i + 1..end] {
                     if child.visible
                         && let Some(cp) = child.bounds()
                     {
-                        compose(
+                        compose_controlled(
                             &mut group,
-                            &render_layer(child),
+                            &render_layer_controlled(child, token)?,
                             Point::new(cp.x - at.x, cp.y - at.y),
                             child.opacity,
                             child.blend,
                             Point::new(at.x, at.y),
                             true,
-                        );
+                            token,
+                        )?;
                     }
                 }
-                compose(
+                compose_controlled(
                     &mut output,
                     &group,
                     Point::new(at.x - bounds.x, at.y - bounds.y),
@@ -378,15 +453,24 @@ pub fn composite_region(state: &State, bounds: Rect) -> RgbaImage {
                     base.blend,
                     Point::new(bounds.x, bounds.y),
                     false,
-                );
+                    token,
+                )?;
             }
         }
         i = end;
     }
-    output
+    token.check()?;
+    Ok(output)
 }
 pub fn composite(state: &State) -> RgbaImage {
     composite_region(state, Rect::new(0, 0, state.size.width, state.size.height))
+}
+pub fn composite_controlled(state: &State, token: &CancellationToken) -> Result<RgbaImage> {
+    composite_region_controlled(
+        state,
+        Rect::new(0, 0, state.size.width, state.size.height),
+        token,
+    )
 }
 pub fn rasterized(layer: &Layer) -> Layer {
     let mut result = layer.clone();

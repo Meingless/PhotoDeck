@@ -278,7 +278,9 @@ pub fn flood_fill(
         }
         visited[idx] = true;
         let p = *im.get_pixel(x, y);
-        if (0..4).any(|c| p[c].abs_diff(old[c]) > tolerance) {
+        if p[3].abs_diff(old[3]) > tolerance
+            || ((p[3] > 0 || old[3] > 0) && (0..3).any(|c| p[c].abs_diff(old[c]) > tolerance))
+        {
             continue;
         }
         let a = coverage(mask, x as i32 + offset.x, y as i32 + offset.y);
@@ -523,6 +525,28 @@ mod tests {
         let s = BrushSettings::default();
         assert!((diameter(&s, 0.) - 3.2).abs() < 1e-9);
         assert_eq!(diameter(&s, 1.), 32.);
+    }
+    #[test]
+    fn flood_ignores_hidden_rgb_but_keeps_visible_boundaries() {
+        let mut im = RgbaImage::from_fn(4, 1, |x, _| match x {
+            0 => Rgba([0, 0, 0, 0]),
+            1 => Rgba([255, 90, 30, 0]),
+            2 => Rgba([255, 90, 30, 1]),
+            _ => Rgba([0, 0, 0, 0]),
+        });
+        assert!(flood_fill(
+            &mut im,
+            None,
+            Point::default(),
+            Point::default(),
+            [0, 255, 0, 255],
+            1.,
+            0
+        ));
+        assert_eq!(im.get_pixel(0, 0).0, [0, 255, 0, 255]);
+        assert_eq!(im.get_pixel(1, 0).0, [0, 255, 0, 255]);
+        assert_eq!(im.get_pixel(2, 0).0, [255, 90, 30, 1]);
+        assert_eq!(im.get_pixel(3, 0).0, [0, 0, 0, 0]);
     }
     #[test]
     fn flood_respects_barrier() {

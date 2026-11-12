@@ -535,7 +535,8 @@ impl<'a> Reader<'a> {
                     return Err("Seçim boyutu geçersiz".into());
                 }
                 let n = self.u32()? as u64;
-                let memory = (size.width as u64).div_ceil(4) * 4 * size.height as u64;
+                // GrayImage and the wire format store tightly packed pixels, without Qt row padding.
+                let memory = size.width as u64 * size.height as u64;
                 if n != size.width as u64 * size.height as u64 || memory > *budget {
                     return Err("Seçim bellek sınırı".into());
                 }

@@ -6,9 +6,36 @@ fn main() -> eframe::Result {
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--no-settings" => options.no_settings = true,
+            "--ui-scale" => {
+                let value = required(&mut args, "--ui-scale")
+                    .parse::<f32>()
+                    .ok()
+                    .filter(|v| v.is_finite() && (0.75..=2.).contains(v));
+                if value.is_none() {
+                    eprintln!("Arayüz ölçeği 0.75–2 arasında olmalı");
+                    std::process::exit(2);
+                }
+                options.ui_scale = value;
+            }
+            "--window-size" => {
+                let w = required(&mut args, "--window-size").parse::<f32>().ok();
+                let h = required(&mut args, "--window-size").parse::<f32>().ok();
+                match (w, h) {
+                    (Some(w), Some(h))
+                        if (800. ..=7680.).contains(&w) && (560. ..=4320.).contains(&h) =>
+                    {
+                        options.window_size = Some([w, h])
+                    }
+                    _ => {
+                        eprintln!("Pencere boyutu en az 800 × 560 olmalı");
+                        std::process::exit(2);
+                    }
+                }
+            }
             "--preset" => {
                 let p = required(&mut args, "--preset");
                 if ![
+                    "classic-pro",
                     "graphite",
                     "paper",
                     "focus",
@@ -65,7 +92,7 @@ fn main() -> eframe::Result {
     };
     let native = eframe::NativeOptions {
         viewport: eframe::egui::ViewportBuilder::default()
-            .with_inner_size([1380., 900.])
+            .with_inner_size(options.window_size.unwrap_or([1380., 900.]))
             .with_icon(icon)
             .with_min_inner_size([800., 560.]),
         ..Default::default()

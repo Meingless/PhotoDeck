@@ -1,5 +1,9 @@
 //! Atomic raster/PDF output. Export never mutates the source document.
-use crate::{project, render, types::*};
+use crate::{
+    jobs::{BatchOptions, BatchSummary, CancellationToken},
+    project, render,
+    types::*,
+};
 use image::{ImageEncoder, RgbImage, RgbaImage};
 use std::{
     io::{Cursor, Write},
@@ -81,16 +85,6 @@ fn white_background(im: &RgbaImage) -> RgbImage {
         }))
     })
 }
-fn resized(im: RgbaImage, size: Option<Size>) -> Result<RgbaImage> {
-    let Some(s) = size else { return Ok(im) };
-    if !s.valid() {
-        return Err("Çıktı boyutu geçersiz".into());
-    }
-    if (im.width(), im.height()) == (s.width, s.height) {
-        return Ok(im);
-    }
-    Ok(render::resize_image(&im, s))
-}
 fn exif_dpi(dpi: u32) -> Vec<u8> {
     // Little-endian TIFF EXIF payload, two rational resolution fields.
     let mut b = b"II\x2a\x00\x08\x00\x00\x00".to_vec();
@@ -113,10 +107,34 @@ fn exif_dpi(dpi: u32) -> Vec<u8> {
     b
 }
 pub fn export_raster(state: &State, path: &Path, options: &RasterOptions) -> Result<()> {
+    export_raster_controlled(state, path, options, &CancellationToken::default())
+}
+pub fn export_raster_controlled(
+    state: &State,
+    path: &Path,
+    options: &RasterOptions,
+    token: &CancellationToken,
+) -> Result<()> {
+    token.check()?;
     crate::document::validate_state(state)?;
-    write_raster(&render::composite(state), path, options)
+    write_raster_controlled(
+        &render::composite_controlled(state, token)?,
+        path,
+        options,
+        token,
+    )
 }
 pub fn write_raster(source: &RgbaImage, path: &Path, options: &RasterOptions) -> Result<()> {
+    write_raster_controlled(source, path, options, &CancellationToken::default())
+}
+fn write_raster_controlled(
+    source: &RgbaImage,
+    path: &Path,
+    options: &RasterOptions,
+    token: &CancellationToken,
+) -> Result<()> {
+    token.check()?;
+    token.report("Görüntü hazırlanıyor", 0, None);
     if options.quality > 100
         || !(72..=1200).contains(&options.dpi)
         || options.profile.is_some_and(|p| p > 2)
@@ -134,7 +152,11 @@ pub fn write_raster(source: &RgbaImage, path: &Path, options: &RasterOptions) ->
     if ext == "bmp" && options.profile.is_some() {
         return Err("BMP ICC profili taşımaz; profil seçimini kaldırın".into());
     }
-    let mut im = resized(source.clone(), options.size)?;
+    let mut im = match options.size {
+        Some(size) if !size.valid() => return Err("Çıktı boyutu geçersiz".into()),
+        Some(size) => render::resize_image_controlled(source, size, token)?,
+        None => source.clone(),
+    };
     let profile = if let Some(index) = options.profile {
         let p = rgb_profile(index)?;
         project::convert_profile(&mut im, &lcms2::Profile::new_srgb(), &p)?;
@@ -142,6 +164,8 @@ pub fn write_raster(source: &RgbaImage, path: &Path, options: &RasterOptions) ->
     } else {
         None
     };
+    token.check()?;
+    token.report("Görüntü kodlanıyor", 0, None);
     let mut data = Vec::new();
     match ext.as_str() {
         "png" => {
@@ -223,9 +247,18 @@ pub fn write_raster(source: &RgbaImage, path: &Path, options: &RasterOptions) ->
         }
         _ => unreachable!(),
     }
-    project::atomic_write(path, &data)
+    publish_bytes(path, &data, token)
 }
 pub fn export_pdf(state: &State, path: &Path, o: &PdfOptions) -> Result<()> {
+    export_pdf_controlled(state, path, o, &CancellationToken::default())
+}
+pub fn export_pdf_controlled(
+    state: &State,
+    path: &Path,
+    o: &PdfOptions,
+    token: &CancellationToken,
+) -> Result<()> {
+    token.check()?;
     crate::document::validate_state(state)?;
     if !path
         .extension()
@@ -240,7 +273,7 @@ pub fn export_pdf(state: &State, path: &Path, o: &PdfOptions) -> Result<()> {
     {
         return Err("PDF sayfa ayarları geçersiz".into());
     }
-    let im = white_background(&render::composite(state));
+    let im = white_background(&render::composite_controlled(state, token)?);
     if o.paper == 2
         && [im.width(), im.height()]
             .iter()
@@ -267,7 +300,16 @@ pub fn export_pdf(state: &State, path: &Path, o: &PdfOptions) -> Result<()> {
     let iw = im.width() as f64 * scale;
     let ih = im.height() as f64 * scale;
     let mut zip = flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::default());
-    zip.write_all(im.as_raw()).map_err(err)?;
+    token.report("PDF sıkıştırılıyor", 0, Some(im.as_raw().len()));
+    for (i, chunk) in im.as_raw().chunks(65536).enumerate() {
+        token.check()?;
+        zip.write_all(chunk).map_err(err)?;
+        token.report(
+            "PDF sıkıştırılıyor",
+            (i * 65536 + chunk.len()).min(im.as_raw().len()),
+            Some(im.as_raw().len()),
+        );
+    }
     let pixels = zip.finish().map_err(err)?;
     let content = format!(
         "q {iw:0.6} 0 0 {ih:0.6} {:0.6} {:0.6} cm /Im0 Do Q\n",
@@ -307,7 +349,7 @@ pub fn export_pdf(state: &State, path: &Path, o: &PdfOptions) -> Result<()> {
         )
         .as_bytes(),
     );
-    project::atomic_write(path, &pdf)
+    publish_bytes(path, &pdf, token)
 }
 #[allow(clippy::too_many_arguments)]
 pub fn batch(
@@ -321,70 +363,226 @@ pub fn batch(
     format: &str,
     quality: u8,
 ) -> Vec<(PathBuf, Result<PathBuf>)> {
-    files
-        .iter()
-        .map(|source| {
-            let result = (|| {
-                let pixels = project::read_image(source)?;
-                let original = Size::new(pixels.width(), pixels.height());
-                let mut layer = Layer::new("Görüntü", pixels);
-                layer.brightness = brightness;
-                layer.contrast = contrast;
-                layer.saturation = saturation;
-                let state = State {
-                    size: original,
-                    layers: vec![layer],
-                    active: 0,
-                    selection: Selection::None,
-                    previous_selection: Selection::None,
-                    saved_selections: vec![],
-                };
-                crate::document::validate_state(&state)?;
-                let target = size.map(|s| {
-                    let mut scale = (s.width as f64 / original.width as f64)
-                        .min(s.height as f64 / original.height as f64);
-                    if !allow_upscale {
-                        scale = scale.min(1.)
-                    }
-                    Size::new(
-                        (original.width as f64 * scale).round().max(1.) as u32,
-                        (original.height as f64 * scale).round().max(1.) as u32,
-                    )
-                });
-                if !["png", "jpg", "jpeg", "webp", "bmp", "tif", "tiff"].contains(&format) {
-                    return Err("Toplu çıktı biçimi geçersiz".into());
+    batch_controlled(
+        &BatchOptions {
+            files: files.to_vec(),
+            destination: destination.to_owned(),
+            size,
+            allow_upscale,
+            brightness,
+            contrast,
+            saturation,
+            format: format.into(),
+            quality,
+        },
+        &CancellationToken::default(),
+    )
+    .results
+}
+pub fn batch_controlled(options: &BatchOptions, token: &CancellationToken) -> BatchSummary {
+    let BatchOptions {
+        files,
+        destination,
+        size,
+        allow_upscale,
+        brightness,
+        contrast,
+        saturation,
+        format,
+        quality,
+    } = options;
+    let mut summary = BatchSummary {
+        total: files.len(),
+        ..Default::default()
+    };
+    for (index, source) in files.iter().enumerate() {
+        if token.is_cancelled() {
+            break;
+        }
+        token.report("Toplu çıktı: dosya okunuyor", index, Some(files.len()));
+        let result = (|| {
+            token.check()?;
+            let pixels = project::read_image(source)?;
+            token.check()?;
+            let original = Size::new(pixels.width(), pixels.height());
+            let mut layer = Layer::new("Görüntü", pixels);
+            layer.brightness = *brightness;
+            layer.contrast = *contrast;
+            layer.saturation = *saturation;
+            let state = State {
+                size: original,
+                layers: vec![layer],
+                active: 0,
+                selection: Selection::None,
+                previous_selection: Selection::None,
+                saved_selections: vec![],
+            };
+            crate::document::validate_state(&state)?;
+            let target = size.map(|s| {
+                let mut scale = (s.width as f64 / original.width as f64)
+                    .min(s.height as f64 / original.height as f64);
+                if !allow_upscale {
+                    scale = scale.min(1.);
                 }
-                let stem = source.file_stem().unwrap_or_default().to_string_lossy();
-                let options = RasterOptions {
-                    size: target,
-                    quality,
-                    ..Default::default()
+                Size::new(
+                    (original.width as f64 * scale).round().max(1.) as u32,
+                    (original.height as f64 * scale).round().max(1.) as u32,
+                )
+            });
+            if !["png", "jpg", "jpeg", "webp", "bmp", "tif", "tiff"].contains(&format.as_str()) {
+                return Err("Toplu çıktı biçimi geçersiz".into());
+            }
+            let stem = source.file_stem().unwrap_or_default().to_string_lossy();
+            let raster_options = RasterOptions {
+                size: target,
+                quality: *quality,
+                ..Default::default()
+            };
+            let im = render::composite_controlled(&state, token)?;
+            let temp = tempfile::Builder::new()
+                .suffix(&format!(".{format}"))
+                .tempfile_in(destination)
+                .map_err(err)?;
+            write_raster_controlled(&im, temp.path(), &raster_options, token)?;
+            let temp = temp.into_temp_path();
+            let mut n = 0;
+            loop {
+                token.check()?;
+                let suffix = if n == 0 {
+                    String::new()
+                } else {
+                    format!("_{n}")
                 };
-                let im = render::composite(&state);
-                let temp = tempfile::Builder::new()
-                    .suffix(&format!(".{format}"))
-                    .tempfile_in(destination)
-                    .map_err(err)?;
-                write_raster(&im, temp.path(), &options)?;
-                let temp = temp.into_temp_path();
-                let mut n = 0;
-                loop {
-                    let suffix = if n == 0 {
-                        String::new()
-                    } else {
-                        format!("_{n}")
-                    };
-                    let path = destination.join(format!("{stem}_photodeck{suffix}.{format}"));
-                    match std::fs::hard_link(&temp, &path) {
-                        Ok(()) => return Ok(path),
-                        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
-                            n += 1;
-                        }
-                        Err(e) => return Err(err(e)),
-                    }
+                let path = destination.join(format!("{stem}_photodeck{suffix}.{format}"));
+                let published = token.publish(|| match std::fs::hard_link(&temp, &path) {
+                    Ok(()) => Ok(true),
+                    Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => Ok(false),
+                    Err(e) => Err(err(e)),
+                })?;
+                if published {
+                    return Ok(path);
                 }
-            })();
-            (source.clone(), result)
-        })
-        .collect()
+                n += 1;
+            }
+        })();
+        summary.results.push((source.clone(), result));
+        token.report(
+            "Toplu çıktı: işlenen dosyalar",
+            index + 1,
+            Some(files.len()),
+        );
+    }
+    summary.cancelled = token.is_cancelled();
+    summary
+}
+
+/// Encode/stage without holding the publication gate. Cancellation and the final
+/// rename are ordered: once cancel returns, no later file can be published.
+fn publish_bytes(path: &Path, bytes: &[u8], token: &CancellationToken) -> Result<()> {
+    token.check()?;
+    token.report("Dosya hazırlanıyor", 0, Some(bytes.len()));
+    let target = if path.is_symlink() {
+        path.canonicalize().map_err(err)?
+    } else {
+        path.to_owned()
+    };
+    let parent = target
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .unwrap_or(Path::new("."));
+    let mut temp = tempfile::NamedTempFile::new_in(parent).map_err(err)?;
+    if let Ok(m) = std::fs::metadata(&target) {
+        if !m.is_file() {
+            return Err("Hedef normal dosya değil".into());
+        }
+        temp.as_file()
+            .set_permissions(m.permissions())
+            .map_err(err)?;
+    }
+    for (i, chunk) in bytes.chunks(65536).enumerate() {
+        token.check()?;
+        temp.write_all(chunk).map_err(err)?;
+        token.report(
+            "Dosya hazırlanıyor",
+            (i * 65536 + chunk.len()).min(bytes.len()),
+            Some(bytes.len()),
+        );
+    }
+    temp.as_file().sync_all().map_err(err)?;
+    token.publish(|| temp.persist(&target).map(|_| ()).map_err(err))?;
+    #[cfg(unix)]
+    std::fs::File::open(parent)
+        .and_then(|f| f.sync_all())
+        .map_err(err)?;
+    Ok(())
+}
+
+#[cfg(test)]
+mod job_tests {
+    use super::*;
+    use crate::document::Document;
+    #[test]
+    fn cancelled_exports_preserve_existing_destinations() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = Document::new(Size::new(8, 8), true).unwrap().state;
+        let token = CancellationToken::default();
+        token.cancel();
+        for (name, pdf) in [("out.png", false), ("out.pdf", true)] {
+            let path = dir.path().join(name);
+            std::fs::write(&path, b"original").unwrap();
+            let result = if pdf {
+                export_pdf_controlled(&state, &path, &PdfOptions::default(), &token)
+            } else {
+                export_raster_controlled(&state, &path, &RasterOptions::default(), &token)
+            };
+            assert!(result.is_err());
+            assert_eq!(std::fs::read(path).unwrap(), b"original");
+        }
+        let path = dir.path().join("staged.png");
+        assert!(publish_bytes(&path, b"payload", &token).is_err());
+        assert!(!path.exists());
+    }
+    #[test]
+    fn batch_cancellation_retains_already_published_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let source = dir.path().join("source.png");
+        RgbaImage::from_pixel(16, 16, image::Rgba([255; 4]))
+            .save(&source)
+            .unwrap();
+        let options = BatchOptions {
+            files: vec![source.clone(); 100],
+            destination: dir.path().to_owned(),
+            size: None,
+            allow_upscale: false,
+            brightness: 0,
+            contrast: 0,
+            saturation: 0,
+            format: "png".into(),
+            quality: 95,
+        };
+        let token = CancellationToken::default();
+        let control = token.clone();
+        let first = dir.path().join("source_photodeck.png");
+        let worker = std::thread::spawn(move || batch_controlled(&options, &control));
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while !first.exists() {
+            assert!(std::time::Instant::now() < deadline);
+            std::thread::yield_now();
+        }
+        token.cancel();
+        let summary = worker.join().unwrap();
+        // Cancellation may arrive just after the final publication. Both outcomes
+        // retain the completed files; an incomplete batch must report cancellation.
+        assert!(summary.cancelled || summary.results.len() == summary.total);
+        assert_eq!(summary.total, 100);
+        assert!(!summary.results.is_empty());
+        assert!(summary.results[0].1.is_ok());
+        assert!(first.exists());
+        assert!(source.exists());
+        for (_, result) in &summary.results {
+            if let Ok(path) = result {
+                assert!(path.exists());
+            }
+        }
+    }
 }

@@ -2,7 +2,9 @@
 pub mod brush;
 pub mod document;
 pub mod effects;
+pub mod jobs;
 pub mod output;
+pub mod platform;
 pub mod project;
 pub mod recovery;
 pub mod render;

@@ -1,5 +1,8 @@
 //! Color processing in straight alpha, spatial processing in premultiplied alpha.
-use crate::types::{FilterSettings, Layer, MaskSettings, Point, ToneSettings};
+use crate::{
+    jobs::CancellationToken,
+    types::{FilterSettings, Layer, MaskSettings, Point, Result, ToneSettings},
+};
 use image::{GrayImage, Luma, Rgba, RgbaImage};
 fn bounded(im: &RgbaImage) -> bool {
     im.width() > 0
@@ -37,12 +40,41 @@ fn straight(im: &RgbaImage) -> RgbaImage {
         }
     })
 }
-fn convolve(im: &RgbaImage, k: &[f64], round: bool) -> RgbaImage {
+fn convolve(
+    im: &RgbaImage,
+    k: &[f64],
+    round: bool,
+    token: &CancellationToken,
+) -> Result<RgbaImage> {
+    token.check()?;
     let r = k.len() as i32 / 2;
     let mut m = premul(im);
     for horizontal in [true, false] {
+        token.report(
+            if horizontal {
+                "Bulanıklık: yatay geçiş"
+            } else {
+                "Bulanıklık: dikey geçiş"
+            },
+            0,
+            None,
+        );
         let mut out = RgbaImage::new(im.width(), im.height());
         for (x, y, p) in out.enumerate_pixels_mut() {
+            if x == 0 {
+                token.check()?;
+                if y % 32 == 0 {
+                    token.report(
+                        if horizontal {
+                            "Gaussian: yatay satırlar"
+                        } else {
+                            "Gaussian: dikey satırlar"
+                        },
+                        y as usize,
+                        Some(im.height() as usize),
+                    );
+                }
+            }
             let mut sums = [0.; 4];
             for (i, w) in k.iter().enumerate() {
                 let d = i as i32 - r;
@@ -69,14 +101,23 @@ fn convolve(im: &RgbaImage, k: &[f64], round: bool) -> RgbaImage {
         }
         m = out
     }
-    straight(&m)
+    token.check()?;
+    Ok(straight(&m))
 }
 pub fn gaussian_blur(im: &RgbaImage, r: i32) -> RgbaImage {
+    gaussian_blur_controlled(im, r, &CancellationToken::default()).expect("Uncancelled effect")
+}
+pub fn gaussian_blur_controlled(
+    im: &RgbaImage,
+    r: i32,
+    token: &CancellationToken,
+) -> Result<RgbaImage> {
+    token.check()?;
     if !bounded(im) || !(0..=16).contains(&r) {
-        return RgbaImage::new(0, 0);
+        return Ok(RgbaImage::new(0, 0));
     }
     if r == 0 {
-        return im.clone();
+        return Ok(im.clone());
     }
     let sigma = (r as f64 / 2.).max(0.5);
     let mut k: Vec<f64> = (-r..=r)
@@ -86,18 +127,31 @@ pub fn gaussian_blur(im: &RgbaImage, r: i32) -> RgbaImage {
     for v in &mut k {
         *v /= sum
     }
-    convolve(im, &k, true)
+    convolve(im, &k, true, token)
 }
 pub fn box_blur(im: &RgbaImage, r: i32) -> RgbaImage {
+    box_blur_controlled(im, r, &CancellationToken::default()).expect("Uncancelled effect")
+}
+pub fn box_blur_controlled(im: &RgbaImage, r: i32, token: &CancellationToken) -> Result<RgbaImage> {
+    token.check()?;
     if !bounded(im) || !(0..=128).contains(&r) {
-        return RgbaImage::new(0, 0);
+        return Ok(RgbaImage::new(0, 0));
     }
     if r == 0 {
-        return im.clone();
+        return Ok(im.clone());
     }
     let mut m = premul(im);
     let window = (2 * r + 1) as u64;
     for horizontal in [true, false] {
+        token.report(
+            if horizontal {
+                "Bulanıklık: yatay geçiş"
+            } else {
+                "Bulanıklık: dikey geçiş"
+            },
+            0,
+            None,
+        );
         let mut out = RgbaImage::new(im.width(), im.height());
         let (lines, len) = if horizontal {
             (im.height(), im.width())
@@ -105,6 +159,10 @@ pub fn box_blur(im: &RgbaImage, r: i32) -> RgbaImage {
             (im.width(), im.height())
         };
         for line in 0..lines {
+            token.check()?;
+            if line % 32 == 0 {
+                token.report("Bulanıklık: satırlar", line as usize, Some(lines as usize));
+            }
             let get = |i: i32| {
                 let i = i.clamp(0, len as i32 - 1) as u32;
                 if horizontal {
@@ -136,7 +194,8 @@ pub fn box_blur(im: &RgbaImage, r: i32) -> RgbaImage {
         }
         m = out
     }
-    straight(&m)
+    token.check()?;
+    Ok(straight(&m))
 }
 fn interpolate(points: &[Point], x: f64) -> f64 {
     for w in points.windows(2) {
@@ -256,14 +315,23 @@ fn noise(x: u32, y: u32, seed: u32, c: u32, a: i32) -> i32 {
     ((f64::from(v & 65535) / 32767.5 - 1.) * a as f64 * 2.55).round() as i32
 }
 pub fn apply_filters(im: &RgbaImage, s: &FilterSettings) -> RgbaImage {
+    apply_filters_controlled(im, s, &CancellationToken::default()).expect("Uncancelled effect")
+}
+pub fn apply_filters_controlled(
+    im: &RgbaImage,
+    s: &FilterSettings,
+    token: &CancellationToken,
+) -> Result<RgbaImage> {
+    token.check()?;
     if !bounded(im) || !s.valid() {
-        return RgbaImage::new(0, 0);
+        return Ok(RgbaImage::new(0, 0));
     }
     let mut out = im.clone();
     if s.mosaic > 1 {
         let mut m = premul(im);
         let b = s.mosaic as u32;
         for top in (0..im.height()).step_by(b as usize) {
+            token.check()?;
             for left in (0..im.width()).step_by(b as usize) {
                 let bottom = (top + b).min(im.height());
                 let right = (left + b).min(im.width());
@@ -288,6 +356,9 @@ pub fn apply_filters(im: &RgbaImage, s: &FilterSettings) -> RgbaImage {
     }
     if s.noise > 0 {
         for (x, y, p) in out.enumerate_pixels_mut() {
+            if x == 0 {
+                token.check()?;
+            }
             if p[3] == 0 {
                 continue;
             }
@@ -305,7 +376,7 @@ pub fn apply_filters(im: &RgbaImage, s: &FilterSettings) -> RgbaImage {
         }
     }
     if s.gaussian > 0 {
-        out = gaussian_blur(&out, s.gaussian)
+        out = gaussian_blur_controlled(&out, s.gaussian, token)?
     }
     for (high, r) in [
         (true, s.high_pass),
@@ -321,8 +392,11 @@ pub fn apply_filters(im: &RgbaImage, s: &FilterSettings) -> RgbaImage {
         if r == 0 {
             continue;
         }
-        let soft = gaussian_blur(&out, r);
+        let soft = gaussian_blur_controlled(&out, r, token)?;
         for (x, y, p) in out.enumerate_pixels_mut() {
+            if x == 0 {
+                token.check()?;
+            }
             if p[3] == 0 {
                 *p = Rgba([0; 4]);
                 continue;
@@ -341,16 +415,24 @@ pub fn apply_filters(im: &RgbaImage, s: &FilterSettings) -> RgbaImage {
             }
         }
     }
-    out
+    token.check()?;
+    Ok(out)
 }
 pub fn apply(im: &RgbaImage, l: &Layer) -> RgbaImage {
+    apply_controlled(im, l, &CancellationToken::default()).expect("Uncancelled effect")
+}
+pub fn apply_controlled(im: &RgbaImage, l: &Layer, token: &CancellationToken) -> Result<RgbaImage> {
+    token.check()?;
     if !bounded(im) {
-        return RgbaImage::new(0, 0);
+        return Ok(RgbaImage::new(0, 0));
     }
-    let mut m = box_blur(im, l.blur);
+    let mut m = box_blur_controlled(im, l.blur, token)?;
     let contrast = 2f64.powf(l.contrast as f64 / 50.);
     let sat = 1. + l.saturation as f64 / 100.;
-    for p in m.pixels_mut() {
+    for (index, p) in m.pixels_mut().enumerate() {
+        if index % 16384 == 0 {
+            token.check()?;
+        }
         let lum = 0.2126 * p[0] as f64 + 0.7152 * p[1] as f64 + 0.0722 * p[2] as f64;
         for c in 0..3 {
             p[c] = byte(
@@ -360,30 +442,43 @@ pub fn apply(im: &RgbaImage, l: &Layer) -> RgbaImage {
             )
         }
     }
-    apply_filters(&tone_map(&m, &l.tones), &l.filters)
+    token.check()?;
+    token.report("Tonlar ve eğriler uygulanıyor", 0, None);
+    let toned = tone_map(&m, &l.tones);
+    token.check()?;
+    apply_filters_controlled(&toned, &l.filters, token)
 }
 pub fn mask_coverage(m: &GrayImage, s: &MaskSettings) -> GrayImage {
+    mask_coverage_controlled(m, s, &CancellationToken::default()).expect("Uncancelled effect")
+}
+pub fn mask_coverage_controlled(
+    m: &GrayImage,
+    s: &MaskSettings,
+    token: &CancellationToken,
+) -> Result<GrayImage> {
+    token.check()?;
     if !s.valid() || !crate::types::Size::new(m.width(), m.height()).valid() {
-        return GrayImage::new(0, 0);
+        return Ok(GrayImage::new(0, 0));
     }
     if !s.enabled || s.density == 0 {
-        return GrayImage::from_pixel(m.width(), m.height(), Luma([255]));
+        return Ok(GrayImage::from_pixel(m.width(), m.height(), Luma([255])));
     }
     let blurred = if s.feather > 0 {
         let rgba = RgbaImage::from_fn(m.width(), m.height(), |x, y| {
             let v = m.get_pixel(x, y)[0];
             Rgba([v, v, v, 255])
         });
-        Some(gaussian_blur(&rgba, s.feather))
+        Some(gaussian_blur_controlled(&rgba, s.feather, token)?)
     } else {
         None
     };
-    GrayImage::from_fn(m.width(), m.height(), |x, y| {
+    token.check()?;
+    Ok(GrayImage::from_fn(m.width(), m.height(), |x, y| {
         let v = blurred
             .as_ref()
             .map_or_else(|| m.get_pixel(x, y)[0], |b| b.get_pixel(x, y)[0]);
         Luma([(255 - ((255 - v as i32) * s.density + 50) / 100) as u8])
-    })
+    }))
 }
 #[cfg(test)]
 mod tests {

@@ -30,7 +30,7 @@ pub fn render_text(value: &str, font: &str, color: [u8; 4]) -> Result<RgbaImage>
         .lock()
         .map_err(|_| "Yazı sistemi kilidi açılamadı.")?;
     let mut buffer = Buffer::new(&mut fonts, Metrics::new(px, px * 1.25));
-    buffer.set_size(&mut fonts, None, None);
+    buffer.set_size(None, None);
     let attrs = Attrs::new()
         .family(if family == "Sans Serif" {
             Family::SansSerif
@@ -39,7 +39,7 @@ pub fn render_text(value: &str, font: &str, color: [u8; 4]) -> Result<RgbaImage>
         })
         .weight(Weight(weight))
         .style(if italic { Style::Italic } else { Style::Normal });
-    buffer.set_text(&mut fonts, value, &attrs, Shaping::Advanced);
+    buffer.set_text(value, &attrs, Shaping::Advanced, None);
     buffer.shape_until_scroll(&mut fonts, false);
     let mut cache = SwashCache::new();
     let mut minx = i32::MAX;

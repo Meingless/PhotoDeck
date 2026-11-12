@@ -1,0 +1,23 @@
+[package]
+name = "photodeck-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+photodeck = { path = ".." }
+
+[[bin]]
+name = "project_decode"
+path = "fuzz_targets/project_decode.rs"
+test = false
+doc = false
+bench = false
+
+# Keep instrumentation and generated dependencies independent of the application workspace.
+[workspace]
+members = ["."]

@@ -70,12 +70,7 @@ pub fn validate(presets: &[BrushPreset]) -> Result<()> {
     Ok(())
 }
 pub fn read_brushes(path: &Path) -> Result<Vec<BrushPreset>> {
-    let mut data = Vec::new();
-    std::fs::File::open(path)
-        .map_err(err)?
-        .take(MAX_FILE + 1)
-        .read_to_end(&mut data)
-        .map_err(err)?;
+    let data = read_optional(path)?.ok_or("Fırça dosyası bulunamadı")?;
     decode(&data)
 }
 fn decode(data: &[u8]) -> Result<Vec<BrushPreset>> {
@@ -315,8 +310,20 @@ impl BrushStore {
     }
 }
 fn read_optional(path: &Path) -> Result<Option<Vec<u8>>> {
+    match fs::metadata(path) {
+        Ok(m) if !m.is_file() || m.len() > MAX_FILE => {
+            return Err("Normal ve en fazla 16 MiB fırça dosyası gerekli".into());
+        }
+        Ok(_) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(e) => return Err(err(e)),
+    }
     match std::fs::File::open(path) {
         Ok(f) => {
+            let m = f.metadata().map_err(err)?;
+            if !m.is_file() || m.len() > MAX_FILE {
+                return Err("Normal ve en fazla 16 MiB fırça dosyası gerekli".into());
+            }
             let mut b = vec![];
             f.take(MAX_FILE + 1).read_to_end(&mut b).map_err(err)?;
             if b.len() as u64 > MAX_FILE {
