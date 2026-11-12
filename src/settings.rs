@@ -282,31 +282,38 @@ impl BrushStore {
             .map_err(err)?;
         lock.try_lock_exclusive()
             .map_err(|_| "Fırça kütüphanesi başka bir oturumda kullanılıyor")?;
-        let before = read_optional(&self.path)?;
-        let digest = before.as_ref().map(|b| Sha256::digest(b).into());
-        if digest != self.digest {
-            return Err("Fırça kütüphanesi başka oturumda değişti. Önce yeniden açın.".into());
-        }
-        if self.unreadable
-            && let Some(bytes) = &before
-        {
-            let backup = self
-                .path
-                .with_extension(format!("pdbrush.bak-{}", uuid::Uuid::new_v4()));
-            let mut f = OpenOptions::new()
-                .write(true)
-                .create_new(true)
-                .open(backup)
-                .map_err(err)?;
-            use std::io::Write;
-            f.write_all(bytes).map_err(err)?;
-            f.sync_all().map_err(err)?;
-        }
-        project::atomic_write(&self.path, &data)?;
-        self.digest = Some(Sha256::digest(data).into());
-        self.presets = presets;
-        self.unreadable = false;
-        Ok(())
+        let result = (|| {
+            let before = read_optional(&self.path)?;
+            let digest = before.as_ref().map(|b| Sha256::digest(b).into());
+            if digest != self.digest {
+                return Err("Fırça kütüphanesi başka oturumda değişti. Önce yeniden açın.".into());
+            }
+            if self.unreadable
+                && let Some(bytes) = &before
+            {
+                let backup = self
+                    .path
+                    .with_extension(format!("pdbrush.bak-{}", uuid::Uuid::new_v4()));
+                let mut f = OpenOptions::new()
+                    .write(true)
+                    .create_new(true)
+                    .open(backup)
+                    .map_err(err)?;
+                use std::io::Write;
+                f.write_all(bytes).map_err(err)?;
+                f.sync_all().map_err(err)?;
+            }
+            project::atomic_write(&self.path, &data)?;
+            self.digest = Some(Sha256::digest(data).into());
+            self.presets = presets;
+            self.unreadable = false;
+            Ok(())
+        })();
+        // A concurrent Unix process spawn can temporarily inherit this file
+        // description. Release the lock explicitly rather than waiting for
+        // every inherited descriptor to close.
+        let _ = FileExt::unlock(&lock);
+        result
     }
 }
 fn read_optional(path: &Path) -> Result<Option<Vec<u8>>> {

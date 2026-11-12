@@ -100,7 +100,7 @@ pub fn print_image(image: &RgbaImage, title: &str) -> Result<PrintOutcome> {
                     DIB_RGB_COLORS,
                     SRCCOPY,
                 );
-                lines != 0 && lines != GDI_ERROR as i32 && EndPage(dc) > 0
+                lines != 0 && lines != GDI_ERROR && EndPage(dc) > 0
             })();
             if !rendered {
                 AbortDoc(dc);

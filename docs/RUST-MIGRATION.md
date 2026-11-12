@@ -1,6 +1,6 @@
 # Rust geçişi
 
-Temel: `f97ef8bb95a1376a7b9f7ec1cf131e1ca364a5d9`, PhotoDeck 0.10.0-ea.4. Yerel kaynak ile uzak `main` bu SHA'da eşleşti. Rust geliştirme sürümü `0.11.0-ea.1`; yayımlanmış EA4 paketiyle aynı ikili değildir.
+Qt uyumluluk temeli: `f97ef8bb95a1376a7b9f7ec1cf131e1ca364a5d9`, PhotoDeck 0.10.0-ea.4. Rust sürümü `0.11.0-ea.2`, Klasik Pro arayüzünü ve aşağıdaki geliştirmeleri içerir. Güncel yayın kanıtları ilgili GitHub Release içindeki `RELEASE-PROOF.json` dosyasındadır.
 
 ## Mimari
 

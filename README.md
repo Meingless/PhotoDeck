@@ -1,10 +1,10 @@
 # PhotoDeck 0.11.0-ea.1 · Rust
 
-**Rust’a geçtik.** Yeni erken erişimin ana kaynak kodu artık Rust. [İndirmeler](https://github.com/Meingless/PhotoDeck/releases/tag/v0.11.0-ea.1) · [Sürüm duyurusu ve kalan farklar](docs/releases/0.11.0-ea.1.md) · [Kurulum](EARLY-ACCESS.md)
+**Rust’a geçtik.** Yeni erken erişimin ana kaynak kodu artık Rust. [İndirmeler](https://github.com/Meingless/PhotoDeck/releases/tag/v0.11.0-ea.2) · [Sürüm duyurusu ve kalan farklar](docs/releases/0.11.0-ea.2.md) · [Kurulum](EARLY-ACCESS.md)
 
 PhotoDeck 0.10.0-ea.4 (`f97ef8b`) temel alınarak yazılmış yerel Rust fotoğraf ve katman düzenleyici. Ana uygulama `src/` altında; varsayılan başlatıcı ve derleme Rust sürümünü kullanır. Tarayıcı, Qt, Python veya ağ servisi çalıştırmaz. C++ kodu yalnızca uyumluluk referansı olarak korunur: [önceki sürümün belgeleri](legacy/qt/README.md).
 
-Geliştirme kaynakları artık **Klasik Pro** arayüzünü ve özgün PhotoDeck logosunu kullanır. Bu kaynak değişiklikleri yukarıdaki yayımlanmış EA1 paketlerine henüz eklenmedi. [Yenilikler ve doğrulama sınırları](docs/IMPROVEMENTS-2026-11-08.md).
+**0.11.0-ea.2**, **Klasik Pro** arayüzünü, özgün PhotoDeck logosunu ve arka plan işlerini içerir. [Yenilikler ve doğrulama sınırları](docs/IMPROVEMENTS-2026-11-08.md).
 
 ## Çalıştırma
 
