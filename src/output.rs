@@ -442,9 +442,11 @@ pub fn batch_controlled(options: &BatchOptions, token: &CancellationToken) -> Ba
             let temp = tempfile::Builder::new()
                 .suffix(&format!(".{format}"))
                 .tempfile_in(destination)
-                .map_err(err)?;
-            write_raster_controlled(&im, temp.path(), &raster_options, token)?;
-            let temp = temp.into_temp_path();
+                .map_err(err)?
+                .into_temp_path();
+            // The raster writer atomically replaces this path. Keep cleanup
+            // ownership without an open destination handle on Windows.
+            write_raster_controlled(&im, &temp, &raster_options, token)?;
             let mut n = 0;
             loop {
                 token.check()?;
@@ -565,9 +567,9 @@ mod job_tests {
         let first = dir.path().join("source_photodeck.png");
         let worker = std::thread::spawn(move || batch_controlled(&options, &control));
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
-        while !first.exists() {
+        while !first.exists() && !worker.is_finished() {
             assert!(std::time::Instant::now() < deadline);
-            std::thread::yield_now();
+            std::thread::sleep(std::time::Duration::from_millis(1));
         }
         token.cancel();
         let summary = worker.join().unwrap();
@@ -576,8 +578,12 @@ mod job_tests {
         assert!(summary.cancelled || summary.results.len() == summary.total);
         assert_eq!(summary.total, 100);
         assert!(!summary.results.is_empty());
-        assert!(summary.results[0].1.is_ok());
-        assert!(first.exists());
+        assert!(summary.results[0].1.is_ok(), "{summary:?}");
+        assert!(first.exists(), "{summary:?}");
+        assert_eq!(
+            image::open(&first).unwrap().to_rgba8().dimensions(),
+            (16, 16)
+        );
         assert!(source.exists());
         for (_, result) in &summary.results {
             if let Ok(path) = result {
